@@ -15,8 +15,12 @@ import sys
 import os
 import json
 import time
-import subprocess
-import signal
+import io
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
 import urllib.request
 import urllib.error
 
@@ -41,15 +45,15 @@ def print_header(msg):
 
 
 def print_ok(msg):
-    print(f"  {GREEN}✓{RESET} {msg}")
+    print(f"  {GREEN}[OK]{RESET} {msg}")
 
 
 def print_fail(msg):
-    print(f"  {RED}✗{RESET} {msg}")
+    print(f"  {RED}[FAIL]{RESET} {msg}")
 
 
 def print_info(msg):
-    print(f"  {YELLOW}→{RESET} {msg}")
+    print(f"  {YELLOW}[INFO]{RESET} {msg}")
 
 
 def api_get(path):

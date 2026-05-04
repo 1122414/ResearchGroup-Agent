@@ -14,14 +14,14 @@ class LLMProvider(ABC):
 
 class MockLLMProvider(LLMProvider):
     async def generate(self, prompt: str, schema: Optional[dict] = None, role: str = "graduate") -> str:
-        if role == "advisor":
+        if role == "advisor_decompose":
             return self._mock_advisor_decomposition()
+        elif role == "advisor_review":
+            return self._mock_review()
+        elif role == "advisor_report":
+            return self._mock_report()
         elif role == "subagent":
             return self._mock_subagent_result(schema)
-        elif "review" in prompt.lower():
-            return self._mock_review()
-        elif "report" in prompt.lower() or "summary" in prompt.lower():
-            return self._mock_report()
         else:
             return self._mock_graduate_result(schema)
 

@@ -44,7 +44,7 @@ class ReportService:
 4. 基于实际任务结果撰写"""
 
         full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-        raw_response = await self._llm.generate(prompt=full_prompt, role="advisor")
+        raw_response = await self._llm.generate(prompt=full_prompt, role="advisor_report")
 
         report = self._format_report(raw_response, run, completed_tasks, agents)
         self._save_report(run["id"], report)

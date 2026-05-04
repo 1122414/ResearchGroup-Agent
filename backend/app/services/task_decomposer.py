@@ -54,7 +54,7 @@ class TaskDecomposer:
                     "required": ["title", "description", "task_type", "priority", "complexity", "decomposability", "required_skills"]
                 }
             },
-            role="advisor"
+            role="advisor_decompose"
         )
 
         tasks_data = self._parse_response(raw_response)

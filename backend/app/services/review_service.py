@@ -38,7 +38,7 @@ class ReviewService:
                 },
                 "required": ["approved", "feedback"]
             },
-            role="advisor"
+            role="advisor_review"
         )
 
         review = self._parse_review(raw_response)
