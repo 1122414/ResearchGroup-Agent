@@ -1,13 +1,18 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .app.core.config import settings
-from .app.storage import init_db
-from .app.services.agent_registry import agent_registry
-from .app.api.routes_agents import router as agents_router
-from .app.api.routes_tasks import router as tasks_router
-from .app.api.routes_runs import router as runs_router
-from .app.api.routes_outputs import router as outputs_router
+from app.core.config import settings
+from app.storage import init_db
+from app.services.agent_registry import agent_registry
+from app.api.routes_agents import router as agents_router
+from app.api.routes_tasks import router as tasks_router
+from app.api.routes_runs import router as runs_router
+from app.api.routes_outputs import router as outputs_router
 
 
 @asynccontextmanager
@@ -45,4 +50,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host=settings.backend_host, port=settings.backend_port, reload=True)
+    uvicorn.run(app, host=settings.backend_host, port=settings.backend_port)
