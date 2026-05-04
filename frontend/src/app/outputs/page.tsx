@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -8,6 +8,14 @@ import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 
 export default function OutputsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-gray-500">加载中...</div>}>
+      <OutputsContent />
+    </Suspense>
+  )
+}
+
+function OutputsContent() {
   const searchParams = useSearchParams()
   const runId = searchParams.get("run_id")
   const [outputs, setOutputs] = useState<any[]>([])

@@ -147,6 +147,13 @@ class SubAgentRepository:
 
 class OutputRepository:
     @staticmethod
+    def get_by_id(output_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM outputs WHERE id = ?", (output_id,)).fetchone()
+        conn.close()
+        return _deserialize_output(row) if row else None
+
+    @staticmethod
     def insert(output: dict):
         conn = get_connection()
         conn.execute("""
