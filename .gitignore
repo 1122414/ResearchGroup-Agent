@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.db
+
+# Node
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Artifacts (keep directory structure)
+artifacts/reports/*
+artifacts/logs/*
+artifacts/runs/*
+!artifacts/reports/.gitkeep
+!artifacts/logs/.gitkeep
+!artifacts/runs/.gitkeep
+
+# Plans
+.sisyphus/

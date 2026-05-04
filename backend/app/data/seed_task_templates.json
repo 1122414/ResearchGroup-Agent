@@ -1,0 +1,62 @@
+[
+  {
+    "task_type": "literature_survey",
+    "required_skills": {
+      "literature_review": 9,
+      "coding": 2,
+      "experiment": 1,
+      "data_analysis": 4,
+      "academic_writing": 7,
+      "mentoring": 6
+    },
+    "description_template": "调研{domain}领域相关系统和工具，整理对比分析。"
+  },
+  {
+    "task_type": "system_design",
+    "required_skills": {
+      "literature_review": 3,
+      "coding": 9,
+      "experiment": 4,
+      "data_analysis": 4,
+      "academic_writing": 5,
+      "mentoring": 5
+    },
+    "description_template": "设计{domain}的系统架构，包括技术选型和模块划分。"
+  },
+  {
+    "task_type": "experiment_design",
+    "required_skills": {
+      "literature_review": 4,
+      "coding": 5,
+      "experiment": 9,
+      "data_analysis": 7,
+      "academic_writing": 5,
+      "mentoring": 6
+    },
+    "description_template": "设计{domain}的实验验证方案，包括评价指标和实验步骤。"
+  },
+  {
+    "task_type": "result_analysis",
+    "required_skills": {
+      "literature_review": 3,
+      "coding": 5,
+      "experiment": 6,
+      "data_analysis": 10,
+      "academic_writing": 6,
+      "mentoring": 5
+    },
+    "description_template": "分析{domain}相关数据，提取关键指标和趋势。"
+  },
+  {
+    "task_type": "report_writing",
+    "required_skills": {
+      "literature_review": 6,
+      "coding": 2,
+      "experiment": 3,
+      "data_analysis": 5,
+      "academic_writing": 10,
+      "mentoring": 5
+    },
+    "description_template": "汇总{domain}的研究成果，撰写阶段性报告。"
+  }
+]

@@ -1,0 +1,112 @@
+[
+  {
+    "id": "grad_researcher",
+    "name": "调研型研究生 Agent",
+    "type": "researcher",
+    "description": "擅长文献检索、论文阅读、相关工作总结和研究现状分析。",
+    "skills": {
+      "literature_review": 10,
+      "coding": 4,
+      "experiment": 5,
+      "data_analysis": 6,
+      "academic_writing": 8,
+      "mentoring": 8
+    },
+    "status": "idle",
+    "current_load": 0.0,
+    "max_load": 1.0,
+    "current_tasks": [],
+    "preferred_task_types": ["literature_survey", "paper_summary", "related_work"],
+    "tools": ["mock_web_search", "summary_tool"],
+    "can_create_subagents": true,
+    "max_subagents": 2
+  },
+  {
+    "id": "grad_engineer",
+    "name": "工程型研究生 Agent",
+    "type": "engineer",
+    "description": "擅长系统架构设计、代码实现、接口开发和工具接入。",
+    "skills": {
+      "literature_review": 4,
+      "coding": 10,
+      "experiment": 7,
+      "data_analysis": 6,
+      "academic_writing": 5,
+      "mentoring": 7
+    },
+    "status": "idle",
+    "current_load": 0.0,
+    "max_load": 1.0,
+    "current_tasks": [],
+    "preferred_task_types": ["system_design", "code_implementation", "tool_integration"],
+    "tools": ["mock_code_runner", "mock_github_search"],
+    "can_create_subagents": true,
+    "max_subagents": 2
+  },
+  {
+    "id": "grad_experimenter",
+    "name": "实验型研究生 Agent",
+    "type": "experimenter",
+    "description": "擅长实验设计、假设验证、参数调优和实验记录。",
+    "skills": {
+      "literature_review": 5,
+      "coding": 7,
+      "experiment": 10,
+      "data_analysis": 8,
+      "academic_writing": 5,
+      "mentoring": 8
+    },
+    "status": "idle",
+    "current_load": 0.0,
+    "max_load": 1.0,
+    "current_tasks": [],
+    "preferred_task_types": ["experiment_design", "benchmark", "ablation_study"],
+    "tools": ["mock_experiment_runner", "mock_param_tuner"],
+    "can_create_subagents": true,
+    "max_subagents": 2
+  },
+  {
+    "id": "grad_analyst",
+    "name": "数据分析型研究生 Agent",
+    "type": "analyst",
+    "description": "擅长数据清洗、指标分析、结果解释和可视化。",
+    "skills": {
+      "literature_review": 6,
+      "coding": 7,
+      "experiment": 8,
+      "data_analysis": 10,
+      "academic_writing": 6,
+      "mentoring": 8
+    },
+    "status": "idle",
+    "current_load": 0.0,
+    "max_load": 1.0,
+    "current_tasks": [],
+    "preferred_task_types": ["result_analysis", "data_visualization", "statistical_test"],
+    "tools": ["mock_data_analyzer", "mock_chart_generator"],
+    "can_create_subagents": true,
+    "max_subagents": 2
+  },
+  {
+    "id": "grad_writer",
+    "name": "写作型研究生 Agent",
+    "type": "writer",
+    "description": "擅长周报撰写、报告组织、论文草稿和学术润色。",
+    "skills": {
+      "literature_review": 7,
+      "coding": 4,
+      "experiment": 5,
+      "data_analysis": 6,
+      "academic_writing": 10,
+      "mentoring": 7
+    },
+    "status": "idle",
+    "current_load": 0.0,
+    "max_load": 1.0,
+    "current_tasks": [],
+    "preferred_task_types": ["report_writing", "paper_draft", "weekly_summary"],
+    "tools": ["mock_text_formatter", "mock_reference_manager"],
+    "can_create_subagents": true,
+    "max_subagents": 2
+  }
+]
