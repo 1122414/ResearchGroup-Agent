@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -53,6 +53,14 @@ const ACTIVITY_ANIMATION: Record<string, string> = {
 }
 
 export default function OfficePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-gray-500">正在加载像素办公室...</div>}>
+      <OfficeContent />
+    </Suspense>
+  )
+}
+
+function OfficeContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialRunId = searchParams.get("run_id")

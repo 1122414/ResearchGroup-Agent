@@ -59,7 +59,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     api.getSettings()
       .then((data) => {
-        setSettings(data)
+        setSettings(data as unknown as SystemSettings)
         setLoading(false)
       })
       .catch(() => setLoading(false))
