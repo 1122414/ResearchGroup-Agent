@@ -50,4 +50,7 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  getOfficeState: (runId: string) =>
+    fetchApi<import("./types").OfficeState>(`/monitor/office-state?run_id=${runId}`),
 }

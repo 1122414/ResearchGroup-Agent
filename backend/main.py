@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.api.routes_agents import router as agents_router
+from app.api.routes_monitor import router as monitor_router
 from app.api.routes_outputs import router as outputs_router
 from app.api.routes_runs import router as runs_router
 from app.api.routes_settings import router as settings_router
@@ -44,6 +45,7 @@ app.include_router(tasks_router)
 app.include_router(runs_router)
 app.include_router(outputs_router)
 app.include_router(settings_router)
+app.include_router(monitor_router)
 
 
 @app.get("/api/health")

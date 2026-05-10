@@ -199,3 +199,50 @@ export const OUTPUT_TYPE_LABELS: Record<string, string> = {
   final_report: "最终报告",
   run_log: "运行日志",
 }
+
+export interface OfficeState {
+  run: {
+    id: string
+    status: string
+    current_step: string
+    total_cost_usd: number
+    total_tokens: number
+    started_at: string | null
+    updated_at: string | null
+  }
+  agents: OfficeAgentState[]
+  tasks: OfficeTaskState[]
+  subagents: OfficeSubAgentState[]
+  events: RunEvent[]
+}
+
+export interface OfficeAgentState {
+  id: string
+  name: string
+  role: string
+  status: string
+  activity_state: string
+  current_task_id: string | null
+  current_task_title: string | null
+  office_zone: string
+  speech: string
+  last_event_at: string | null
+  current_load: number
+}
+
+export interface OfficeTaskState {
+  id: string
+  title: string
+  status: string
+  owner_agent: string | null
+  priority: number
+  latest_event: string
+}
+
+export interface OfficeSubAgentState {
+  id: string
+  parent_agent: string
+  task_id: string
+  status: string
+  speech: string
+}

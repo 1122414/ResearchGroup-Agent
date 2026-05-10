@@ -30,6 +30,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <Link href="/outputs" className="text-gray-600 hover:text-gray-900">
                 输出
               </Link>
+              <Link href="/office" className="text-gray-600 hover:text-gray-900">
+                像素办公室
+              </Link>
               <SettingsButton />
             </nav>
           </div>
