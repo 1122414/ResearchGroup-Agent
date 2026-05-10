@@ -56,6 +56,7 @@ def init_db():
             review_result TEXT,
             review_feedback TEXT,
             run_id TEXT,
+            assignment_info TEXT DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -139,6 +140,11 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         """
     )
+
+    _ensure_columns(conn, "tasks", {
+        "assignment_info": "TEXT DEFAULT '{}'",
+        "subagent_triggered": "INTEGER DEFAULT 0",
+    })
 
     _ensure_columns(conn, "runs", {
         "started_at": "TEXT",

@@ -1,11 +1,11 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
-import { OUTPUT_TYPE_LABELS, type Output, type Run } from "@/lib/types"
+import { OUTPUT_TYPE_LABELS, type Output, type Run, type Task } from "@/lib/types"
 
 export default function OutputsPage() {
   return (
@@ -20,20 +20,54 @@ function OutputsContent() {
   const runId = searchParams.get("run_id")
   const [outputs, setOutputs] = useState<Output[]>([])
   const [runs, setRuns] = useState<Run[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [selectedRun, setSelectedRun] = useState<string | null>(runId)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | "">("")
+  const [selectedType, setSelectedType] = useState<string | "">("")
 
   useEffect(() => {
     api.getRuns().then(({ runs }) => setRuns(runs))
   }, [])
 
   useEffect(() => {
-    if (selectedRun) {
-      api.getOutputs(selectedRun).then(({ outputs }) => setOutputs(outputs))
+    if (!selectedRun) {
+      queueMicrotask(() => {
+        setOutputs([])
+        setTasks([])
+      })
+      return
+    }
+    let cancelled = false
+    Promise.all([api.getOutputs(selectedRun), api.getTasks(selectedRun)]).then(
+      ([{ outputs }, { tasks }]) => {
+        if (cancelled) return
+        setOutputs(outputs)
+        setTasks(tasks)
+      },
+    )
+    return () => {
+      cancelled = true
     }
   }, [selectedRun])
 
-  const finalReport = outputs.find((output) => output.output_type === "final_report")
-  const otherOutputs = outputs.filter((output) => output.output_type !== "final_report")
+  const filteredOutputs = useMemo(() => {
+    let result = outputs
+    if (selectedTaskId) {
+      result = result.filter((o) => o.task_id === selectedTaskId)
+    }
+    if (selectedType) {
+      result = result.filter((o) => o.output_type === selectedType)
+    }
+    return result
+  }, [outputs, selectedTaskId, selectedType])
+
+  const finalReport = filteredOutputs.find((output) => output.output_type === "final_report")
+  const otherOutputs = filteredOutputs.filter((output) => output.output_type !== "final_report")
+
+  const outputTypes = useMemo(() => {
+    const types = new Set(outputs.map((o) => o.output_type))
+    return Array.from(types)
+  }, [outputs])
 
   return (
     <div className="space-y-4">
@@ -42,11 +76,16 @@ function OutputsContent() {
         <p className="text-sm text-gray-500">查看任务产出、SubAgent 产出、导师审核和最终报告。</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-sm text-gray-500">Run：</div>
         {runs.map((run) => (
           <button
             key={run.id}
-            onClick={() => setSelectedRun(run.id)}
+            onClick={() => {
+              setSelectedRun(run.id)
+              setSelectedTaskId("")
+              setSelectedType("")
+            }}
             className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
               selectedRun === run.id ? "bg-gray-900 text-white" : "bg-gray-100 hover:bg-gray-200"
             }`}
@@ -56,6 +95,50 @@ function OutputsContent() {
         ))}
         {runs.length === 0 && <span className="text-sm text-gray-500">暂无运行记录。</span>}
       </div>
+
+      {selectedRun && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm text-gray-500">任务过滤：</div>
+          <select
+            value={selectedTaskId}
+            onChange={(e) => setSelectedTaskId(e.target.value)}
+            className="rounded-lg border bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">全部任务</option>
+            {tasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.title}
+              </option>
+            ))}
+          </select>
+
+          <div className="text-sm text-gray-500">类型过滤：</div>
+          <select
+            value={selectedType}
+            onChange={(e) => setSelectedType(e.target.value)}
+            className="rounded-lg border bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">全部类型</option>
+            {outputTypes.map((type) => (
+              <option key={type} value={type}>
+                {OUTPUT_TYPE_LABELS[type] || type}
+              </option>
+            ))}
+          </select>
+
+          {(selectedTaskId || selectedType) && (
+            <button
+              onClick={() => {
+                setSelectedTaskId("")
+                setSelectedType("")
+              }}
+              className="text-sm text-gray-500 hover:text-gray-900"
+            >
+              清除过滤
+            </button>
+          )}
+        </div>
+      )}
 
       {finalReport && (
         <Card>
@@ -87,6 +170,12 @@ function OutputsContent() {
           </Card>
         ))}
       </div>
+
+      {selectedRun && filteredOutputs.length === 0 && (
+        <div className="text-center text-sm text-gray-500">
+          该 Run 暂无输出，或当前过滤条件下无匹配结果。
+        </div>
+      )}
     </div>
   )
 }

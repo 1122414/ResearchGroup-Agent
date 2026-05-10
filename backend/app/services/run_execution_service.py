@@ -80,6 +80,7 @@ class RunExecutionService:
                 agent = AgentRepository.get_by_id(owner)
                 if agent and subagent_service.can_create_subagent(task, agent):
                     self._assert_not_cancelled(run_id)
+                    TaskRepository.update_status(task["id"], "running", subagent_triggered=True)
                     run_event_service.emit(run_id, "subagent.created", "subagent", "SubAgent 已触发", "任务复杂且可拆解，创建临时 SubAgent", task_id=task["id"], agent_id=owner)
                     await subagent_service.create_and_execute(owner, task)
                     run_event_service.emit(run_id, "subagent.completed", "subagent", "SubAgent 已完成", "结果已交回父 Agent", task_id=task["id"], agent_id=owner)

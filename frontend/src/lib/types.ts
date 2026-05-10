@@ -40,6 +40,14 @@ export interface Task {
   review_result: { approved: boolean; feedback: string } | null
   review_feedback: string | null
   run_id: string | null
+  assignment_info: {
+    score?: number
+    skill_match?: number
+    idle_factor?: number
+    primary_skill?: string
+    primary_skill_score?: number
+  }
+  subagent_triggered: boolean
   created_at: string
   updated_at: string
 }

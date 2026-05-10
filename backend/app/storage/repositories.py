@@ -95,9 +95,9 @@ class TaskRepository:
             INSERT INTO tasks (
                 id, title, description, task_type, required_skills, priority, complexity,
                 decomposability, status, owner_agent, collaborator_agents, subtasks, outputs,
-                review_result, review_feedback, run_id, created_at, updated_at
+                review_result, review_feedback, run_id, assignment_info, subagent_triggered, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task["id"],
@@ -116,6 +116,8 @@ class TaskRepository:
                 json.dumps(task.get("review_result"), ensure_ascii=False) if task.get("review_result") else None,
                 task.get("review_feedback"),
                 task.get("run_id"),
+                json.dumps(task.get("assignment_info", {}), ensure_ascii=False),
+                int(task.get("subagent_triggered", False)),
                 task["created_at"],
                 task["updated_at"],
             ),
@@ -129,9 +131,12 @@ class TaskRepository:
         updates = ["status = ?", "updated_at = ?"]
         params: list = [status, datetime.now().isoformat()]
         for key, value in kwargs.items():
-            if key in ("outputs", "collaborator_agents", "subtasks"):
+            if key in ("outputs", "collaborator_agents", "subtasks", "assignment_info"):
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False))
+            elif key == "subagent_triggered":
+                updates.append(f"{key} = ?")
+                params.append(int(value))
             elif key == "review_result":
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False) if value else None)
@@ -495,6 +500,8 @@ def _deserialize_task(row) -> dict:
         "review_result": _json_loads(row["review_result"], None) if row["review_result"] else None,
         "review_feedback": row["review_feedback"],
         "run_id": row["run_id"],
+        "assignment_info": _json_loads(row["assignment_info"] if "assignment_info" in keys else None, {}),
+        "subagent_triggered": bool(row["subagent_triggered"]) if "subagent_triggered" in keys else False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

@@ -3,9 +3,10 @@ from ..storage.repositories import TaskRepository, AgentRepository
 
 
 class TaskScheduler:
-    def assign_owner(self, task: dict, agents: list[dict]) -> str | None:
+    def assign_owner(self, task: dict, agents: list[dict]) -> tuple[str | None, dict]:
         best_agent = None
         best_score = -1
+        best_info = {}
 
         for agent in agents:
             skills = agent.get("skills", {})
@@ -19,8 +20,16 @@ class TaskScheduler:
             if score > best_score:
                 best_score = score
                 best_agent = agent
+                top_skill = max(required.keys(), key=lambda k: required.get(k, 0) * skills.get(k, 0)) if required else ""
+                best_info = {
+                    "score": round(score, 2),
+                    "skill_match": round(skill_match, 2),
+                    "idle_factor": round(idle_factor, 2),
+                    "primary_skill": top_skill,
+                    "primary_skill_score": skills.get(top_skill, 0) if top_skill else 0,
+                }
 
-        return best_agent["id"] if best_agent else None
+        return (best_agent["id"] if best_agent else None, best_info)
 
     def assign_collaborators(self, task: dict, agents: list[dict], owner_id: str) -> list[str]:
         complexity = task.get("complexity", 5)
@@ -56,7 +65,7 @@ class TaskScheduler:
         sorted_tasks = sorted(tasks, key=lambda t: t.get("priority", 5), reverse=True)
 
         for task in sorted_tasks:
-            owner_id = self.assign_owner(task, graduate_agents)
+            owner_id, assign_info = self.assign_owner(task, graduate_agents)
             collab_ids = self.assign_collaborators(task, graduate_agents, owner_id) if owner_id else []
 
             TaskRepository.update_status(
@@ -64,8 +73,9 @@ class TaskScheduler:
                 "assigned" if owner_id else "pending",
                 owner_agent=owner_id,
                 collaborator_agents=collab_ids,
+                assignment_info=assign_info,
             )
-            assignments[task["id"]] = {"owner": owner_id, "collaborators": collab_ids}
+            assignments[task["id"]] = {"owner": owner_id, "collaborators": collab_ids, "assignment_info": assign_info}
 
             if owner_id:
                 current_tasks = json_loads_safe(AgentRepository.get_by_id(owner_id).get("current_tasks", []))
