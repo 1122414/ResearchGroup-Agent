@@ -51,7 +51,7 @@ def create_and_run():
     print(f"    Created run_id={run_id}")
 
     start_resp = req("POST", f"/runs/{run_id}/start")
-    print(f"    Started run, status={start_resp.get('run', {}).get('status')}")
+    print(f"    Started run, status={start_resp.get('status')}")
     return run_id
 
 
@@ -124,15 +124,52 @@ def check_outputs(run_id: str):
     print(f"    OK - {len(outputs)} 个输出, 最终报告={len(report)} 个")
 
 
-def check_cancel():
-    print("[9/9] 检查取消接口...")
-    create_resp = req("POST", "/runs", {"research_goal": "测试取消接口"})
+def check_cancel_unstarted():
+    print("[9/10] 检查取消未开始 Run...")
+    create_resp = req("POST", "/runs", {"research_goal": "测试取消接口-未开始"})
     run_id = create_resp["run_id"]
 
     cancel_resp = req("POST", f"/runs/{run_id}/cancel", {"reason": "功能测试"})
     status = cancel_resp.get("run", {}).get("status")
     assert status == "cancelled", f"取消后状态应为 cancelled, 实际是 {status}"
     print(f"    OK - 未开始 Run 可直接取消, status={status}")
+
+
+def check_cancel_during_execution():
+    print("[10/10] 检查执行中取消...")
+    goal = "测试执行中取消功能"
+    create_resp = req("POST", "/runs", {"research_goal": goal})
+    run_id = create_resp["run_id"]
+
+    req("POST", f"/runs/{run_id}/start")
+
+    start_time = time.time()
+    cancelled = False
+    while time.time() - start_time < 30:
+        summary = req("GET", f"/runs/{run_id}/summary")
+        status = summary.get("run", {}).get("status", "")
+        if status in ("decomposing", "scheduling", "executing"):
+            cancel_resp = req("POST", f"/runs/{run_id}/cancel", {"reason": "测试中途中止"})
+            cancel_status = cancel_resp.get("run", {}).get("status")
+            assert cancel_status == "cancelling", f"执行中取消应返回 cancelling, 实际是 {cancel_status}"
+            cancelled = True
+            break
+        time.sleep(1)
+
+    if not cancelled:
+        req("POST", f"/runs/{run_id}/cancel", {"reason": "测试取消"})
+        cancelled = True
+
+    start_time = time.time()
+    while time.time() - start_time < 15:
+        summary = req("GET", f"/runs/{run_id}/summary")
+        status = summary.get("run", {}).get("status", "")
+        if status in ("cancelled", "completed"):
+            print(f"    OK - 执行中取消成功, 最终状态={status}")
+            return
+        time.sleep(1)
+
+    raise TimeoutError("执行中取消后未能在预期时间内到达最终状态")
 
 
 def check_office_state(run_id: str):
@@ -161,7 +198,8 @@ def main():
         check_usage(run_id)
         check_tasks(run_id)
         check_outputs(run_id)
-        check_cancel()
+        check_cancel_unstarted()
+        check_cancel_during_execution()
         check_office_state(run_id)
 
         print("\n" + "=" * 60)

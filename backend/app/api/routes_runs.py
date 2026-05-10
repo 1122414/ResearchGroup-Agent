@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 
 from ..core.config import settings
@@ -9,6 +9,17 @@ from ..models.run import RunStatus
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..storage.repositories import LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository
+
+
+import asyncio
+import traceback
+
+async def _safe_execute_run(run_id: str) -> None:
+    await asyncio.sleep(0)
+    try:
+        await run_execution_service.execute(run_id)
+    except Exception:
+        traceback.print_exc()
 
 
 class RunCreateRequest(BaseModel):
@@ -63,8 +74,18 @@ async def get_run(run_id: str):
 
 
 @router.post("/{run_id}/start")
-async def start_run(run_id: str):
-    return await run_execution_service.execute(run_id)
+async def start_run(run_id: str, background_tasks: BackgroundTasks):
+    run = RunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    if run.get("status") not in (RunStatus.created.value, RunStatus.queued.value):
+        return {"status": run.get("status"), "message": "运行已在进行中或已完成"}
+
+    started_at = datetime.now().isoformat()
+    RunRepository.update_status(run_id, RunStatus.queued.value, current_step="等待执行", started_at=started_at)
+    run_event_service.emit(run_id, "run.started", "run", "运行开始", "导师 Agent 开始处理研究目标")
+    background_tasks.add_task(_safe_execute_run, run_id)
+    return {"status": RunStatus.queued.value, "message": "运行已启动"}
 
 
 @router.post("/{run_id}/run_all")

@@ -28,6 +28,7 @@ export default function HomePage() {
     setError("")
     try {
       const { run_id } = await api.createRun(goal.trim())
+      await api.startRun(run_id)
       router.push(`/runs/${run_id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建运行失败")

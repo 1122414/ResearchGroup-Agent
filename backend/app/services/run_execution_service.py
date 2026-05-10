@@ -28,9 +28,13 @@ class RunExecutionService:
             return self.get_summary(run_id)
 
         try:
-            started_at = datetime.now().isoformat()
-            RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="开始拆解任务", started_at=started_at)
-            run_event_service.emit(run_id, "run.started", "run", "运行开始", "导师 Agent 开始处理研究目标")
+            current_status = run.get("status")
+            if current_status == RunStatus.created.value:
+                started_at = datetime.now().isoformat()
+                RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="开始拆解任务", started_at=started_at)
+                run_event_service.emit(run_id, "run.started", "run", "运行开始", "导师 Agent 开始处理研究目标")
+            else:
+                RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="开始拆解任务")
 
             self._assert_not_cancelled(run_id)
             run_event_service.emit(run_id, "phase.started", "decompose", "开始拆解任务", "导师正在把研究目标拆成任务")

@@ -17,7 +17,6 @@ async def get_settings():
         "llm_base_url": settings.llm_base_url,
         "llm_timeout": settings.llm_timeout,
         "llm_max_retries": settings.llm_max_retries,
-        "database_url": settings.database_url,
         "scheduler_skill_weight": settings.scheduler_skill_weight,
         "scheduler_idle_weight": settings.scheduler_idle_weight,
         "scheduler_idle_scale": settings.scheduler_idle_scale,

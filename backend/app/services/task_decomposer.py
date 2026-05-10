@@ -9,9 +9,6 @@ from ..storage.repositories import TaskRepository
 
 
 class TaskDecomposer:
-    def __init__(self):
-        self._llm = create_llm_provider()
-
     async def decompose(self, research_goal: str, run_id: str) -> list[dict]:
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请把下面的研究目标拆解为 3-7 个可执行任务。
@@ -26,7 +23,7 @@ class TaskDecomposer:
 4. 只返回合法 JSON 数组，不要输出解释性文字。
 """
 
-        raw_response = await self._llm.generate(
+        raw_response = await create_llm_provider().generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema={
                 "type": "array",

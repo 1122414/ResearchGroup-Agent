@@ -7,9 +7,6 @@ from ..storage.repositories import OutputRepository, TaskRepository
 
 
 class ReviewService:
-    def __init__(self):
-        self._llm = create_llm_provider()
-
     async def review(self, task: dict) -> dict:
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请以导师 Agent 身份审核下面的任务产出。
@@ -23,7 +20,7 @@ class ReviewService:
 请返回 JSON：{{"approved": true/false, "feedback": "审核意见"}}。
 """
 
-        raw_response = await self._llm.generate(
+        raw_response = await create_llm_provider().generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema={
                 "type": "object",

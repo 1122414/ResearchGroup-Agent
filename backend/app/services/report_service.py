@@ -8,9 +8,6 @@ from ..storage.repositories import AgentRepository, OutputRepository, RunReposit
 
 
 class ReportService:
-    def __init__(self):
-        self._llm = create_llm_provider()
-
     async def generate(self, run: dict) -> str:
         tasks = TaskRepository.get_all(run_id=run["id"])
         agents = AgentRepository.get_all()
@@ -42,7 +39,7 @@ Agent 列表：
 报告必须包含：研究目标、任务拆解、Agent 分工、执行结果、导师结论、后续建议。
 """
 
-        raw_response = await self._llm.generate(
+        raw_response = await create_llm_provider().generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             role="advisor_report",
             run_id=run["id"],

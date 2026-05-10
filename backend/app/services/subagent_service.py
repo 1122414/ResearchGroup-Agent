@@ -9,9 +9,6 @@ from ..storage.repositories import AgentRepository, OutputRepository, SubAgentRe
 
 
 class SubAgentService:
-    def __init__(self):
-        self._llm = create_llm_provider()
-
     def can_create_subagent(self, task: dict, agent: dict) -> bool:
         return (
             task.get("complexity", 5) >= settings.subagent_complexity_threshold
@@ -65,7 +62,7 @@ class SubAgentService:
 请返回 JSON，包含 findings 和 summary。不要改变父任务目标，不要创建新的 Agent。
 """
 
-        raw_response = await self._llm.generate(
+        raw_response = await create_llm_provider().generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema=expected_schema,
             role="subagent",

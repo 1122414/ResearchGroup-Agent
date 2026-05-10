@@ -483,6 +483,7 @@ def _deserialize_agent(row) -> dict:
 
 
 def _deserialize_task(row) -> dict:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "title": row["title"],

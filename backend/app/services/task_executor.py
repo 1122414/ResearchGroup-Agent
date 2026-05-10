@@ -7,9 +7,6 @@ from ..storage.repositories import AgentRepository, OutputRepository, TaskReposi
 
 
 class TaskExecutor:
-    def __init__(self):
-        self._llm = create_llm_provider()
-
     async def execute(self, task: dict) -> dict:
         task_title = task.get("title", "")
         task_type = task.get("task_type", "literature_survey")
@@ -38,7 +35,7 @@ class TaskExecutor:
 4. 不要输出 Markdown，只返回 JSON。
 """
 
-        raw_response = await self._llm.generate(
+        raw_response = await create_llm_provider().generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             role="graduate",
             run_id=task.get("run_id"),
