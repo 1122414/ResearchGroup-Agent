@@ -32,15 +32,33 @@ class MockLLMProvider(LLMProvider):
         task_id: str | None = None,
         agent_id: str | None = None,
     ) -> str:
+        started = time.perf_counter()
         if role == "advisor_decompose":
-            return self._mock_advisor_decomposition()
-        if role == "advisor_review":
-            return self._mock_review()
-        if role == "advisor_report":
-            return self._mock_report()
-        if role == "subagent":
-            return self._mock_subagent_result()
-        return self._mock_graduate_result(prompt)
+            result = self._mock_advisor_decomposition()
+        elif role == "advisor_review":
+            result = self._mock_review()
+        elif role == "advisor_report":
+            result = self._mock_report()
+        elif role == "subagent":
+            result = self._mock_subagent_result()
+        else:
+            result = self._mock_graduate_result(prompt)
+
+        from ..services.cost_tracker import cost_tracker
+
+        cost_tracker.record(
+            role=role,
+            provider="mock",
+            model="mock",
+            prompt=prompt,
+            completion=result,
+            run_id=run_id,
+            task_id=task_id,
+            agent_id=agent_id,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            success=True,
+        )
+        return result
 
     def _mock_advisor_decomposition(self) -> str:
         return json.dumps(
@@ -260,10 +278,43 @@ class OpenAICompatibleProvider(LLMProvider):
                     )
                     response.raise_for_status()
                     data = response.json()
-                    return data["choices"][0]["message"]["content"]
+                    result = data["choices"][0]["message"]["content"]
+                    usage = data.get("usage", {})
+                    from ..services.cost_tracker import cost_tracker
+
+                    cost_tracker.record(
+                        role=role,
+                        provider="openai_compatible",
+                        model=model,
+                        prompt=prompt,
+                        completion=result,
+                        run_id=run_id,
+                        task_id=task_id,
+                        agent_id=agent_id,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        success=True,
+                        prompt_tokens=usage.get("prompt_tokens"),
+                        completion_tokens=usage.get("completion_tokens"),
+                    )
+                    return result
                 except (httpx.HTTPError, KeyError, IndexError) as exc:
                     if attempt == settings.llm_max_retries - 1:
                         latency_ms = int((time.perf_counter() - started) * 1000)
+                        from ..services.cost_tracker import cost_tracker
+
+                        cost_tracker.record(
+                            role=role,
+                            provider="openai_compatible",
+                            model=model,
+                            prompt=prompt,
+                            completion="",
+                            run_id=run_id,
+                            task_id=task_id,
+                            agent_id=agent_id,
+                            latency_ms=latency_ms,
+                            success=False,
+                            error=str(exc),
+                        )
                         raise RuntimeError(f"LLM 调用失败，耗时 {latency_ms}ms: {exc}") from exc
         return ""
 

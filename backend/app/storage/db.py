@@ -1,7 +1,6 @@
 import sqlite3
-import json
 from pathlib import Path
-from typing import Optional
+
 from ..core.config import settings
 
 
@@ -22,7 +21,8 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.executescript("""
+    cursor.executescript(
+        """
         CREATE TABLE IF NOT EXISTS agents (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -93,9 +93,69 @@ def init_db():
             agent_assignments TEXT DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            completed_at TEXT
+            started_at TEXT,
+            completed_at TEXT,
+            cancel_requested_at TEXT,
+            cancel_reason TEXT,
+            total_cost_usd REAL DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            total_llm_calls INTEGER DEFAULT 0,
+            last_event_id TEXT
         );
-    """)
+
+        CREATE TABLE IF NOT EXISTS run_events (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            agent_id TEXT,
+            subagent_id TEXT,
+            event_type TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT DEFAULT '',
+            payload TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id TEXT PRIMARY KEY,
+            run_id TEXT,
+            task_id TEXT,
+            agent_id TEXT,
+            role TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            cost_usd REAL DEFAULT 0,
+            latency_ms INTEGER DEFAULT 0,
+            success INTEGER DEFAULT 1,
+            error TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
+        """
+    )
+
+    _ensure_columns(conn, "runs", {
+        "started_at": "TEXT",
+        "cancel_requested_at": "TEXT",
+        "cancel_reason": "TEXT",
+        "total_cost_usd": "REAL DEFAULT 0",
+        "total_tokens": "INTEGER DEFAULT 0",
+        "total_llm_calls": "INTEGER DEFAULT 0",
+        "last_event_id": "TEXT",
+    })
 
     conn.commit()
     conn.close()
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]):
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")

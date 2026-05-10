@@ -71,7 +71,7 @@ class TaskScheduler:
                 current_tasks = json_loads_safe(AgentRepository.get_by_id(owner_id).get("current_tasks", []))
                 current_tasks.append(task["id"])
                 load = min(1.0, len(current_tasks) / 3.0)
-                AgentRepository.update_status(owner_id, "working", load)
+                AgentRepository.update_status(owner_id, "working", load, current_tasks=current_tasks)
 
         return assignments
 
