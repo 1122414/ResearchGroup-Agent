@@ -22,6 +22,10 @@ class RunExecutionService:
         run = RunRepository.get_by_id(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="运行不存在")
+        if run.get("status") in (RunStatus.cancelling.value, RunStatus.cancelled.value):
+            RunRepository.update_status(run_id, RunStatus.cancelled.value, current_step="已停止", completed_at=datetime.now().isoformat())
+            run_event_service.emit(run_id, "run.cancelled", "cancel", "运行已停止", "运行在启动前已收到停止请求")
+            return self.get_summary(run_id)
 
         try:
             started_at = datetime.now().isoformat()
@@ -128,6 +132,18 @@ class RunExecutionService:
             raise HTTPException(status_code=404, detail="运行不存在")
         if run.get("status") in (RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value):
             return run
+        if run.get("status") in (RunStatus.created.value, RunStatus.queued.value):
+            RunRepository.update_status(
+                run_id,
+                RunStatus.cancelled.value,
+                current_step="已停止",
+                cancel_requested_at=datetime.now().isoformat(),
+                cancel_reason=reason,
+                completed_at=datetime.now().isoformat(),
+            )
+            run_event_service.emit(run_id, "run.cancel_requested", "cancel", "收到停止请求", reason)
+            run_event_service.emit(run_id, "run.cancelled", "cancel", "运行已停止", "运行尚未开始，已直接停止")
+            return RunRepository.get_by_id(run_id)
         RunRepository.update_status(
             run_id,
             RunStatus.cancelling.value,
