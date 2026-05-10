@@ -1,6 +1,6 @@
 # ResearchGroup-Agent
 
-多 Agent 研究生课题组协作系统。导师 Agent 负责拆解研究目标、调度研究生 Agent、审核任务产出，并生成阶段性报告。当前版本重点修复了 P0 可读性、运行事件、成本记录和停止接口。
+多 Agent 研究生课题组协作系统。导师 Agent 负责拆解研究目标、调度研究生 Agent、审核任务产出，并生成阶段性报告。
 
 ## 当前能力
 
@@ -13,6 +13,9 @@
 - LLM usage 记录：调用次数、token 估算、耗时、成本
 - 前端运行详情页：`/runs/{run_id}`
 - 前端停止运行按钮
+- 前端设置面板：查看和切换 Mock 模式、模型配置、调度器参数
+- 任务板可解释性：调度分、主要技能、SubAgent 标志、产出数量
+- 像素办公室监控：`/office`
 
 ## 环境配置
 
@@ -68,18 +71,25 @@ PowerShell 如果拦截 `npm.ps1`，请使用 `npm.cmd`。
 
 ## 推荐调试流程
 
-1. 打开首页，输入研究目标。
-2. 点击“创建并运行”。
+1. 打开首页 http://localhost:3000，输入研究目标。
+2. 点击"创建并运行"。
 3. 页面跳转到 `/runs/{run_id}`。
 4. 在运行详情页查看：
    - 当前阶段
-   - 事件时间线
+   - 事件时间线（实时轮询）
    - 任务执行表
    - Agent 活动
    - LLM usage 和成本
    - 停止运行按钮
-5. 查看任务板：`/tasks?run_id={run_id}`。
-6. 查看输出中心：`/outputs?run_id={run_id}`。
+5. 查看任务板：`/tasks?run_id={run_id}`
+   - 点击任务卡查看调度信息、技能矩阵、产出列表
+6. 查看输出中心：`/outputs?run_id={run_id}`
+   - 按任务和类型过滤
+7. 查看像素办公室：`/office?run_id={run_id}`
+   - 实时查看 Agent 位置和状态
+   - 悬停查看气泡文案
+   - 点击角色或任务查看详情
+8. 点击导航栏设置图标查看系统配置。
 
 ## P0 功能烟测
 
@@ -92,6 +102,7 @@ python scripts/functional_p0_smoke.py
 脚本会检查：
 
 - 后端健康状态
+- 设置 API
 - 创建 Run
 - 启动执行
 - 任务拆解
@@ -99,6 +110,7 @@ python scripts/functional_p0_smoke.py
 - LLM usage
 - 最终报告输出
 - 未开始 Run 的停止接口
+- 像素办公室 API
 
 ## 常用 API
 
@@ -112,17 +124,19 @@ GET  /api/runs/{run_id}/usage
 GET  /api/tasks?run_id={run_id}
 GET  /api/outputs?run_id={run_id}
 GET  /api/agents
+GET  /api/settings
+PATCH /api/settings
+GET  /api/monitor/office-state?run_id={run_id}
 ```
 
 ## 开发边界
 
-当前 P0 阶段不做：
+当前阶段不做：
 
 - 多用户权限
-- 外部工具接入
+- 外部工具接入（Zotero、Overleaf、Notion 等）
 - 长期记忆或向量库
-- WebSocket 强依赖
+- WebSocket 强依赖（当前使用轮询）
 - LangGraph / AutoGen / CrewAI 替换
-- 像素办公室动画
-
-像素办公室监控已在 `plan_/5.10` 中规划，建议等 P0 稳定后再做。
+- 复杂像素美术资产
+- 账号系统、权限系统、OAuth
