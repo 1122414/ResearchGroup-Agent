@@ -1,8 +1,9 @@
 import json
 from datetime import datetime
+
 from ..core.llm_provider import create_llm_provider
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import TaskRepository, AgentRepository, OutputRepository
+from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
 
 
 class TaskExecutor:
@@ -10,9 +11,11 @@ class TaskExecutor:
         self._llm = create_llm_provider()
 
     async def execute(self, task: dict) -> dict:
-        task_type = task.get("task_type", "literature_survey")
         task_title = task.get("title", "")
-        task_desc = task.get("description", "")
+        task_type = task.get("task_type", "literature_survey")
+        owner_id = task.get("owner_agent", "")
+        owner = AgentRepository.get_by_id(owner_id) if owner_id else None
+        agent_type = owner.get("type", "researcher") if owner else "researcher"
 
         prompt_map = {
             "researcher": "grad_researcher",
@@ -21,55 +24,57 @@ class TaskExecutor:
             "analyst": "grad_analyst",
             "writer": "grad_writer",
         }
-
-        owner_id = task.get("owner_agent", "")
-        owner = AgentRepository.get_by_id(owner_id) if owner_id else None
-        agent_type = owner.get("type", "researcher") if owner else "researcher"
-        prompt_name = prompt_map.get(agent_type, "grad_researcher")
-
-        system_prompt = prompt_loader.load(prompt_name)
-        user_prompt = f"""请执行以下任务并返回结构化结果：
+        system_prompt = prompt_loader.load(prompt_map.get(agent_type, "grad_researcher"))
+        user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
 任务标题：{task_title}
 任务类型：{task_type}
-任务描述：{task_desc}
-你的角色：{agent_type}
+任务描述：{task.get("description", "")}
 
-请以 JSON 格式返回结果，包含你的分析、发现和建议。"""
+输出要求：
+1. 给出 summary。
+2. 给出 findings 或 deliverables。
+3. 给出 risks 或 next_steps。
+4. 不要输出 Markdown，只返回 JSON。
+"""
 
-        full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-        raw_response = await self._llm.generate(prompt=full_prompt, role="graduate")
-
+        raw_response = await self._llm.generate(
+            prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
+            role="graduate",
+            run_id=task.get("run_id"),
+            task_id=task.get("id"),
+            agent_id=owner_id,
+        )
         result = self._parse_result(raw_response)
         TaskRepository.update_status(task["id"], "running", outputs=task.get("outputs", []) + [result])
 
-        output_id = f"out_{task['id']}"
-        OutputRepository.insert({
-            "id": output_id,
-            "output_type": "task_result",
-            "title": f"任务结果: {task_title}",
-            "content": json.dumps(result, ensure_ascii=False, indent=2),
-            "run_id": task.get("run_id"),
-            "task_id": task["id"],
-            "agent_id": owner_id,
-            "created_at": datetime.now().isoformat(),
-        })
-
+        OutputRepository.insert(
+            {
+                "id": f"out_{task['id']}",
+                "output_type": "task_result",
+                "title": f"任务产出：{task_title}",
+                "content": json.dumps(result, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"),
+                "task_id": task["id"],
+                "agent_id": owner_id,
+                "created_at": datetime.now().isoformat(),
+            }
+        )
         return result
 
     def _parse_result(self, raw: str) -> dict:
-        raw = raw.strip()
-        if raw.startswith("```json"):
-            raw = raw[7:]
-        if raw.startswith("```"):
-            raw = raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
+        text = raw.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
         try:
-            return json.loads(raw)
+            parsed = json.loads(text.strip())
+            return parsed if isinstance(parsed, dict) else {"items": parsed}
         except json.JSONDecodeError:
-            return {"raw_output": raw, "parsed": False}
+            return {"raw_output": text, "parsed": False}
 
 
 task_executor = TaskExecutor()

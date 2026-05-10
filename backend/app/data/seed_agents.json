@@ -1,9 +1,9 @@
 [
   {
     "id": "grad_researcher",
-    "name": "调研型研究生 Agent",
+    "name": "文献研究生",
     "type": "researcher",
-    "description": "擅长文献检索、论文阅读、相关工作总结和研究现状分析。",
+    "description": "负责文献综述、相关工作比较、研究脉络梳理和理论依据整理。",
     "skills": {
       "literature_review": 10,
       "coding": 4,
@@ -23,9 +23,9 @@
   },
   {
     "id": "grad_engineer",
-    "name": "工程型研究生 Agent",
+    "name": "工程研究生",
     "type": "engineer",
-    "description": "擅长系统架构设计、代码实现、接口开发和工具接入。",
+    "description": "负责系统设计、工程实现、接口边界、可运行性和后续扩展方案。",
     "skills": {
       "literature_review": 4,
       "coding": 10,
@@ -45,9 +45,9 @@
   },
   {
     "id": "grad_experimenter",
-    "name": "实验型研究生 Agent",
+    "name": "实验研究生",
     "type": "experimenter",
-    "description": "擅长实验设计、假设验证、参数调优和实验记录。",
+    "description": "负责实验设计、评测指标、消融方案、对照组和可复现实验流程。",
     "skills": {
       "literature_review": 5,
       "coding": 7,
@@ -67,9 +67,9 @@
   },
   {
     "id": "grad_analyst",
-    "name": "数据分析型研究生 Agent",
+    "name": "数据分析研究生",
     "type": "analyst",
-    "description": "擅长数据清洗、指标分析、结果解释和可视化。",
+    "description": "负责结果分析、指标解释、异常定位、图表摘要和结论支撑。",
     "skills": {
       "literature_review": 6,
       "coding": 7,
@@ -89,9 +89,9 @@
   },
   {
     "id": "grad_writer",
-    "name": "写作型研究生 Agent",
+    "name": "写作研究生",
     "type": "writer",
-    "description": "擅长周报撰写、报告组织、论文草稿和学术润色。",
+    "description": "负责阶段报告、论文草稿、结构整理、术语统一和学术表达润色。",
     "skills": {
       "literature_review": 7,
       "coding": 4,

@@ -1,8 +1,9 @@
 import json
 from datetime import datetime
+
 from ..core.llm_provider import create_llm_provider
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import TaskRepository, OutputRepository
+from ..storage.repositories import OutputRepository, TaskRepository
 
 
 class ReviewService:
@@ -11,71 +12,70 @@ class ReviewService:
 
     async def review(self, task: dict) -> dict:
         system_prompt = prompt_loader.load("advisor_agent")
-        user_prompt = f"""请审核以下任务结果：
+        user_prompt = f"""请以导师 Agent 身份审核下面的任务产出。
 
 任务标题：{task.get('title', '')}
 任务类型：{task.get('task_type', '')}
-任务描述：{task.get('description', '')}
-执行结果：{json.dumps(task.get('outputs', []), ensure_ascii=False, indent=2)}
+任务说明：{task.get('description', '')}
+任务产出：
+{json.dumps(task.get('outputs', []), ensure_ascii=False, indent=2)}
 
-审核标准：
-1. 结果是否完整覆盖任务要求
-2. 结果是否结构化清晰
-3. 结果是否有实质性内容
-4. 约15%的任务可以给返工
+请返回 JSON：{{"approved": true/false, "feedback": "审核意见"}}。
+"""
 
-请以 JSON 格式返回：
-{{"approved": true/false, "feedback": "审核意见"}}"""
-
-        full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
         raw_response = await self._llm.generate(
-            prompt=full_prompt,
+            prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema={
                 "type": "object",
                 "properties": {
                     "approved": {"type": "boolean"},
-                    "feedback": {"type": "string"}
+                    "feedback": {"type": "string"},
                 },
-                "required": ["approved", "feedback"]
+                "required": ["approved", "feedback"],
             },
-            role="advisor_review"
+            role="advisor_review",
+            run_id=task.get("run_id"),
+            task_id=task["id"],
+            agent_id=task.get("owner_agent"),
         )
 
         review = self._parse_review(raw_response)
         new_status = "completed" if review.get("approved") else "need_revision"
-
         TaskRepository.update_status(
             task["id"],
             new_status,
             review_result=review,
             review_feedback=review.get("feedback", ""),
         )
-
-        OutputRepository.insert({
-            "id": f"review_{task['id']}",
-            "output_type": "review",
-            "title": f"审核结果: {task.get('title', '')}",
-            "content": json.dumps(review, ensure_ascii=False, indent=2),
-            "run_id": task.get("run_id"),
-            "task_id": task["id"],
-            "created_at": datetime.now().isoformat(),
-        })
-
+        OutputRepository.insert(
+            {
+                "id": f"review_{task['id']}",
+                "output_type": "review",
+                "title": f"导师审核：{task.get('title', '')}",
+                "content": json.dumps(review, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"),
+                "task_id": task["id"],
+                "agent_id": task.get("owner_agent"),
+                "created_at": datetime.now().isoformat(),
+            }
+        )
         return review
 
     def _parse_review(self, raw: str) -> dict:
-        raw = raw.strip()
-        if raw.startswith("```json"):
-            raw = raw[7:]
-        if raw.startswith("```"):
-            raw = raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
+        text = raw.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
         try:
-            return json.loads(raw)
+            parsed = json.loads(text.strip())
+            if isinstance(parsed, dict):
+                return {"approved": bool(parsed.get("approved", True)), "feedback": parsed.get("feedback", "")}
         except json.JSONDecodeError:
-            return {"approved": True, "feedback": "审核通过（响应解析失败，默认通过）"}
+            pass
+        return {"approved": True, "feedback": "导师审核通过，但原始审核输出不是标准 JSON。"}
 
 
 review_service = ReviewService()

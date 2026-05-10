@@ -1,42 +1,46 @@
-const API_BASE = 'http://localhost:8000/api'
+import type { GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
     ...options,
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: '请求失败' }))
+    const err = await res.json().catch(() => ({ detail: "请求失败" }))
     throw new Error(err.detail || `HTTP ${res.status}`)
   }
   return res.json()
 }
 
 export const api = {
-  health: () => fetchApi<{ status: string; mock_mode: boolean }>('/health'),
+  health: () => fetchApi<{ status: string; mock_mode: boolean; model?: string }>("/health"),
 
-  // Agents
-  getAgents: () => fetchApi<{ agents: any[] }>('/agents'),
-  getAgent: (id: string) => fetchApi<{ agent: any }>(`/agents/${id}`),
+  getAgents: () => fetchApi<{ agents: GraduateAgent[] }>("/agents"),
+  getAgent: (id: string) => fetchApi<{ agent: GraduateAgent }>(`/agents/${id}`),
 
-  // Tasks
   getTasks: (runId?: string) =>
-    fetchApi<{ tasks: any[] }>(`/tasks${runId ? `?run_id=${runId}` : ''}`),
-  getTask: (id: string) => fetchApi<{ task: any }>(`/tasks/${id}`),
+    fetchApi<{ tasks: Task[] }>(`/tasks${runId ? `?run_id=${runId}` : ""}`),
+  getTask: (id: string) => fetchApi<{ task: Task }>(`/tasks/${id}`),
 
-  // Runs
   createRun: (researchGoal: string) =>
-    fetchApi<{ run_id: string; status: string }>('/runs', {
-      method: 'POST',
+    fetchApi<{ run_id: string; status: string }>("/runs", {
+      method: "POST",
       body: JSON.stringify({ research_goal: researchGoal }),
     }),
-  getRun: (id: string) => fetchApi<{ run: any; tasks: any[] }>(`/runs/${id}`),
-  getRuns: () => fetchApi<{ runs: any[] }>('/runs'),
-  runAll: (id: string) =>
-    fetchApi<any>(`/runs/${id}/run_all`, { method: 'POST' }),
+  getRun: (id: string) => fetchApi<{ run: Run; tasks: Task[] }>(`/runs/${id}`),
+  getRuns: () => fetchApi<{ runs: Run[] }>("/runs"),
+  runAll: (id: string) => fetchApi<unknown>(`/runs/${id}/run_all`, { method: "POST" }),
+  startRun: (id: string) => fetchApi<unknown>(`/runs/${id}/start`, { method: "POST" }),
+  cancelRun: (id: string) => fetchApi<unknown>(`/runs/${id}/cancel`, { method: "POST" }),
+  getRunSummary: (id: string) => fetchApi<RunSummary>(`/runs/${id}/summary`),
+  getRunEvents: (id: string, limit = 100) =>
+    fetchApi<{ events: RunEvent[]; next_after_id?: string }>(`/runs/${id}/events?limit=${limit}`),
+  getRunUsage: (id: string) =>
+    fetchApi<{ summary: RunSummary["usage"]; items: LLMUsage[] }>(`/runs/${id}/usage`),
 
-  // Outputs
   getOutputs: (runId?: string) =>
-    fetchApi<{ outputs: any[] }>(`/outputs${runId ? `?run_id=${runId}` : ''}`),
-  getOutput: (id: string) => fetchApi<{ output: any }>(`/outputs/${id}`),
+    fetchApi<{ outputs: Output[] }>(`/outputs${runId ? `?run_id=${runId}` : ""}`),
+  getOutput: (id: string) => fetchApi<{ output: Output }>(`/outputs/${id}`),
 }

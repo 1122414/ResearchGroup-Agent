@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
-import { AGENT_STATUS_LABELS, SKILL_NAMES } from "@/lib/types"
+import { AGENT_STATUS_LABELS, SKILL_NAMES, type GraduateAgent } from "@/lib/types"
 
 const STATUS_COLORS: Record<string, string> = {
   idle: "bg-green-100 text-green-700",
@@ -19,25 +19,28 @@ const STATUS_COLORS: Record<string, string> = {
 const SKILL_BARS = ["literature_review", "coding", "experiment", "data_analysis", "academic_writing", "mentoring"]
 
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<any[]>([])
+  const [agents, setAgents] = useState<GraduateAgent[]>([])
 
   useEffect(() => {
     api.getAgents().then(({ agents }) => setAgents(agents))
   }, [])
 
-  const graduateAgents = agents.filter((a) =>
-    ["researcher", "engineer", "experimenter", "analyst", "writer"].includes(a.type)
+  const graduateAgents = agents.filter((agent) =>
+    ["researcher", "engineer", "experimenter", "analyst", "writer"].includes(agent.type),
   )
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold">Agent 状态面板</h2>
+      <div>
+        <h2 className="text-xl font-bold">Agent 状态</h2>
+        <p className="text-sm text-gray-500">查看每个研究生 Agent 的职责、技能和当前负载。</p>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {graduateAgents.map((agent) => (
           <Card key={agent.id}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center justify-between">
+              <CardTitle className="flex items-center justify-between gap-3 text-base">
                 <span>{agent.name}</span>
                 <Badge className={STATUS_COLORS[agent.status] || ""}>
                   {AGENT_STATUS_LABELS[agent.status] || agent.status}
@@ -45,44 +48,38 @@ export default function AgentsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <p className="text-gray-600 text-xs">{agent.description}</p>
+              <p className="text-xs leading-5 text-gray-600">{agent.description}</p>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-medium">当前负载</span>
                   <span className="text-xs">{Math.round(agent.current_load * 100)}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full transition-all"
-                    style={{ width: `${agent.current_load * 100}%` }}
-                  />
+                <div className="h-2 w-full rounded-full bg-gray-200">
+                  <div className="h-2 rounded-full bg-gray-900" style={{ width: `${agent.current_load * 100}%` }} />
                 </div>
               </div>
 
               <Separator />
 
               <div>
-                <div className="text-xs font-medium mb-1">能力矩阵</div>
+                <div className="mb-2 text-xs font-medium">技能矩阵</div>
                 {SKILL_BARS.map((skill) => (
-                  <div key={skill} className="flex items-center gap-2 mb-1">
-                    <span className="text-xs w-16 text-gray-500">{SKILL_NAMES[skill]}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-1.5">
-                      <div
-                        className="bg-indigo-500 h-1.5 rounded-full"
-                        style={{ width: `${agent.skills[skill] * 10}%` }}
-                      />
+                  <div key={skill} className="mb-1 flex items-center gap-2">
+                    <span className="w-16 text-xs text-gray-500">{SKILL_NAMES[skill]}</span>
+                    <div className="h-1.5 flex-1 rounded-full bg-gray-100">
+                      <div className="h-1.5 rounded-full bg-gray-700" style={{ width: `${agent.skills[skill as keyof typeof agent.skills] * 10}%` }} />
                     </div>
-                    <span className="text-xs w-4 text-right font-medium">{agent.skills[skill]}</span>
+                    <span className="w-5 text-right text-xs font-medium">{agent.skills[skill as keyof typeof agent.skills]}</span>
                   </div>
                 ))}
               </div>
 
               <div className="text-xs text-gray-400">
-                偏好任务：{(agent.preferred_task_types || []).join("、") || "无"}
+                当前任务：{agent.current_tasks?.length ? agent.current_tasks.join("、") : "暂无"}
               </div>
               <div className="text-xs text-gray-400">
-                SubAgent上限：{agent.max_subagents} | 工具：{(agent.tools || []).join("、") || "无"}
+                可创建 SubAgent：{agent.max_subagents} 个
               </div>
             </CardContent>
           </Card>

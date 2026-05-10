@@ -1,34 +1,37 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
-import { RUN_STATUS_LABELS } from "@/lib/types"
+import { RUN_STATUS_LABELS, type Run } from "@/lib/types"
 
 export default function HomePage() {
   const router = useRouter()
   const [goal, setGoal] = useState("")
+  const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<any>(null)
   const [error, setError] = useState("")
+  const [mockMode, setMockMode] = useState<boolean | null>(null)
 
-  const exampleGoal = "请让课题组围绕「面向研究生课题组协作的多Agent系统」完成一次阶段性调研，输出相关项目调研、系统架构建议、实验验证方案、数据分析指标和周报总结。"
+  const exampleGoal = "研究一个可观测的多 Agent 课题组协作系统，要求能拆解任务、分配研究生 Agent、记录执行过程和生成阶段报告。"
+
+  useEffect(() => {
+    api.health().then((data) => setMockMode(data.mock_mode)).catch(() => setMockMode(null))
+    api.getRuns().then(({ runs }) => setRuns(runs)).catch(() => setRuns([]))
+  }, [])
 
   const handleSubmit = async () => {
     if (!goal.trim()) return
     setLoading(true)
     setError("")
-    setResult(null)
     try {
       const { run_id } = await api.createRun(goal.trim())
-      const runResult = await api.runAll(run_id)
-      const runData = await api.getRun(run_id)
-      setResult({ ...runResult, run: runData.run, tasks: runData.tasks })
-    } catch (e: any) {
-      setError(e.message)
+      await api.runAll(run_id)
+      router.push(`/runs/${run_id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建运行失败")
     } finally {
       setLoading(false)
     }
@@ -38,110 +41,67 @@ export default function HomePage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>启动虚拟课题组</CardTitle>
-          <CardDescription>
-            输入研究目标，导师Agent将拆解任务并分配给五类研究生Agent协作完成
-          </CardDescription>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle>创建研究任务</CardTitle>
+              <CardDescription>
+                输入研究目标，系统会由导师 Agent 拆解任务，并调度研究生 Agent 协作执行。
+              </CardDescription>
+            </div>
+            {mockMode !== null && (
+              <Badge variant={mockMode ? "secondary" : "default"}>
+                {mockMode ? "Mock 模式" : "真实 LLM 模式"}
+              </Badge>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <textarea
-            className="w-full min-h-[120px] p-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+            className="min-h-[140px] w-full resize-y rounded-lg border p-3 text-sm outline-none focus:ring-2 focus:ring-gray-900"
             placeholder={exampleGoal}
             value={goal}
-            onChange={(e) => setGoal(e.target.value)}
+            onChange={(event) => setGoal(event.target.value)}
           />
-          <div className="flex gap-3 items-center">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={handleSubmit}
               disabled={loading || !goal.trim()}
-              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                  运行中...
-                </span>
-              ) : (
-                "启动虚拟课题组"
-              )}
+              {loading ? "正在创建并执行..." : "创建并运行"}
             </button>
             <button
               onClick={() => setGoal(exampleGoal)}
-              className="text-sm text-blue-600 hover:text-blue-800"
+              className="text-sm text-gray-600 hover:text-gray-900"
+              type="button"
             >
-              填入示例
+              填入示例目标
             </button>
           </div>
-          {error && (
-            <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
-          )}
+          {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         </CardContent>
       </Card>
 
-      {result && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              运行结果
-              <Badge variant={result.status === "completed" ? "default" : "destructive"}>
-                {RUN_STATUS_LABELS[result.run?.status] || result.run?.status}
-              </Badge>
-            </CardTitle>
-            <CardDescription>
-              研究目标：{result.run?.research_goal?.slice(0, 80)}...
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-blue-700">{result.tasks_total}</div>
-                <div className="text-sm text-blue-600">总任务数</div>
-              </div>
-              <div className="bg-green-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-green-700">{result.tasks_completed}</div>
-                <div className="text-sm text-green-600">已完成</div>
-              </div>
-              <div className="bg-amber-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-amber-700">{result.tasks_need_revision}</div>
-                <div className="text-sm text-amber-600">需返工</div>
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => router.push(`/tasks?run_id=${result.run?.id}`)}
-                className="px-4 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200"
-              >
-                查看任务板 →
-              </button>
-              <button
-                onClick={() => router.push("/agents")}
-                className="px-4 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200"
-              >
-                查看Agent状态 →
-              </button>
-              <button
-                onClick={() => router.push(`/outputs?run_id=${result.run?.id}`)}
-                className="px-4 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200"
-              >
-                查看产出 →
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <CardHeader>
-          <CardTitle>系统概览</CardTitle>
+          <CardTitle>最近运行</CardTitle>
+          <CardDescription>继续查看已有 Run 的任务、状态和输出。</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-gray-600">
-          <p><strong>导师Agent</strong> — 负责任务拆解、分配、审核和阶段性总结</p>
-          <p><strong>五类研究生Agent</strong> — 调研/工程/实验/数据分析/写作，按能力画像分工协作</p>
-          <p><strong>本科生SubAgent</strong> — 临时创建处理短期子任务，用完即销毁</p>
-          <p><strong>任务板</strong> — 看板形式展示所有任务的状态流转</p>
+        <CardContent className="space-y-2">
+          {runs.length === 0 && <div className="text-sm text-gray-500">还没有运行记录。</div>}
+          {runs.slice(0, 8).map((run) => (
+            <button
+              key={run.id}
+              onClick={() => router.push(`/runs/${run.id}`)}
+              className="flex w-full items-center justify-between gap-4 rounded-lg border bg-white p-3 text-left text-sm hover:bg-gray-50"
+            >
+              <div className="min-w-0">
+                <div className="font-medium text-gray-900">{run.id}</div>
+                <div className="truncate text-gray-500">{run.research_goal}</div>
+              </div>
+              <Badge variant="secondary">{RUN_STATUS_LABELS[run.status] || run.status}</Badge>
+            </button>
+          ))}
         </CardContent>
       </Card>
     </div>
