@@ -43,4 +43,11 @@ export const api = {
   getOutputs: (runId?: string) =>
     fetchApi<{ outputs: Output[] }>(`/outputs${runId ? `?run_id=${runId}` : ""}`),
   getOutput: (id: string) => fetchApi<{ output: Output }>(`/outputs/${id}`),
+
+  getSettings: () => fetchApi<Record<string, string | number | boolean>>("/settings"),
+  updateSettings: (body: Record<string, unknown>) =>
+    fetchApi<{ updated: Record<string, unknown>; message: string }>("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
+import { SettingsButton } from "@/components/settings-panel"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -16,7 +17,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <Link href="/" className="text-lg font-bold text-gray-900">
               ResearchGroup-Agent
             </Link>
-            <nav className="flex gap-6 text-sm">
+            <nav className="flex items-center gap-6 text-sm">
               <Link href="/" className="text-gray-600 hover:text-gray-900">
                 首页
               </Link>
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <Link href="/outputs" className="text-gray-600 hover:text-gray-900">
                 输出
               </Link>
+              <SettingsButton />
             </nav>
           </div>
         </header>

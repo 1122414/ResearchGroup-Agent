@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from app.api.routes_agents import router as agents_router
 from app.api.routes_outputs import router as outputs_router
 from app.api.routes_runs import router as runs_router
+from app.api.routes_settings import router as settings_router
 from app.api.routes_tasks import router as tasks_router
 from app.core.config import settings
 from app.services.agent_registry import agent_registry
@@ -42,6 +43,7 @@ app.include_router(agents_router)
 app.include_router(tasks_router)
 app.include_router(runs_router)
 app.include_router(outputs_router)
+app.include_router(settings_router)
 
 
 @app.get("/api/health")

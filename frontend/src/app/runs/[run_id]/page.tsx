@@ -29,37 +29,46 @@ export default function RunDetailPage() {
   const [canceling, setCanceling] = useState(false)
   const startedRef = useRef(false)
 
-  const load = async () => {
-    try {
-      const [summaryData, eventsData, usageData] = await Promise.all([
-        api.getRunSummary(runId),
-        api.getRunEvents(runId, 200),
-        api.getRunUsage(runId),
-      ])
-      setSummary(summaryData)
-      setEvents(eventsData.events)
-      setUsageItems(usageData.items)
-      setError("")
-
-      if (summaryData.run.status === "created" && !startedRef.current) {
-        startedRef.current = true
-        api.startRun(runId).catch((err) => setError(err instanceof Error ? err.message : "启动运行失败"))
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载运行详情失败")
-    }
-  }
-
   useEffect(() => {
-    load()
-    const timer = window.setInterval(() => {
-      if (!summary || !FINAL_STATUSES.has(summary.run.status)) {
-        load()
+    let cancelled = false
+
+    const fetchData = async () => {
+      try {
+        const [summaryData, eventsData, usageData] = await Promise.all([
+          api.getRunSummary(runId),
+          api.getRunEvents(runId, 200),
+          api.getRunUsage(runId),
+        ])
+        if (cancelled) return
+        setSummary(summaryData)
+        setEvents(eventsData.events)
+        setUsageItems(usageData.items)
+        setError("")
+
+        if (summaryData.run.status === "created" && !startedRef.current) {
+          startedRef.current = true
+          api.startRun(runId).catch((err) => setError(err instanceof Error ? err.message : "启动运行失败"))
+        }
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : "加载运行详情失败")
       }
+    }
+
+    fetchData()
+    const timer = window.setInterval(() => {
+      setSummary((prev) => {
+        if (!prev || FINAL_STATUSES.has(prev.run.status)) {
+          return prev
+        }
+        fetchData()
+        return prev
+      })
     }, 1500)
-    return () => window.clearInterval(timer)
-    // summary intentionally omitted so the interval does not reset every poll.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [runId])
 
   const canCancel = summary && !FINAL_STATUSES.has(summary.run.status) && summary.run.status !== "cancelling"
@@ -75,7 +84,14 @@ export default function RunDetailPage() {
     setCanceling(true)
     try {
       await api.cancelRun(summary.run.id)
-      await load()
+      const [summaryData, eventsData, usageData] = await Promise.all([
+        api.getRunSummary(runId),
+        api.getRunEvents(runId, 200),
+        api.getRunUsage(runId),
+      ])
+      setSummary(summaryData)
+      setEvents(eventsData.events)
+      setUsageItems(usageData.items)
     } catch (err) {
       setError(err instanceof Error ? err.message : "停止运行失败")
     } finally {
