@@ -337,6 +337,21 @@ class RunRepository:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def delete(run_id: str):
+        conn = get_connection()
+        task_rows = conn.execute("SELECT id FROM tasks WHERE run_id = ?", (run_id,)).fetchall()
+        task_ids = [row["id"] for row in task_rows]
+        for task_id in task_ids:
+            conn.execute("DELETE FROM subagents WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM outputs WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM run_events WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM llm_usage WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM tasks WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        conn.commit()
+        conn.close()
+
 
 class RunEventRepository:
     @staticmethod

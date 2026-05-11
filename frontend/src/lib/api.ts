@@ -1,16 +1,23 @@
 import type { GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
+import { frontendLogger } from "./logger"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = options?.method || "GET"
+  frontendLogger.info(`API ${method} ${path}`)
+  const start = performance.now()
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   })
+  const duration = Math.round(performance.now() - start)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "请求失败" }))
+    frontendLogger.error(`API ${method} ${path} failed | status=${res.status} | duration=${duration}ms`)
     throw new Error(err.detail || `HTTP ${res.status}`)
   }
+  frontendLogger.info(`API ${method} ${path} success | status=${res.status} | duration=${duration}ms`)
   return res.json()
 }
 
@@ -24,16 +31,28 @@ export const api = {
     fetchApi<{ tasks: Task[] }>(`/tasks${runId ? `?run_id=${runId}` : ""}`),
   getTask: (id: string) => fetchApi<{ task: Task }>(`/tasks/${id}`),
 
-  createRun: (researchGoal: string) =>
+  createRun: (researchGoal: string, attachments: Record<string, unknown>[] = []) =>
     fetchApi<{ run_id: string; status: string }>("/runs", {
       method: "POST",
-      body: JSON.stringify({ research_goal: researchGoal }),
+      body: JSON.stringify({ research_goal: researchGoal, attachments }),
+    }),
+  preflightRun: (researchGoal: string, attachments: Record<string, unknown>[] = []) =>
+    fetchApi<{
+      ok: boolean
+      errors: string[]
+      warnings: string[]
+      supports_pdf_extract: boolean
+      supports_image: boolean
+    }>("/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify({ research_goal: researchGoal, attachments }),
     }),
   getRun: (id: string) => fetchApi<{ run: Run; tasks: Task[] }>(`/runs/${id}`),
   getRuns: () => fetchApi<{ runs: Run[] }>("/runs"),
   runAll: (id: string) => fetchApi<unknown>(`/runs/${id}/run_all`, { method: "POST" }),
   startRun: (id: string) => fetchApi<unknown>(`/runs/${id}/start`, { method: "POST" }),
   cancelRun: (id: string) => fetchApi<unknown>(`/runs/${id}/cancel`, { method: "POST" }),
+  deleteRun: (id: string) => fetchApi<{ deleted: boolean; run_id: string }>(`/runs/${id}`, { method: "DELETE" }),
   getRunSummary: (id: string) => fetchApi<RunSummary>(`/runs/${id}/summary`),
   getRunEvents: (id: string, limit = 100) =>
     fetchApi<{ events: RunEvent[]; next_after_id?: string }>(`/runs/${id}/events?limit=${limit}`),
