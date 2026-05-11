@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
+from ..core.logger import logger
 from ..storage.repositories import AgentRepository, RunEventRepository, RunRepository, SubAgentRepository, TaskRepository
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
@@ -47,15 +48,28 @@ _ACTIVITY_SPEECH = {
     "working": "正在处理任务",
 }
 
+_ADVISOR_AGENT = {
+    "id": "advisor_agent",
+    "name": "导师 Agent",
+    "type": "advisor",
+    "status": "idle",
+    "current_load": 0,
+    "current_tasks": [],
+}
+
 
 @router.get("/office-state")
 async def get_office_state(run_id: str = Query(...)):
+    logger.debug("[API] get_office_state | run_id=%s", run_id)
     run = RunRepository.get_by_id(run_id)
     if not run:
+        logger.warning("[API] get_office_state | run_id=%s not found", run_id)
         raise HTTPException(status_code=404, detail="运行不存在")
 
     tasks = TaskRepository.get_all(run_id=run_id)
     agents = AgentRepository.get_all()
+    if not any(agent.get("type") == "advisor" for agent in agents):
+        agents = [_ADVISOR_AGENT, *agents]
     subagents = SubAgentRepository.get_by_run(run_id)
     events = RunEventRepository.get_by_run(run_id, limit=20)
 
@@ -64,7 +78,13 @@ async def get_office_state(run_id: str = Query(...)):
         agent_type = agent.get("type", "")
         status = agent.get("status", "idle")
         current_tasks = agent.get("current_tasks", []) or []
-        current_task = tasks[0] if current_tasks else None
+        current_task = None
+
+        if current_tasks:
+            current_task_ids = set(current_tasks)
+            current_task = next((t for t in tasks if t.get("id") in current_task_ids and t.get("status") in ("running", "waiting_subagent", "waiting_review")), None)
+            if current_task is None:
+                current_task = next((t for t in tasks if t.get("id") in current_task_ids), None)
 
         if not current_task:
             for t in tasks:
@@ -83,6 +103,10 @@ async def get_office_state(run_id: str = Query(...)):
         elif run.get("status") == "reporting" and agent_type == "advisor":
             activity = "decomposing"
 
+        office_zone = _AGENT_TYPE_TO_ZONE.get(agent_type, "unknown")
+        if agent_type != "advisor" and not current_task and activity in ("idle", "done", "waiting"):
+            office_zone = "rest_area"
+
         agent_states.append({
             "id": agent.get("id"),
             "name": agent.get("name"),
@@ -91,7 +115,7 @@ async def get_office_state(run_id: str = Query(...)):
             "activity_state": activity,
             "current_task_id": current_task.get("id") if current_task else None,
             "current_task_title": current_task.get("title") if current_task else None,
-            "office_zone": _AGENT_TYPE_TO_ZONE.get(agent_type, "unknown"),
+            "office_zone": office_zone,
             "speech": _ACTIVITY_SPEECH.get(activity, "正在处理中"),
             "last_event_at": events[-1]["created_at"] if events else None,
             "current_load": agent.get("current_load", 0),

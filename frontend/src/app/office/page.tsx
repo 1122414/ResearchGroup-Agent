@@ -1,9 +1,12 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import type { CSSProperties, ReactNode } from "react"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Activity, ClipboardList, PauseCircle, RotateCcw, Square, TerminalSquare } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { api } from "@/lib/api"
 import {
   AGENT_STATUS_LABELS,
@@ -11,50 +14,91 @@ import {
   TASK_STATUS_LABELS,
   type OfficeAgentState,
   type OfficeState,
+  type OfficeSubAgentState,
   type OfficeTaskState,
+  type Run,
 } from "@/lib/types"
 
-const ZONE_POSITIONS: Record<string, { gridArea: string; label: string }> = {
-  advisor_office: { gridArea: "advisor", label: "导师办公室" },
-  research_office: { gridArea: "research", label: "文献办公室" },
-  engineer_office: { gridArea: "engineer", label: "工程办公室" },
-  experiment_office: { gridArea: "experiment", label: "实验办公室" },
-  analyst_office: { gridArea: "analyst", label: "分析办公室" },
-  writer_office: { gridArea: "writer", label: "写作办公室" },
-  temp_desk: { gridArea: "temp", label: "临时工位" },
-  rest_area: { gridArea: "rest", label: "休息区" },
-  task_board: { gridArea: "board", label: "公共任务看板" },
+const ROLE_META: Record<string, { label: string; color: string; coat: string }> = {
+  advisor: { label: "导师", color: "#7c4a32", coat: "#d9b57c" },
+  researcher: { label: "文献", color: "#315f9d", coat: "#4f7ee8" },
+  engineer: { label: "工程", color: "#237050", coat: "#35b780" },
+  experimenter: { label: "实验", color: "#9a6418", coat: "#f1a11d" },
+  analyst: { label: "分析", color: "#8b2d2d", coat: "#ef4444" },
+  writer: { label: "写作", color: "#5c37a2", coat: "#8b5cf6" },
+  subagent: { label: "Sub", color: "#6b7280", coat: "#9ca3af" },
 }
 
-const AGENT_COLORS: Record<string, string> = {
-  advisor: "#6b4f9f",
-  researcher: "#3b82f6",
-  engineer: "#10b981",
-  experimenter: "#f59e0b",
-  analyst: "#ef4444",
-  writer: "#8b5cf6",
-  subagent: "#9ca3af",
+const ZONE_META: Record<string, { label: string; style: CSSProperties; furniture: ReactNode }> = {
+  advisor_office: {
+    label: "导师办公室",
+    style: { left: "3%", top: "7%", width: "25%", height: "30%" },
+    furniture: <><PixelBoard /><PixelDesk /></>,
+  },
+  task_board: {
+    label: "公共任务看板",
+    style: { left: "31%", top: "7%", width: "34%", height: "30%" },
+    furniture: <PixelNoticeWall />,
+  },
+  lab: {
+    label: "实验与数据区",
+    style: { left: "68%", top: "7%", width: "29%", height: "30%" },
+    furniture: <><PixelServer /><PixelPlant /></>,
+  },
+  research_office: {
+    label: "文献工位",
+    style: { left: "3%", top: "42%", width: "18%", height: "27%" },
+    furniture: <PixelBookshelf />,
+  },
+  engineer_office: {
+    label: "工程工位",
+    style: { left: "24%", top: "42%", width: "18%", height: "27%" },
+    furniture: <PixelMonitor />,
+  },
+  experiment_office: {
+    label: "实验工位",
+    style: { left: "45%", top: "42%", width: "18%", height: "27%" },
+    furniture: <PixelLabBench />,
+  },
+  analyst_office: {
+    label: "分析工位",
+    style: { left: "66%", top: "42%", width: "14%", height: "27%" },
+    furniture: <PixelChartWall />,
+  },
+  writer_office: {
+    label: "写作工位",
+    style: { left: "83%", top: "42%", width: "14%", height: "27%" },
+    furniture: <PixelTypewriter />,
+  },
+  rest_area: {
+    label: "休息区",
+    style: { left: "22%", top: "73%", width: "31%", height: "20%" },
+    furniture: <><PixelSofa /><PixelCoffee /></>,
+  },
+  temp_desk: {
+    label: "临时工位",
+    style: { left: "56%", top: "73%", width: "41%", height: "20%" },
+    furniture: <PixelTempDesks />,
+  },
 }
 
-const ACTIVITY_ANIMATION: Record<string, string> = {
-  idle: "animate-bounce-slow",
-  working: "animate-pulse-fast",
-  researching: "animate-bounce-slow",
-  coding: "animate-pulse-fast",
-  experimenting: "animate-bounce-slow",
-  analyzing: "animate-pulse-fast",
-  writing: "animate-bounce-slow",
-  reviewing: "animate-pulse",
-  waiting: "animate-pulse-slow",
-  blocked: "animate-shake",
-  done: "animate-bounce-slow",
-  decomposing: "animate-pulse",
-  scheduling: "animate-pulse-fast",
+const AGENT_LAYOUT: Record<string, { x: number; y: number }> = {
+  advisor: { x: 52, y: 58 },
+  researcher: { x: 47, y: 56 },
+  engineer: { x: 50, y: 55 },
+  experimenter: { x: 49, y: 55 },
+  analyst: { x: 50, y: 56 },
+  writer: { x: 50, y: 56 },
+}
+
+function runLabel(run: Run, index: number) {
+  const goal = run.research_goal?.trim() || "未命名研究"
+  return `第 ${index + 1} 次运行 · ${goal.slice(0, 18)}${goal.length > 18 ? "..." : ""}`
 }
 
 export default function OfficePage() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-gray-500">正在加载像素办公室...</div>}>
+    <Suspense fallback={<div className="p-8 text-center text-sm text-slate-500">正在加载像素办公室...</div>}>
       <OfficeContent />
     </Suspense>
   )
@@ -66,19 +110,18 @@ function OfficeContent() {
   const initialRunId = searchParams.get("run_id")
   const [runId, setRunId] = useState<string | null>(initialRunId)
   const [state, setState] = useState<OfficeState | null>(null)
-  const [runs, setRuns] = useState<{ id: string; status: string }[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [selectedAgent, setSelectedAgent] = useState<OfficeAgentState | null>(null)
   const [selectedTask, setSelectedTask] = useState<OfficeTaskState | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
     api.getRuns().then(({ runs }) => {
-      setRuns(runs.map((r) => ({ id: r.id, status: r.status })))
-      if (!runId && runs.length > 0) {
-        setRunId(runs[0].id)
-      }
+      setRuns(runs)
+      const queryExists = initialRunId && runs.some((run) => run.id === initialRunId)
+      setRunId(queryExists ? initialRunId : runs[0]?.id || null)
     })
-  }, [runId])
+  }, [initialRunId])
 
   useEffect(() => {
     if (!runId) return
@@ -108,22 +151,30 @@ function OfficeContent() {
 
   const handleCancel = async () => {
     if (!runId) return
-    const confirmed = window.confirm("确定要停止这个运行吗？")
+    const confirmed = window.confirm("确认停止这次运行吗？")
     if (!confirmed) return
     try {
       await api.cancelRun(runId)
-      const data = await api.getOfficeState(runId)
-      setState(data)
+      setState(await api.getOfficeState(runId))
     } catch (err) {
-      setError(err instanceof Error ? err.message : "停止失败")
+      setError(err instanceof Error ? err.message : "停止运行失败")
     }
   }
 
+  const selectedRun = runs.find((run) => run.id === runId)
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold">像素办公室</h2>
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 rounded-xl border border-stone-300 bg-[#f3e4c8] p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-stone-700">
+            <TerminalSquare className="size-4" />
+            Pixel studio monitor
+          </div>
+          <h2 className="mt-1 text-2xl font-bold text-stone-950">像素办公室</h2>
+          <p className="mt-1 text-sm text-stone-700">每 2 秒同步运行状态，Agent 在对应工位显示当前任务和工作动作。</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={runId || ""}
             onChange={(e) => {
@@ -131,65 +182,50 @@ function OfficeContent() {
               setSelectedAgent(null)
               setSelectedTask(null)
             }}
-            className="rounded-lg border bg-white px-3 py-1.5 text-sm"
+            className="h-9 min-w-[260px] rounded-lg border border-stone-300 bg-[#fff7e8] px-3 text-sm text-stone-900 shadow-sm outline-none focus:border-stone-500"
           >
-            {runs.map((run) => (
+            {runs.map((run, index) => (
               <option key={run.id} value={run.id}>
-                {run.id} ({RUN_STATUS_LABELS[run.status] || run.status})
+                {runLabel(run, index)} ({RUN_STATUS_LABELS[run.status] || run.status})
               </option>
             ))}
           </select>
+          <Button variant="outline" size="sm" className="border-stone-300 bg-[#fff7e8]" onClick={() => runId && api.getOfficeState(runId).then(setState)}>
+            <RotateCcw className="size-3.5" />
+            刷新
+          </Button>
+          {state && !["completed", "failed", "cancelled"].includes(state.run.status) && (
+            <Button variant="destructive" size="sm" onClick={handleCancel}>
+              <PauseCircle className="size-3.5" />
+              停止
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="border-stone-300 bg-[#fff7e8]" onClick={() => runId && router.push(`/runs/${runId}`)}>
+            运行详情
+          </Button>
         </div>
-
-        {state && (
-          <div className="flex items-center gap-3 text-sm">
-            <Badge variant="secondary">{RUN_STATUS_LABELS[state.run.status] || state.run.status}</Badge>
-            <span className="text-gray-500">成本 ${state.run.total_cost_usd.toFixed(4)}</span>
-            <span className="text-gray-500">{state.run.total_tokens} tokens</span>
-            {state.run.status !== "completed" && state.run.status !== "failed" && state.run.status !== "cancelled" && (
-              <button
-                onClick={handleCancel}
-                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
-              >
-                停止运行
-              </button>
-            )}
-            <button
-              onClick={() => runId && router.push(`/runs/${runId}`)}
-              className="rounded-lg border px-3 py-1.5 text-xs hover:bg-gray-50"
-            >
-              运行详情
-            </button>
-          </div>
-        )}
       </div>
 
-      {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
-      {!state && !error && <div className="text-sm text-gray-500">正在加载办公室状态...</div>}
+      {!state && !error && <div className="text-sm text-slate-500">正在加载办公室状态...</div>}
 
       {state && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-          <div className="lg:col-span-3">
-            <OfficeCanvas
-              state={state}
-              onSelectAgent={setSelectedAgent}
-              onSelectTask={setSelectedTask}
-            />
-          </div>
-
-          <div className="space-y-4">
-            {selectedAgent && <AgentDetail agent={selectedAgent} />}
-            {selectedTask && <TaskDetail task={selectedTask} />}
-            {!selectedAgent && !selectedTask && <RunDetail state={state} />}
-          </div>
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <PixelStudio state={state} onSelectAgent={setSelectedAgent} onSelectTask={setSelectedTask} />
+          <aside className="space-y-4">
+            <RunPanel state={state} selectedRunTitle={selectedRun?.research_goal || ""} />
+            {selectedAgent && <AgentPanel agent={selectedAgent} />}
+            {selectedTask && <TaskPanel task={selectedTask} />}
+            {!selectedAgent && !selectedTask && <EventPanel state={state} />}
+          </aside>
         </div>
       )}
     </div>
   )
 }
 
-function OfficeCanvas({
+function PixelStudio({
   state,
   onSelectAgent,
   onSelectTask,
@@ -198,206 +234,271 @@ function OfficeCanvas({
   onSelectAgent: (agent: OfficeAgentState) => void
   onSelectTask: (task: OfficeTaskState) => void
 }) {
-  const agentsByZone: Record<string, OfficeAgentState[]> = {}
-  for (const agent of state.agents) {
-    const zone = agent.office_zone || "rest_area"
-    if (!agentsByZone[zone]) agentsByZone[zone] = []
-    agentsByZone[zone].push(agent)
-  }
+  const agentsByZone = useMemo(() => {
+    const grouped: Record<string, OfficeAgentState[]> = {}
+    for (const agent of state.agents) {
+      const zone = agent.office_zone || "rest_area"
+      if (!grouped[zone]) grouped[zone] = []
+      grouped[zone].push(agent)
+    }
+    return grouped
+  }, [state.agents])
 
-  const subagents = state.subagents || []
+  const labAgents = [
+    ...(agentsByZone.experiment_office || []),
+    ...(agentsByZone.analyst_office || []),
+  ]
 
   return (
-    <div className="rounded-xl border bg-gray-50 p-4">
-      <div
-        className="grid gap-3"
-        style={{
-          gridTemplateAreas: `
-            "advisor board board board board"
-            "research engineer experiment analyst writer"
-            "rest rest temp temp temp"
-          `,
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gridTemplateRows: "auto auto auto",
-        }}
-      >
-        <OfficeZone area="advisor" label={ZONE_POSITIONS.advisor_office.label}>
-          {agentsByZone["advisor_office"]?.map((agent) => (
-            <AgentPixel key={agent.id} agent={agent} onClick={() => onSelectAgent(agent)} />
-          ))}
-        </OfficeZone>
+    <div className="pixel-shell">
+      <div className="pixel-room">
+        <div className="pixel-wall top" />
+        <div className="pixel-wall bottom" />
+        <div className="pixel-wall left" />
+        <div className="pixel-wall right" />
+        <PixelZone meta={ZONE_META.advisor_office} agents={agentsByZone.advisor_office || []} onSelectAgent={onSelectAgent} />
+        <TaskBoardZone tasks={state.tasks} onSelectTask={onSelectTask} />
+        <PixelZone meta={ZONE_META.lab} agents={labAgents} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.research_office} agents={agentsByZone.research_office || []} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.engineer_office} agents={agentsByZone.engineer_office || []} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.experiment_office} agents={[]} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.analyst_office} agents={[]} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.writer_office} agents={agentsByZone.writer_office || []} onSelectAgent={onSelectAgent} />
+        <PixelZone meta={ZONE_META.rest_area} agents={agentsByZone.rest_area || []} onSelectAgent={onSelectAgent} />
+        <TempZone subagents={state.subagents} agents={agentsByZone.temp_desk || []} onSelectAgent={onSelectAgent} />
+      </div>
+    </div>
+  )
+}
 
-        <OfficeZone area="board" label={ZONE_POSITIONS.task_board.label}>
-          <div className="grid grid-cols-2 gap-1">
-            {state.tasks.slice(0, 6).map((task) => (
-              <button
-                key={task.id}
-                onClick={() => onSelectTask(task)}
-                className="rounded border bg-white p-1.5 text-left text-[10px] hover:bg-gray-50"
-              >
-                <div className="truncate font-medium">{task.title}</div>
-                <div className="mt-0.5 text-gray-400">{task.latest_event}</div>
-              </button>
-            ))}
+function PixelZone({
+  meta,
+  agents,
+  onSelectAgent,
+}: {
+  meta: { label: string; style: CSSProperties; furniture: ReactNode }
+  agents: OfficeAgentState[]
+  onSelectAgent: (agent: OfficeAgentState) => void
+}) {
+  return (
+    <section className="pixel-zone" style={meta.style}>
+      <div className="pixel-zone-label">{meta.label}</div>
+      <div className="pixel-furniture">{meta.furniture}</div>
+      {agents.map((agent, index) => {
+        const layout = AGENT_LAYOUT[agent.role] || { x: 48, y: 56 }
+        return (
+          <PixelAgent
+            key={agent.id}
+            agent={agent}
+            onClick={() => onSelectAgent(agent)}
+            style={{ left: `${layout.x + index * 10}%`, top: `${layout.y + (index % 2) * 12}%` }}
+          />
+        )
+      })}
+    </section>
+  )
+}
+
+function TaskBoardZone({ tasks, onSelectTask }: { tasks: OfficeTaskState[]; onSelectTask: (task: OfficeTaskState) => void }) {
+  const visibleTasks = tasks.filter((task) => task.status !== "completed").slice(0, 6)
+  const completedCount = tasks.filter((task) => task.status === "completed").length
+  return (
+    <section className="pixel-zone" style={ZONE_META.task_board.style}>
+      <div className="pixel-zone-label">{ZONE_META.task_board.label}</div>
+      <div className="pixel-task-board">
+        {visibleTasks.length === 0 ? (
+          <div className="pixel-board-done">
+            <Square className="size-4" />
+            当前没有待处理任务
           </div>
-        </OfficeZone>
-
-        {["research_office", "engineer_office", "experiment_office", "analyst_office", "writer_office"].map(
-          (zone) => (
-            <OfficeZone key={zone} area={zone.replace("_office", "")} label={ZONE_POSITIONS[zone]?.label || zone}>
-              {agentsByZone[zone]?.map((agent) => (
-                <AgentPixel key={agent.id} agent={agent} onClick={() => onSelectAgent(agent)} />
-              ))}
-            </OfficeZone>
-          ),
+        ) : (
+          visibleTasks.map((task) => (
+            <button key={task.id} onClick={() => onSelectTask(task)} className="pixel-note">
+              <span>{task.title}</span>
+              <small>{TASK_STATUS_LABELS[task.status] || task.status}</small>
+            </button>
+          ))
         )}
-
-        <OfficeZone area="rest" label={ZONE_POSITIONS.rest_area.label}>
-          {agentsByZone["rest_area"]?.map((agent) => (
-            <AgentPixel key={agent.id} agent={agent} onClick={() => onSelectAgent(agent)} />
-          ))}
-        </OfficeZone>
-
-        <OfficeZone area="temp" label={ZONE_POSITIONS.temp_desk.label}>
-          {subagents.map((sub) => (
-            <div
-              key={sub.id}
-              className="flex flex-col items-center gap-1 rounded-lg border border-dashed bg-white/50 p-2"
-            >
-              <div
-                className="h-8 w-8 rounded bg-gray-300 opacity-60"
-                style={{ backgroundColor: AGENT_COLORS.subagent }}
-              />
-              <div className="text-[10px] text-gray-500">SubAgent</div>
-            </div>
-          ))}
-          {subagents.length === 0 && (
-            <div className="text-center text-xs text-gray-400">暂无临时 SubAgent</div>
-          )}
-        </OfficeZone>
       </div>
-    </div>
+      {completedCount > 0 && <div className="pixel-complete-tag">已完成 {completedCount}</div>}
+    </section>
   )
 }
 
-function OfficeZone({
-  area,
-  label,
-  children,
+function TempZone({
+  subagents,
+  agents,
+  onSelectAgent,
 }: {
-  area: string
-  label: string
-  children: React.ReactNode
+  subagents: OfficeSubAgentState[]
+  agents: OfficeAgentState[]
+  onSelectAgent: (agent: OfficeAgentState) => void
 }) {
   return (
-    <div
-      className="min-h-[120px] rounded-lg border bg-white p-2"
-      style={{ gridArea: area }}
-    >
-      <div className="mb-2 text-[10px] font-semibold uppercase text-gray-400">{label}</div>
-      <div className="flex flex-wrap gap-2">{children}</div>
-    </div>
+    <section className="pixel-zone" style={ZONE_META.temp_desk.style}>
+      <div className="pixel-zone-label">{ZONE_META.temp_desk.label}</div>
+      <div className="pixel-furniture">{ZONE_META.temp_desk.furniture}</div>
+      {agents.map((agent, index) => (
+        <PixelAgent key={agent.id} agent={agent} onClick={() => onSelectAgent(agent)} style={{ left: `${28 + index * 14}%`, top: "48%" }} />
+      ))}
+      {subagents.map((sub, index) => (
+        <div key={sub.id} className="pixel-subagent" style={{ left: `${36 + index * 14}%`, top: "43%" }}>
+          <div className="pixel-subagent-body" />
+          <span>{sub.status}</span>
+        </div>
+      ))}
+      {subagents.length === 0 && agents.length === 0 && <div className="pixel-empty-desk">暂无临时 SubAgent</div>}
+    </section>
   )
 }
 
-function AgentPixel({
-  agent,
-  onClick,
-}: {
-  agent: OfficeAgentState
-  onClick: () => void
-}) {
-  const color = AGENT_COLORS[agent.role] || "#6b7280"
-  const animClass = ACTIVITY_ANIMATION[agent.activity_state] || ""
-
+function PixelAgent({ agent, onClick, style }: { agent: OfficeAgentState; onClick: () => void; style: CSSProperties }) {
+  const meta = ROLE_META[agent.role] || ROLE_META.subagent
+  const working = !["idle", "done", "waiting"].includes(agent.activity_state)
   return (
-    <button
-      onClick={onClick}
-      className="group relative flex flex-col items-center gap-1"
-    >
-      <div
-        className={`relative h-10 w-10 rounded border-2 transition-transform hover:scale-110 ${animClass}`}
-        style={{ backgroundColor: color, borderColor: color }}
-      >
-        <div className="absolute left-1.5 top-2.5 h-1 w-1 rounded-full bg-white" />
-        <div className="absolute right-1.5 top-2.5 h-1 w-1 rounded-full bg-white" />
-      </div>
-      <div className="max-w-[80px] truncate text-[10px] font-medium">{agent.name}</div>
-
-      <div className="absolute -top-8 left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-gray-900 px-2 py-1 text-[10px] text-white group-hover:block">
-        {agent.speech}
-        <div className="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900" />
-      </div>
+    <button className={`pixel-agent ${working ? "is-working" : ""}`} style={style} onClick={onClick} title={agent.speech}>
+      <span className="pixel-speech">{agent.speech}</span>
+      <span className="pixel-head" style={{ backgroundColor: meta.color }} />
+      <span className="pixel-body" style={{ backgroundColor: meta.coat }} />
+      <span className="pixel-agent-name">{meta.label}</span>
     </button>
   )
 }
 
-function AgentDetail({ agent }: { agent: OfficeAgentState }) {
+function RunPanel({ state, selectedRunTitle }: { state: OfficeState; selectedRunTitle: string }) {
   return (
-    <Card>
+    <Card className="border-stone-200 bg-[#fffaf0] shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Activity className="size-4 text-stone-600" />
+          运行概览
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {selectedRunTitle && <div className="line-clamp-2 font-medium text-stone-900">{selectedRunTitle}</div>}
+        <PanelRow label="状态" value={RUN_STATUS_LABELS[state.run.status] || state.run.status} />
+        <PanelRow label="当前阶段" value={state.run.current_step || "-"} />
+        <PanelRow label="Token" value={String(state.run.total_tokens)} />
+        <PanelRow label="成本" value={`$${state.run.total_cost_usd.toFixed(4)}`} />
+      </CardContent>
+    </Card>
+  )
+}
+
+function AgentPanel({ agent }: { agent: OfficeAgentState }) {
+  return (
+    <Card className="border-stone-200 bg-white shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{agent.name}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
+      <CardContent className="space-y-3 text-sm">
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{AGENT_STATUS_LABELS[agent.status] || agent.status}</Badge>
-          <span className="text-xs text-gray-500">{agent.activity_state}</span>
+          <span className="text-xs text-stone-500">{agent.activity_state}</span>
         </div>
-        <div className="rounded-lg bg-gray-50 p-2 text-xs text-gray-600">{agent.speech}</div>
-        {agent.current_task_title && (
-          <div className="text-xs">
-            <span className="text-gray-500">当前任务：</span> {agent.current_task_title}
-          </div>
-        )}
-        <div className="text-xs text-gray-400">负载：{Math.round(agent.current_load * 100)}%</div>
+        <div className="rounded-lg bg-stone-50 p-3 text-xs leading-5 text-stone-700">{agent.speech}</div>
+        {agent.current_task_title && <PanelRow label="当前任务" value={agent.current_task_title} />}
+        <PanelRow label="负载" value={`${Math.round(agent.current_load * 100)}%`} />
       </CardContent>
     </Card>
   )
 }
 
-function TaskDetail({ task }: { task: OfficeTaskState }) {
+function TaskPanel({ task }: { task: OfficeTaskState }) {
   return (
-    <Card>
+    <Card className="border-stone-200 bg-white shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-base">
-          <span className="truncate">{task.title}</span>
-          <Badge variant="secondary">{TASK_STATUS_LABELS[task.status] || task.status}</Badge>
+          <ClipboardList className="size-4" />
+          任务详情
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <div className="text-xs text-gray-500">优先级：{task.priority}/10</div>
-        <div className="rounded-lg bg-gray-50 p-2 text-xs text-gray-600">{task.latest_event}</div>
+      <CardContent className="space-y-3 text-sm">
+        <div className="font-medium leading-5 text-stone-900">{task.title}</div>
+        <Badge variant="secondary">{TASK_STATUS_LABELS[task.status] || task.status}</Badge>
+        <PanelRow label="优先级" value={`${task.priority}/10`} />
+        <div className="rounded-lg bg-stone-50 p-3 text-xs leading-5 text-stone-700">{task.latest_event}</div>
       </CardContent>
     </Card>
   )
 }
 
-function RunDetail({ state }: { state: OfficeState }) {
+function EventPanel({ state }: { state: OfficeState }) {
   return (
-    <Card>
+    <Card className="border-stone-200 bg-white shadow-sm">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">运行概览</CardTitle>
+        <CardTitle className="text-base">最近事件</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-gray-500">状态</span>
-          <Badge>{RUN_STATUS_LABELS[state.run.status] || state.run.status}</Badge>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-gray-500">当前阶段</span>
-          <span>{state.run.current_step || "-"}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-gray-500">成本</span>
-          <span className="font-mono">${state.run.total_cost_usd.toFixed(4)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-gray-500">Token</span>
-          <span className="font-mono">{state.run.total_tokens}</span>
-        </div>
-        <div className="h-px bg-gray-200" />
-        <div className="text-xs text-gray-500">点击办公室中的角色或任务查看详情</div>
+      <CardContent className="space-y-2 text-xs">
+        {state.events.length === 0 && <div className="text-stone-500">暂无事件</div>}
+        {state.events.map((event) => (
+          <div key={event.id} className="rounded-lg border border-stone-200 bg-stone-50 p-2">
+            <div className="font-medium text-stone-900">{event.title}</div>
+            <div className="mt-1 line-clamp-2 text-stone-600">{event.message}</div>
+          </div>
+        ))}
       </CardContent>
     </Card>
   )
+}
+
+function PanelRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4 border-b border-stone-100 pb-2 last:border-0 last:pb-0">
+      <span className="text-stone-500">{label}</span>
+      <span className="text-right font-medium text-stone-900">{value}</span>
+    </div>
+  )
+}
+
+function PixelBoard() {
+  return <div className="pixel-board"><span /><span /><span /><span /></div>
+}
+
+function PixelDesk() {
+  return <div className="pixel-desk"><span /></div>
+}
+
+function PixelNoticeWall() {
+  return <div className="pixel-notice-wall" />
+}
+
+function PixelServer() {
+  return <div className="pixel-server"><span /><span /><span /></div>
+}
+
+function PixelPlant() {
+  return <div className="pixel-plant"><span /></div>
+}
+
+function PixelBookshelf() {
+  return <div className="pixel-bookshelf" />
+}
+
+function PixelMonitor() {
+  return <div className="pixel-monitor" />
+}
+
+function PixelLabBench() {
+  return <div className="pixel-labbench" />
+}
+
+function PixelChartWall() {
+  return <div className="pixel-chartwall" />
+}
+
+function PixelTypewriter() {
+  return <div className="pixel-typewriter" />
+}
+
+function PixelSofa() {
+  return <div className="pixel-sofa" />
+}
+
+function PixelCoffee() {
+  return <div className="pixel-coffee" />
+}
+
+function PixelTempDesks() {
+  return <div className="pixel-tempdesks" />
 }
