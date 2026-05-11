@@ -2,12 +2,14 @@ import json
 from datetime import datetime
 
 from ..core.llm_provider import create_llm_provider
+from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import OutputRepository, TaskRepository
 
 
 class ReviewService:
     async def review(self, task: dict) -> dict:
+        logger.info("[ReviewService] review started | task_id=%s | title=%s", task.get("id"), task.get("title", "")[:40])
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请以导师 Agent 身份审核下面的任务产出。
 
@@ -20,7 +22,9 @@ class ReviewService:
 请返回 JSON：{{"approved": true/false, "feedback": "审核意见"}}。
 """
 
-        raw_response = await create_llm_provider().generate(
+        llm = create_llm_provider()
+        logger.info("[ReviewService] calling LLM | task_id=%s | role=advisor_review", task.get("id"))
+        raw_response = await llm.generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema={
                 "type": "object",
@@ -37,6 +41,8 @@ class ReviewService:
         )
 
         review = self._parse_review(raw_response)
+        logger.info("[ReviewService] review result | task_id=%s | approved=%s | feedback_len=%d",
+                    task.get("id"), review.get("approved"), len(review.get("feedback", "")))
         new_status = "completed" if review.get("approved") else "need_revision"
         TaskRepository.update_status(
             task["id"],
@@ -56,6 +62,7 @@ class ReviewService:
                 "created_at": datetime.now().isoformat(),
             }
         )
+        logger.info("[ReviewService] review output saved | task_id=%s | output_id=%s", task.get("id"), f"review_{task['id']}")
         return review
 
     def _parse_review(self, raw: str) -> dict:

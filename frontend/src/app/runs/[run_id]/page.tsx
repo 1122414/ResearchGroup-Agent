@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
+import { frontendLogger } from "@/lib/logger"
 import {
   AGENT_STATUS_LABELS,
   RUN_STATUS_LABELS,
@@ -30,6 +31,8 @@ export default function RunDetailPage() {
   const startedRef = useRef(false)
 
   useEffect(() => {
+    frontendLogger.info(`RunDetailPage mounted | run_id=${runId}`)
+    frontendLogger.setRunId(runId)
     let cancelled = false
 
     const fetchData = async () => {
@@ -44,14 +47,22 @@ export default function RunDetailPage() {
         setEvents(eventsData.events)
         setUsageItems(usageData.items)
         setError("")
+        frontendLogger.debug(`RunDetailPage data refreshed | run_id=${runId} | status=${summaryData.run.status}`)
 
         if (summaryData.run.status === "created" && !startedRef.current) {
           startedRef.current = true
-          api.startRun(runId).catch((err) => setError(err instanceof Error ? err.message : "启动运行失败"))
+          frontendLogger.info(`RunDetailPage auto-starting run | run_id=${runId}`)
+          api.startRun(runId).catch((err) => {
+            const msg = err instanceof Error ? err.message : "启动运行失败"
+            frontendLogger.error(`RunDetailPage auto-start failed | run_id=${runId} | error=${msg}`)
+            setError(msg)
+          })
         }
       } catch (err) {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : "加载运行详情失败")
+        const msg = err instanceof Error ? err.message : "加载运行详情失败"
+        frontendLogger.error(`RunDetailPage fetch failed | run_id=${runId} | error=${msg}`)
+        setError(msg)
       }
     }
 
@@ -68,6 +79,7 @@ export default function RunDetailPage() {
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      frontendLogger.info(`RunDetailPage unmounted | run_id=${runId}`)
     }
   }, [runId])
 
@@ -81,9 +93,11 @@ export default function RunDetailPage() {
     if (!summary) return
     const confirmed = window.confirm("确定要停止这个运行吗？已生成的任务、事件和产出会保留。")
     if (!confirmed) return
+    frontendLogger.info(`RunDetailPage cancel requested | run_id=${summary.run.id}`)
     setCanceling(true)
     try {
       await api.cancelRun(summary.run.id)
+      frontendLogger.info(`RunDetailPage cancel success | run_id=${summary.run.id}`)
       const [summaryData, eventsData, usageData] = await Promise.all([
         api.getRunSummary(runId),
         api.getRunEvents(runId, 200),
@@ -93,7 +107,9 @@ export default function RunDetailPage() {
       setEvents(eventsData.events)
       setUsageItems(usageData.items)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "停止运行失败")
+      const msg = err instanceof Error ? err.message : "停止运行失败"
+      frontendLogger.error(`RunDetailPage cancel failed | run_id=${summary.run.id} | error=${msg}`)
+      setError(msg)
     } finally {
       setCanceling(false)
     }

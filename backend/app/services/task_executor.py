@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from ..core.llm_provider import create_llm_provider
+from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
 
@@ -13,6 +14,7 @@ class TaskExecutor:
         owner_id = task.get("owner_agent", "")
         owner = AgentRepository.get_by_id(owner_id) if owner_id else None
         agent_type = owner.get("type", "researcher") if owner else "researcher"
+        logger.info("[TaskExecutor] execute started | task_id=%s | type=%s | agent=%s", task.get("id"), task_type, agent_type)
 
         prompt_map = {
             "researcher": "grad_researcher",
@@ -35,7 +37,10 @@ class TaskExecutor:
 4. 不要输出 Markdown，只返回 JSON。
 """
 
-        raw_response = await create_llm_provider().generate(
+        llm = create_llm_provider()
+        prompt_len = len(system_prompt) + len(user_prompt)
+        logger.info("[TaskExecutor] calling LLM | task_id=%s | role=graduate | prompt_len=%d", task.get("id"), prompt_len)
+        raw_response = await llm.generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             role="graduate",
             run_id=task.get("run_id"),
@@ -43,6 +48,7 @@ class TaskExecutor:
             agent_id=owner_id,
         )
         result = self._parse_result(raw_response)
+        logger.info("[TaskExecutor] LLM response parsed | task_id=%s | has_summary=%s", task.get("id"), "summary" in result)
         TaskRepository.update_status(task["id"], "running", outputs=task.get("outputs", []) + [result])
 
         OutputRepository.insert(
@@ -57,6 +63,7 @@ class TaskExecutor:
                 "created_at": datetime.now().isoformat(),
             }
         )
+        logger.info("[TaskExecutor] execute completed | task_id=%s | output_saved=%s", task.get("id"), f"out_{task['id']}")
         return result
 
     def _parse_result(self, raw: str) -> dict:

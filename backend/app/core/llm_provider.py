@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 
 from ..core.config import settings
+from ..core.logger import logger
 
 
 class LLMProvider(ABC):
@@ -33,6 +34,8 @@ class MockLLMProvider(LLMProvider):
         agent_id: str | None = None,
     ) -> str:
         started = time.perf_counter()
+        prompt_len = len(prompt)
+        logger.info("[LLM] Mock generate start | role=%s | run_id=%s | task_id=%s | prompt_len=%d", role, run_id, task_id, prompt_len)
         if role == "advisor_decompose":
             result = self._mock_advisor_decomposition()
         elif role == "advisor_review":
@@ -43,6 +46,9 @@ class MockLLMProvider(LLMProvider):
             result = self._mock_subagent_result()
         else:
             result = self._mock_graduate_result(prompt)
+
+        latency = int((time.perf_counter() - started) * 1000)
+        logger.info("[LLM] Mock generate end | role=%s | run_id=%s | latency=%dms | result_len=%d", role, run_id, latency, len(result))
 
         from ..services.cost_tracker import cost_tracker
 
@@ -55,7 +61,7 @@ class MockLLMProvider(LLMProvider):
             run_id=run_id,
             task_id=task_id,
             agent_id=agent_id,
-            latency_ms=int((time.perf_counter() - started) * 1000),
+            latency_ms=latency,
             success=True,
         )
         return result
@@ -249,6 +255,8 @@ class OpenAICompatibleProvider(LLMProvider):
         agent_id: str | None = None,
     ) -> str:
         model = settings.get_model_for_role(role)
+        logger.info("[LLM] OpenAI generate start | role=%s | model=%s | run_id=%s | task_id=%s | prompt_len=%d | has_schema=%s",
+                    role, model, run_id, task_id, len(prompt), bool(schema))
         request_body = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -280,6 +288,10 @@ class OpenAICompatibleProvider(LLMProvider):
                     data = response.json()
                     result = data["choices"][0]["message"]["content"]
                     usage = data.get("usage", {})
+                    latency = int((time.perf_counter() - started) * 1000)
+                    result_len = len(result)
+                    logger.info("[LLM] OpenAI success | role=%s | model=%s | latency=%dms | prompt_tokens=%s | completion_tokens=%s | result_len=%d",
+                                role, model, latency, usage.get("prompt_tokens"), usage.get("completion_tokens"), result_len)
                     from ..services.cost_tracker import cost_tracker
 
                     cost_tracker.record(
@@ -291,15 +303,17 @@ class OpenAICompatibleProvider(LLMProvider):
                         run_id=run_id,
                         task_id=task_id,
                         agent_id=agent_id,
-                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        latency_ms=latency,
                         success=True,
                         prompt_tokens=usage.get("prompt_tokens"),
                         completion_tokens=usage.get("completion_tokens"),
                     )
                     return result
                 except (httpx.HTTPError, KeyError, IndexError) as exc:
+                    logger.warning("[LLM] OpenAI attempt %d failed | role=%s | error=%s", attempt + 1, role, exc)
                     if attempt == settings.llm_max_retries - 1:
                         latency_ms = int((time.perf_counter() - started) * 1000)
+                        logger.error("[LLM] OpenAI final failure | role=%s | latency=%dms | error=%s", role, latency_ms, exc)
                         from ..services.cost_tracker import cost_tracker
 
                         cost_tracker.record(

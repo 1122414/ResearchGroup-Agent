@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from ..core.config import settings
+from ..core.logger import logger
 from ..storage.repositories import LLMUsageRepository, RunRepository
 
 
@@ -51,6 +52,10 @@ class CostTracker:
         LLMUsageRepository.insert(item)
         if run_id:
             RunRepository.increment_usage(run_id, cost_usd, total_tokens)
+        logger.info(
+            "[CostTracker] recorded | role=%s | provider=%s | model=%s | tokens=%d | cost=%.6f | latency=%dms | success=%s | run_id=%s",
+            role, provider, model, total_tokens, cost_usd, latency_ms, success, run_id,
+        )
         return item
 
 

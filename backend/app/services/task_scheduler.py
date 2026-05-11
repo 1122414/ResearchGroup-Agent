@@ -1,9 +1,11 @@
 from ..core.config import settings
-from ..storage.repositories import TaskRepository, AgentRepository
+from ..core.logger import logger
+from ..storage.repositories import AgentRepository, TaskRepository
 
 
 class TaskScheduler:
     def assign_owner(self, task: dict, agents: list[dict]) -> tuple[str | None, dict]:
+        logger.debug("[TaskScheduler] assign_owner | task_id=%s", task.get("id"))
         best_agent = None
         best_score = -1
         best_info = {}
@@ -29,9 +31,13 @@ class TaskScheduler:
                     "primary_skill_score": skills.get(top_skill, 0) if top_skill else 0,
                 }
 
-        return (best_agent["id"] if best_agent else None, best_info)
+        owner_id = best_agent["id"] if best_agent else None
+        logger.info("[TaskScheduler] assign_owner | task_id=%s | owner=%s | score=%.2f | skill_match=%.2f | primary_skill=%s",
+                    task.get("id"), owner_id, best_info.get("score", 0), best_info.get("skill_match", 0), best_info.get("primary_skill", ""))
+        return (owner_id, best_info)
 
     def assign_collaborators(self, task: dict, agents: list[dict], owner_id: str) -> list[str]:
+        logger.debug("[TaskScheduler] assign_collaborators | task_id=%s | owner=%s", task.get("id"), owner_id)
         complexity = task.get("complexity", 5)
         owner = next((a for a in agents if a["id"] == owner_id), None)
         need_collab = (
@@ -55,9 +61,12 @@ class TaskScheduler:
                     candidates.append(agent["id"])
                     break
 
-        return candidates[:settings.collab_max_count]
+        collabs = candidates[:settings.collab_max_count]
+        logger.info("[TaskScheduler] assign_collaborators | task_id=%s | collaborators=%s", task.get("id"), collabs)
+        return collabs
 
     def assign_all(self, tasks: list[dict]) -> dict[str, list[str]]:
+        logger.info("[TaskScheduler] assign_all started | task_count=%d", len(tasks))
         agents = AgentRepository.get_all()
         graduate_agents = [a for a in agents if a["type"] in ("researcher", "engineer", "experimenter", "analyst", "writer")]
         assignments = {}
@@ -83,6 +92,7 @@ class TaskScheduler:
                 load = min(1.0, len(current_tasks) / 3.0)
                 AgentRepository.update_status(owner_id, "working", load, current_tasks=current_tasks)
 
+        logger.info("[TaskScheduler] assign_all completed | assignments=%d", len(assignments))
         return assignments
 
 

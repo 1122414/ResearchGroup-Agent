@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+
 from ..core.config import settings
+from ..core.logger import logger
 from ..storage.repositories import AgentRepository
 
 
@@ -11,10 +13,12 @@ class AgentRegistry:
     def load_seed_agents(self):
         seed_file = settings.data_dir / "seed_agents.json"
         if not seed_file.exists():
+            logger.warning("[AgentRegistry] seed file not found | path=%s", seed_file)
             return
         agents = json.loads(seed_file.read_text(encoding="utf-8"))
         AgentRepository.seed(agents)
         self._agents = {a["id"]: a for a in agents}
+        logger.info("[AgentRegistry] loaded %d seed agents", len(agents))
 
     def get_all(self) -> list[dict]:
         return AgentRepository.get_all()
@@ -26,6 +30,7 @@ class AgentRegistry:
         return AgentRepository.get_by_id(agent_id)
 
     def update_status(self, agent_id: str, status: str, current_load: float = 0.0):
+        logger.debug("[AgentRegistry] update_status | agent_id=%s | status=%s | load=%.2f", agent_id, status, current_load)
         AgentRepository.update_status(agent_id, status, current_load)
 
 

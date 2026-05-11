@@ -4,28 +4,34 @@ from datetime import datetime
 
 from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
+from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import AgentRepository, OutputRepository, SubAgentRepository, TaskRepository
 
 
 class SubAgentService:
     def can_create_subagent(self, task: dict, agent: dict) -> bool:
-        return (
+        result = (
             task.get("complexity", 5) >= settings.subagent_complexity_threshold
             and task.get("decomposability", 5) >= settings.subagent_decomposability_threshold
             and agent.get("skills", {}).get("mentoring", 1) >= settings.subagent_mentoring_threshold
         )
+        logger.debug("[SubAgentService] can_create_subagent | task_id=%s | result=%s", task.get("id"), result)
+        return result
 
     def max_subagents(self, agent: dict) -> int:
         return max(0, agent.get("skills", {}).get("mentoring", 1) // 3)
 
     async def create_and_execute(self, parent_agent_id: str, task: dict) -> dict | None:
+        logger.info("[SubAgentService] create_and_execute | task_id=%s | parent=%s", task.get("id"), parent_agent_id)
         agent = AgentRepository.get_by_id(parent_agent_id)
         if not agent or not self.can_create_subagent(task, agent):
+            logger.info("[SubAgentService] subagent not allowed | task_id=%s", task.get("id"))
             return None
 
         existing_subs = SubAgentRepository.get_by_task(task["id"])
         if len(existing_subs) >= self.max_subagents(agent):
+            logger.info("[SubAgentService] max subagents reached | task_id=%s | count=%d", task.get("id"), len(existing_subs))
             return None
 
         sub_id = f"subagent_{uuid.uuid4().hex[:8]}"
@@ -51,6 +57,7 @@ class SubAgentService:
         }
         SubAgentRepository.insert(subagent)
         TaskRepository.update_status(task["id"], "waiting_subagent")
+        logger.info("[SubAgentService] subagent inserted | sub_id=%s | task_id=%s", sub_id, task["id"])
 
         system_prompt = prompt_loader.load("subagent")
         user_prompt = f"""你是一个临时 SubAgent，只能完成父 Agent 委派的小任务。
@@ -62,7 +69,9 @@ class SubAgentService:
 请返回 JSON，包含 findings 和 summary。不要改变父任务目标，不要创建新的 Agent。
 """
 
-        raw_response = await create_llm_provider().generate(
+        llm = create_llm_provider()
+        logger.info("[SubAgentService] calling LLM | sub_id=%s | role=subagent", sub_id)
+        raw_response = await llm.generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema=expected_schema,
             role="subagent",
@@ -71,6 +80,8 @@ class SubAgentService:
             agent_id=parent_agent_id,
         )
         result = self._parse_result(raw_response)
+        logger.info("[SubAgentService] LLM response parsed | sub_id=%s | has_findings=%s | result_keys=%s",
+                    sub_id, "findings" in result, list(result.keys()))
         SubAgentRepository.update_result(sub_id, result)
 
         OutputRepository.insert(
@@ -85,6 +96,7 @@ class SubAgentService:
                 "created_at": datetime.now().isoformat(),
             }
         )
+        logger.info("[SubAgentService] create_and_execute completed | sub_id=%s | output_saved=%s", sub_id, f"out_{sub_id}")
         return result
 
     def _build_sub_task(self, task: dict) -> str:

@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from ..core.llm_provider import create_llm_provider
+from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..models.task import TaskStatus
 from ..storage.repositories import TaskRepository
@@ -10,6 +11,7 @@ from ..storage.repositories import TaskRepository
 
 class TaskDecomposer:
     async def decompose(self, research_goal: str, run_id: str) -> list[dict]:
+        logger.info("[TaskDecomposer] decompose started | run_id=%s | goal=%s", run_id, research_goal[:80])
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请把下面的研究目标拆解为 3-7 个可执行任务。
 
@@ -23,7 +25,9 @@ class TaskDecomposer:
 4. 只返回合法 JSON 数组，不要输出解释性文字。
 """
 
-        raw_response = await create_llm_provider().generate(
+        llm = create_llm_provider()
+        logger.info("[TaskDecomposer] calling LLM | run_id=%s | role=advisor_decompose", run_id)
+        raw_response = await llm.generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
             schema={
                 "type": "array",
@@ -63,6 +67,7 @@ class TaskDecomposer:
         )
 
         tasks_data = self._parse_response(raw_response)
+        logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | tasks=%d", run_id, len(tasks_data))
         now = datetime.now().isoformat()
         tasks = []
 
@@ -90,7 +95,10 @@ class TaskDecomposer:
             }
             TaskRepository.insert(task)
             tasks.append(task)
+            logger.info("[TaskDecomposer] task inserted | run_id=%s | task_id=%s | title=%s", run_id, task_id, task["title"])
 
+        logger.info("[TaskDecomposer] decompose completed | run_id=%s | total_tasks=%d | task_ids=%s",
+                    run_id, len(tasks), [t["id"] for t in tasks])
         return tasks
 
     def _parse_response(self, raw: str) -> list[dict]:
