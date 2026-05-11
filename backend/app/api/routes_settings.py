@@ -1,15 +1,19 @@
-from fastapi import APIRouter
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
 
 from ..core.config import settings
+from ..core.logger import logger
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 @router.get("")
 async def get_settings():
-    """返回当前系统配置（安全字段，不含 API Key）。"""
+    logger.debug("[API] get_settings")
     return {
         "mock_mode": settings.mock_mode,
+        "llm_api_key": settings.llm_api_key,
         "llm_model_name": settings.llm_model_name,
         "advisor_model_name": settings.advisor_model_name or settings.llm_model_name,
         "graduate_model_name": settings.graduate_model_name or settings.llm_model_name,
@@ -47,14 +51,96 @@ async def get_settings():
 
 @router.patch("")
 async def update_settings(body: dict):
-    """热更新部分运行时可变配置（主要用于切换 Mock 模式等）。
-
-    注意：修改仅在当前进程生效，重启后从 .env 重新加载。
-    """
-    allowed = {"mock_mode", "llm_timeout", "llm_max_retries", "log_level", "run_poll_interval_ms"}
+    allowed = {
+        "mock_mode",
+        "llm_api_key",
+        "llm_base_url",
+        "llm_model_name",
+        "advisor_model_name",
+        "graduate_model_name",
+        "subagent_model_name",
+        "llm_timeout",
+        "llm_max_retries",
+        "scheduler_skill_weight",
+        "scheduler_idle_weight",
+        "scheduler_idle_scale",
+        "collab_complexity_threshold",
+        "collab_load_threshold",
+        "collab_max_count",
+        "subagent_complexity_threshold",
+        "subagent_decomposability_threshold",
+        "subagent_mentoring_threshold",
+        "run_poll_interval_ms",
+        "run_cancel_check_enabled",
+        "run_event_default_limit",
+        "run_event_max_limit",
+        "log_level",
+        "default_input_cost_per_token",
+        "default_output_cost_per_token",
+        "mock_input_cost_per_token",
+        "mock_output_cost_per_token",
+        "token_estimate_chars_per_token",
+    }
     updated = {}
     for key in allowed:
         if key in body:
-            setattr(settings, key, body[key])
-            updated[key] = body[key]
-    return {"updated": updated, "message": "配置已更新（仅当前进程有效，重启后从 .env 重新加载）"}
+            value = _coerce_value(key, body[key])
+            setattr(settings, key, value)
+            updated[key] = value
+    if updated:
+        try:
+            _write_env(updated)
+        except OSError as exc:
+            logger.error("[API] update_settings env write failed | error=%s", exc)
+            raise HTTPException(status_code=500, detail=f".env 写入失败：{exc}") from exc
+    logger.info("[API] update_settings | updated=%s", {k: ("***" if k == "llm_api_key" and v else v) for k, v in updated.items()})
+    return {"updated": updated, "message": "配置已同步到当前进程和项目 .env 文件"}
+
+
+def _coerce_value(key: str, value):
+    current = getattr(settings, key, None)
+    if isinstance(current, bool):
+        if isinstance(value, str):
+            return value.lower() in ("1", "true", "yes", "on")
+        return bool(value)
+    if isinstance(current, int) and not isinstance(current, bool):
+        return int(value)
+    if isinstance(current, float):
+        return float(value)
+    return "" if value is None else str(value)
+
+
+def _write_env(updated: dict):
+    env_path = Path(settings.Config.env_file)
+    existing_lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    pending = {key.upper(): value for key, value in updated.items()}
+    output_lines: list[str] = []
+    seen: set[str] = set()
+
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output_lines.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        upper = key.upper()
+        if upper in pending:
+            output_lines.append(f"{key}={_format_env_value(pending[upper])}")
+            seen.add(upper)
+        else:
+            output_lines.append(line)
+
+    for upper, value in pending.items():
+        if upper not in seen:
+            output_lines.append(f"{upper}={_format_env_value(value)}")
+
+    env_path.write_text("\n".join(output_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _format_env_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value)
+    if any(ch in text for ch in (" ", "#", "\n", '"')):
+        return '"' + text.replace('"', '\\"') + '"'
+    return text
