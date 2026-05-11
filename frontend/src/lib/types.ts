@@ -196,9 +196,12 @@ export const OUTPUT_TYPE_LABELS: Record<string, string> = {
   task_result: "任务产出",
   subagent_result: "SubAgent 产出",
   review: "导师审核",
+  review_summary: "导师审核汇总",
   final_report: "最终报告",
   run_log: "运行日志",
 }
+
+OUTPUT_TYPE_LABELS.final_report_draft = "写作研究生初稿"
 
 export interface OfficeState {
   run: {
