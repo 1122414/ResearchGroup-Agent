@@ -192,9 +192,9 @@ def _format_env_value(value) -> str:
 def _mask_secret(value: str) -> str:
     if not value:
         return ""
-    if len(value) <= 8:
-        return "*" * len(value)
-    return f"{value[:4]}...{value[-4:]}"
+    if len(value) <= 4:
+        return "****"
+    return f"****...{value[-4:]}"
 
 
 def _safe_log_settings(values: dict) -> dict:
