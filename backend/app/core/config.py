@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     subagent_model_name: str = ""
     llm_timeout: int = 120
     llm_max_retries: int = 3
+    llm_max_tokens: int = 4096
+    advisor_temperature: float = 0.3
+    graduate_temperature: float = 0.7
+    subagent_temperature: float = 0.7
     mock_mode: bool = True
 
     # Cost estimation, USD per token. Keep these configurable because model
@@ -56,11 +60,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     frontend_api_base: str = "http://localhost:8000/api"
     run_poll_interval_ms: int = 1500
+    frontend_log_flush_interval_ms: int = 5000
 
     # Runtime behavior
     run_cancel_check_enabled: bool = True
     run_event_default_limit: int = 100
     run_event_max_limit: int = 500
+    attachment_extract_max_chars: int = 12000
+    attachment_max_file_size_mb: int = 25
+    multimodal_enabled: bool = False
+    vision_model_name: str = ""
 
     # Logging and artifacts
     log_level: str = "INFO"
@@ -98,6 +107,13 @@ class Settings(BaseSettings):
             "subagent": self.subagent_model_name or self.llm_model_name,
         }
         return role_map.get(role, self.llm_model_name)
+
+    def get_temperature_for_role(self, role: str) -> float:
+        if role.startswith("advisor"):
+            return self.advisor_temperature
+        if role == "subagent":
+            return self.subagent_temperature
+        return self.graduate_temperature
 
     def get_cost_rates_for_model(self, model: str, provider: str) -> tuple[float, float]:
         if provider == "mock":

@@ -8,12 +8,61 @@ from ..core.logger import logger
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+READONLY_FIELDS = {
+    "has_llm_api_key",
+    "llm_api_key_masked",
+}
+
+ALLOWED_FIELDS = {
+    "mock_mode",
+    "llm_api_key",
+    "llm_base_url",
+    "llm_model_name",
+    "advisor_model_name",
+    "graduate_model_name",
+    "subagent_model_name",
+    "llm_timeout",
+    "llm_max_retries",
+    "llm_max_tokens",
+    "advisor_temperature",
+    "graduate_temperature",
+    "subagent_temperature",
+    "scheduler_skill_weight",
+    "scheduler_idle_weight",
+    "scheduler_idle_scale",
+    "collab_complexity_threshold",
+    "collab_load_threshold",
+    "collab_max_count",
+    "subagent_complexity_threshold",
+    "subagent_decomposability_threshold",
+    "subagent_mentoring_threshold",
+    "run_poll_interval_ms",
+    "frontend_log_flush_interval_ms",
+    "run_cancel_check_enabled",
+    "run_event_default_limit",
+    "run_event_max_limit",
+    "attachment_extract_max_chars",
+    "attachment_max_file_size_mb",
+    "multimodal_enabled",
+    "vision_model_name",
+    "log_level",
+    "default_input_cost_per_token",
+    "default_output_cost_per_token",
+    "mock_input_cost_per_token",
+    "mock_output_cost_per_token",
+    "token_estimate_chars_per_token",
+}
+
+
 @router.get("")
 async def get_settings():
     logger.debug("[API] get_settings")
+    has_key = bool(settings.llm_api_key)
     return {
         "mock_mode": settings.mock_mode,
-        "llm_api_key": settings.llm_api_key,
+        "llm_api_key": "",
+        "has_llm_api_key": has_key,
+        "llm_api_key_masked": _mask_secret(settings.llm_api_key),
         "llm_model_name": settings.llm_model_name,
         "advisor_model_name": settings.advisor_model_name or settings.llm_model_name,
         "graduate_model_name": settings.graduate_model_name or settings.llm_model_name,
@@ -21,6 +70,10 @@ async def get_settings():
         "llm_base_url": settings.llm_base_url,
         "llm_timeout": settings.llm_timeout,
         "llm_max_retries": settings.llm_max_retries,
+        "llm_max_tokens": settings.llm_max_tokens,
+        "advisor_temperature": settings.advisor_temperature,
+        "graduate_temperature": settings.graduate_temperature,
+        "subagent_temperature": settings.subagent_temperature,
         "scheduler_skill_weight": settings.scheduler_skill_weight,
         "scheduler_idle_weight": settings.scheduler_idle_weight,
         "scheduler_idle_scale": settings.scheduler_idle_scale,
@@ -36,9 +89,14 @@ async def get_settings():
         "cors_origins": settings.cors_origins,
         "frontend_api_base": settings.frontend_api_base,
         "run_poll_interval_ms": settings.run_poll_interval_ms,
+        "frontend_log_flush_interval_ms": settings.frontend_log_flush_interval_ms,
         "run_cancel_check_enabled": settings.run_cancel_check_enabled,
         "run_event_default_limit": settings.run_event_default_limit,
         "run_event_max_limit": settings.run_event_max_limit,
+        "attachment_extract_max_chars": settings.attachment_extract_max_chars,
+        "attachment_max_file_size_mb": settings.attachment_max_file_size_mb,
+        "multimodal_enabled": settings.multimodal_enabled,
+        "vision_model_name": settings.vision_model_name,
         "log_level": settings.log_level,
         "log_dir": settings.log_dir,
         "default_input_cost_per_token": settings.default_input_cost_per_token,
@@ -51,50 +109,35 @@ async def get_settings():
 
 @router.patch("")
 async def update_settings(body: dict):
-    allowed = {
-        "mock_mode",
-        "llm_api_key",
-        "llm_base_url",
-        "llm_model_name",
-        "advisor_model_name",
-        "graduate_model_name",
-        "subagent_model_name",
-        "llm_timeout",
-        "llm_max_retries",
-        "scheduler_skill_weight",
-        "scheduler_idle_weight",
-        "scheduler_idle_scale",
-        "collab_complexity_threshold",
-        "collab_load_threshold",
-        "collab_max_count",
-        "subagent_complexity_threshold",
-        "subagent_decomposability_threshold",
-        "subagent_mentoring_threshold",
-        "run_poll_interval_ms",
-        "run_cancel_check_enabled",
-        "run_event_default_limit",
-        "run_event_max_limit",
-        "log_level",
-        "default_input_cost_per_token",
-        "default_output_cost_per_token",
-        "mock_input_cost_per_token",
-        "mock_output_cost_per_token",
-        "token_estimate_chars_per_token",
-    }
     updated = {}
-    for key in allowed:
-        if key in body:
-            value = _coerce_value(key, body[key])
-            setattr(settings, key, value)
-            updated[key] = value
+    for key, raw_value in body.items():
+        if key in READONLY_FIELDS or key not in ALLOWED_FIELDS:
+            continue
+        if key == "llm_api_key" and not str(raw_value or "").strip():
+            continue
+        value = _coerce_value(key, raw_value)
+        setattr(settings, key, value)
+        updated[key] = value
+
+    if body.get("clear_llm_api_key"):
+        settings.llm_api_key = ""
+        updated["llm_api_key"] = ""
+
     if updated:
         try:
             _write_env(updated)
         except OSError as exc:
             logger.error("[API] update_settings env write failed | error=%s", exc)
-            raise HTTPException(status_code=500, detail=f".env 写入失败：{exc}") from exc
-    logger.info("[API] update_settings | updated=%s", {k: ("***" if k == "llm_api_key" and v else v) for k, v in updated.items()})
-    return {"updated": updated, "message": "配置已同步到当前进程和项目 .env 文件"}
+            raise HTTPException(status_code=500, detail=f".env 写入失败: {exc}") from exc
+
+    safe_updated = dict(updated)
+    if "llm_api_key" in safe_updated:
+        safe_updated["llm_api_key"] = ""
+        safe_updated["has_llm_api_key"] = bool(settings.llm_api_key)
+        safe_updated["llm_api_key_masked"] = _mask_secret(settings.llm_api_key)
+
+    logger.info("[API] update_settings | updated=%s", _safe_log_settings(updated))
+    return {"updated": safe_updated, "message": "配置已保存到 .env，重启服务后对启动参数完全生效。"}
 
 
 def _coerce_value(key: str, value):
@@ -144,3 +187,15 @@ def _format_env_value(value) -> str:
     if any(ch in text for ch in (" ", "#", "\n", '"')):
         return '"' + text.replace('"', '\\"') + '"'
     return text
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _safe_log_settings(values: dict) -> dict:
+    return {key: ("***" if key == "llm_api_key" and value else value) for key, value in values.items()}

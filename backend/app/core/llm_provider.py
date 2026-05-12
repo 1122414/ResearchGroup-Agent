@@ -260,8 +260,8 @@ class OpenAICompatibleProvider(LLMProvider):
         request_body = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3 if role.startswith("advisor") else 0.7,
-            "max_tokens": 4096,
+            "temperature": settings.get_temperature_for_role(role),
+            "max_tokens": settings.llm_max_tokens,
         }
 
         if schema:
