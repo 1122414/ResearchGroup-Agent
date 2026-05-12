@@ -6,6 +6,7 @@ from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
+from ..core.research_goal import primary_goal
 from ..storage.repositories import AgentRepository, OutputRepository, RunRepository, TaskRepository
 
 
@@ -318,6 +319,7 @@ class ReportService:
         return agent.get("name", agent_id) if agent else agent_id
 
     def _primary_goal(self, run: dict) -> str:
+        return primary_goal(str(run.get("research_goal", "")))
         goal = str(run.get("research_goal", "")).strip()
         return goal.split("## 用户上传的多模态附件上下文", 1)[0].strip()
 
