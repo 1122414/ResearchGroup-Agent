@@ -16,8 +16,12 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 BASE_URL = "http://localhost:8000/api"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = REPO_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_ROOT))
 
 
 def req(method: str, path: str, body: dict | None = None) -> dict:
@@ -31,8 +35,8 @@ def req(method: str, path: str, body: dict | None = None) -> dict:
 
 def check_local_helpers() -> None:
     print("[1/6] local helper contracts")
-    from backend.app.core.research_goal import ATTACHMENT_CONTEXT_HEADING, primary_goal
-    from backend.app.core.state_machine import can_delete_run, check_transition, RUN_TRANSITIONS
+    from app.core.research_goal import ATTACHMENT_CONTEXT_HEADING, primary_goal
+    from app.core.state_machine import RUN_TRANSITIONS, can_delete_run, check_transition
 
     mixed_goal = f"研究 A 和 B 的差异\n\n{ATTACHMENT_CONTEXT_HEADING}\n\n### a.pdf\ncontent"
     assert primary_goal(mixed_goal) == "研究 A 和 B 的差异"
