@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { KeyRound, Save, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
@@ -57,7 +58,7 @@ export function SettingsButton() {
           <circle cx="12" cy="12" r="3" />
         </svg>
       </button>
-      {open && <SettingsPanel onClose={() => setOpen(false)} />}
+      {open && createPortal(<SettingsPanel onClose={() => setOpen(false)} />, document.body)}
     </>
   )
 }
