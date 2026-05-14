@@ -8,6 +8,7 @@ from ..storage.repositories import AgentRepository, LLMUsageRepository, RunEvent
 from .report_service import report_service
 from .review_service import review_service
 from .run_event_service import run_event_service
+from .skill_reflection_service import skill_reflection_service
 from .subagent_service import subagent_service
 from .task_decomposer import task_decomposer
 from .task_executor import task_executor
@@ -164,6 +165,19 @@ class RunExecutionService:
                 run_event_service.emit(run_id, "review.started", "review", "导师开始审核", latest_task.get("title", ""), task_id=task["id"], agent_id=latest_task.get("owner_agent"))
                 review = await review_service.review(latest_task)
                 run_event_service.emit(run_id, "review.completed", "review", "导师审核完成", review.get("feedback", ""), task_id=task["id"], agent_id=latest_task.get("owner_agent"), payload=review)
+                latest_after_review = TaskRepository.get_by_id(task["id"]) or latest_task
+                created_skills = skill_reflection_service.capture_after_review(latest_after_review, review)
+                if created_skills:
+                    run_event_service.emit(
+                        run_id,
+                        "skill.batch_created",
+                        "skill",
+                        "任务经验已沉淀",
+                        f"本次任务新增 {len(created_skills)} 个 skill 候选",
+                        task_id=task["id"],
+                        agent_id=latest_task.get("owner_agent"),
+                        payload={"skill_ids": [skill["id"] for skill in created_skills]},
+                    )
 
     def request_cancel(self, run_id: str, reason: str = "用户取消运行") -> dict:
         logger.info("[RunExecution] request_cancel | run_id=%s | reason=%s", run_id, reason)
