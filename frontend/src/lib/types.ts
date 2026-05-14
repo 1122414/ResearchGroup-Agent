@@ -23,6 +23,25 @@ export interface GraduateAgent {
   max_subagents: number
 }
 
+export interface AgentSkill {
+  id: string
+  agent_id: string
+  title: string
+  description: string
+  content: string
+  status: "draft" | "active" | "disabled" | "archived"
+  confidence: number
+  source_run_id: string | null
+  source_task_id: string | null
+  tags: string[]
+  file_path: string
+  usage_count: number
+  failure_count: number
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+}
+
 export interface Task {
   id: string
   title: string

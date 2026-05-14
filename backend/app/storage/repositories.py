@@ -468,6 +468,107 @@ class LLMUsageRepository:
         }
 
 
+class AgentSkillRepository:
+    @staticmethod
+    def insert(skill: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO agent_skills (
+                id, agent_id, title, description, content, status, confidence,
+                source_run_id, source_task_id, tags, file_path, usage_count,
+                failure_count, created_at, updated_at, last_used_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                skill["id"],
+                skill["agent_id"],
+                skill["title"],
+                skill.get("description", ""),
+                skill["content"],
+                skill.get("status", "draft"),
+                skill.get("confidence", 0.0),
+                skill.get("source_run_id"),
+                skill.get("source_task_id"),
+                json.dumps(skill.get("tags", []), ensure_ascii=False),
+                skill["file_path"],
+                skill.get("usage_count", 0),
+                skill.get("failure_count", 0),
+                skill["created_at"],
+                skill["updated_at"],
+                skill.get("last_used_at"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_id(skill_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM agent_skills WHERE id = ?", (skill_id,)).fetchone()
+        conn.close()
+        return _deserialize_agent_skill(row) if row else None
+
+    @staticmethod
+    def get_all(agent_id: str | None = None, status: str | None = None, q: str | None = None) -> list[dict]:
+        conn = get_connection()
+        clauses: list[str] = []
+        params: list = []
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if q:
+            clauses.append("(title LIKE ? OR description LIKE ? OR tags LIKE ?)")
+            like = f"%{q}%"
+            params.extend([like, like, like])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(f"SELECT * FROM agent_skills {where} ORDER BY updated_at DESC", params).fetchall()
+        conn.close()
+        return [_deserialize_agent_skill(row) for row in rows]
+
+    @staticmethod
+    def update(skill_id: str, updates: dict):
+        if not updates:
+            return
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key, value in updates.items():
+            if key == "tags":
+                assignments.append("tags = ?")
+                params.append(json.dumps(value, ensure_ascii=False))
+            elif key in {
+                "title",
+                "description",
+                "content",
+                "status",
+                "confidence",
+                "file_path",
+                "usage_count",
+                "failure_count",
+                "last_used_at",
+                "updated_at",
+            }:
+                assignments.append(f"{key} = ?")
+                params.append(value)
+        if assignments:
+            params.append(skill_id)
+            conn.execute(f"UPDATE agent_skills SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+    @staticmethod
+    def delete(skill_id: str):
+        conn = get_connection()
+        conn.execute("DELETE FROM agent_skills WHERE id = ?", (skill_id,))
+        conn.commit()
+        conn.close()
+
+
 def _json_loads(value, default):
     if value is None:
         return default
@@ -606,4 +707,25 @@ def _deserialize_usage(row) -> dict:
         "success": bool(row["success"]),
         "error": row["error"],
         "created_at": row["created_at"],
+    }
+
+
+def _deserialize_agent_skill(row) -> dict:
+    return {
+        "id": row["id"],
+        "agent_id": row["agent_id"],
+        "title": row["title"],
+        "description": row["description"],
+        "content": row["content"],
+        "status": row["status"],
+        "confidence": row["confidence"],
+        "source_run_id": row["source_run_id"],
+        "source_task_id": row["source_task_id"],
+        "tags": _json_loads(row["tags"], []),
+        "file_path": row["file_path"],
+        "usage_count": row["usage_count"],
+        "failure_count": row["failure_count"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "last_used_at": row["last_used_at"],
     }

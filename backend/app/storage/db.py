@@ -136,8 +136,28 @@ def init_db():
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS agent_skills (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            status TEXT NOT NULL,
+            confidence REAL DEFAULT 0,
+            source_run_id TEXT,
+            source_task_id TEXT,
+            tags TEXT DEFAULT '[]',
+            file_path TEXT NOT NULL,
+            usage_count INTEGER DEFAULT 0,
+            failure_count INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_used_at TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
         """
     )
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -124,6 +125,9 @@ export default function AgentsPage() {
                 <span>可创建 SubAgent：{agent.max_subagents} 个</span>
                 <span>{agent.preferred_task_types?.length ? `偏好：${agent.preferred_task_types.join(", ")}` : ""}</span>
               </div>
+              <Link href={`/skills?agent_id=${agent.id}`} className="block rounded-lg border border-slate-200 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:bg-slate-50">
+                管理专属 Skills
+              </Link>
             </CardContent>
           </Card>
         ))}

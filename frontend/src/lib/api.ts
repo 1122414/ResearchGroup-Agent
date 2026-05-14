@@ -1,4 +1,4 @@
-import type { GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
+import type { AgentSkill, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
 import { frontendLogger } from "./logger"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
@@ -26,6 +26,30 @@ export const api = {
 
   getAgents: () => fetchApi<{ agents: GraduateAgent[] }>("/agents"),
   getAgent: (id: string) => fetchApi<{ agent: GraduateAgent }>(`/agents/${id}`),
+
+  getAgentSkills: (params: { agent_id?: string; status?: string; q?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (params.agent_id) query.set("agent_id", params.agent_id)
+    if (params.status) query.set("status", params.status)
+    if (params.q) query.set("q", params.q)
+    const suffix = query.toString() ? `?${query.toString()}` : ""
+    return fetchApi<{ skills: AgentSkill[] }>(`/agent-skills${suffix}`)
+  },
+  getAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}`),
+  createAgentSkill: (body: Partial<AgentSkill>) =>
+    fetchApi<{ skill: AgentSkill }>("/agent-skills", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAgentSkill: (id: string, body: Partial<AgentSkill>) =>
+    fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  archiveAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}`, { method: "DELETE" }),
+  restoreAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/restore`, { method: "POST" }),
+  enableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/enable`, { method: "POST" }),
+  disableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/disable`, { method: "POST" }),
 
   getTasks: (runId?: string) =>
     fetchApi<{ tasks: Task[] }>(`/tasks${runId ? `?run_id=${runId}` : ""}`),
