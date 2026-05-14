@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.api.routes_agents import router as agents_router
 from app.api.routes_agent_skills import router as agent_skills_router
+from app.api.routes_experiments import router as experiments_router
 from app.api.routes_logs import router as logs_router
 from app.api.routes_monitor import router as monitor_router
 from app.api.routes_outputs import router as outputs_router
@@ -51,6 +52,7 @@ app.add_middleware(
 
 app.include_router(agents_router)
 app.include_router(agent_skills_router)
+app.include_router(experiments_router)
 app.include_router(tasks_router)
 app.include_router(runs_router)
 app.include_router(outputs_router)

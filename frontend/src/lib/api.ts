@@ -1,4 +1,4 @@
-import type { AgentSkill, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
+import type { AgentSkill, ExperimentPlan, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
 import { frontendLogger } from "./logger"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
@@ -50,6 +50,43 @@ export const api = {
   restoreAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/restore`, { method: "POST" }),
   enableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/enable`, { method: "POST" }),
   disableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/disable`, { method: "POST" }),
+
+  getExperimentConfig: () => fetchApi<{ config: Record<string, string | number | boolean> }>("/experiments/config"),
+  updateExperimentConfig: (body: Record<string, unknown>) =>
+    fetchApi<{ updated: Record<string, unknown> }>("/experiments/config", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  getExperimentPlans: (params: { run_id?: string; task_id?: string; status?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (params.run_id) query.set("run_id", params.run_id)
+    if (params.task_id) query.set("task_id", params.task_id)
+    if (params.status) query.set("status", params.status)
+    const suffix = query.toString() ? `?${query.toString()}` : ""
+    return fetchApi<{ plans: ExperimentPlan[] }>(`/experiments/plans${suffix}`)
+  },
+  createExperimentPlan: (body: Partial<ExperimentPlan>) =>
+    fetchApi<{ plan: ExperimentPlan }>("/experiments/plans", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateExperimentPlan: (id: string, body: Partial<ExperimentPlan>) =>
+    fetchApi<{ plan: ExperimentPlan }>(`/experiments/plans/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  scanExperimentPlan: (id: string) => fetchApi<{ plan: ExperimentPlan }>(`/experiments/plans/${id}/scan`, { method: "POST" }),
+  approveExperimentPlan: (id: string, approvedBy = "user") =>
+    fetchApi<{ plan: ExperimentPlan }>(`/experiments/plans/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ approved_by: approvedBy }),
+    }),
+  rejectExperimentPlan: (id: string, reason = "") =>
+    fetchApi<{ plan: ExperimentPlan }>(`/experiments/plans/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  executeExperimentPlan: (id: string) => fetchApi<{ plan: ExperimentPlan }>(`/experiments/plans/${id}/execute`, { method: "POST" }),
 
   getTasks: (runId?: string) =>
     fetchApi<{ tasks: Task[] }>(`/tasks${runId ? `?run_id=${runId}` : ""}`),

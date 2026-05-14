@@ -569,6 +569,105 @@ class AgentSkillRepository:
         conn.close()
 
 
+class ExperimentPlanRepository:
+    @staticmethod
+    def insert(plan: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO experiment_plans (
+                id, run_id, task_id, agent_id, title, objective, workspace_dir,
+                files, commands, env_vars, risk_level, risk_reasons, status,
+                result, artifacts, created_at, updated_at, approved_at, approved_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan["id"],
+                plan.get("run_id"),
+                plan.get("task_id"),
+                plan.get("agent_id", "experiment_agent"),
+                plan["title"],
+                plan.get("objective", ""),
+                plan["workspace_dir"],
+                json.dumps(plan.get("files", []), ensure_ascii=False),
+                json.dumps(plan.get("commands", []), ensure_ascii=False),
+                json.dumps(plan.get("env_vars", {}), ensure_ascii=False),
+                plan.get("risk_level", "needs_review"),
+                json.dumps(plan.get("risk_reasons", []), ensure_ascii=False),
+                plan.get("status", "draft"),
+                json.dumps(plan.get("result"), ensure_ascii=False) if plan.get("result") else None,
+                json.dumps(plan.get("artifacts", []), ensure_ascii=False),
+                plan["created_at"],
+                plan["updated_at"],
+                plan.get("approved_at"),
+                plan.get("approved_by"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_id(plan_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM experiment_plans WHERE id = ?", (plan_id,)).fetchone()
+        conn.close()
+        return _deserialize_experiment_plan(row) if row else None
+
+    @staticmethod
+    def get_all(run_id: str | None = None, task_id: str | None = None, status: str | None = None) -> list[dict]:
+        conn = get_connection()
+        clauses: list[str] = []
+        params: list = []
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(f"SELECT * FROM experiment_plans {where} ORDER BY updated_at DESC", params).fetchall()
+        conn.close()
+        return [_deserialize_experiment_plan(row) for row in rows]
+
+    @staticmethod
+    def update(plan_id: str, updates: dict):
+        if not updates:
+            return
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        json_fields = {"files", "commands", "env_vars", "risk_reasons", "result", "artifacts"}
+        allowed_fields = {
+            "run_id",
+            "task_id",
+            "agent_id",
+            "title",
+            "objective",
+            "workspace_dir",
+            "risk_level",
+            "status",
+            "updated_at",
+            "approved_at",
+            "approved_by",
+        }
+        for key, value in updates.items():
+            if key in json_fields:
+                assignments.append(f"{key} = ?")
+                params.append(json.dumps(value, ensure_ascii=False) if value is not None else None)
+            elif key in allowed_fields:
+                assignments.append(f"{key} = ?")
+                params.append(value)
+        if assignments:
+            params.append(plan_id)
+            conn.execute(f"UPDATE experiment_plans SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+
 def _json_loads(value, default):
     if value is None:
         return default
@@ -728,4 +827,28 @@ def _deserialize_agent_skill(row) -> dict:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "last_used_at": row["last_used_at"],
+    }
+
+
+def _deserialize_experiment_plan(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "agent_id": row["agent_id"],
+        "title": row["title"],
+        "objective": row["objective"],
+        "workspace_dir": row["workspace_dir"],
+        "files": _json_loads(row["files"], []),
+        "commands": _json_loads(row["commands"], []),
+        "env_vars": _json_loads(row["env_vars"], {}),
+        "risk_level": row["risk_level"],
+        "risk_reasons": _json_loads(row["risk_reasons"], []),
+        "status": row["status"],
+        "result": _json_loads(row["result"], None) if row["result"] else None,
+        "artifacts": _json_loads(row["artifacts"], []),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "approved_at": row["approved_at"],
+        "approved_by": row["approved_by"],
     }

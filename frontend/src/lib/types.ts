@@ -42,6 +42,44 @@ export interface AgentSkill {
   last_used_at: string | null
 }
 
+export interface ExperimentFile {
+  path: string
+  content: string
+}
+
+export interface ExperimentCommand {
+  command: string
+  description?: string
+}
+
+export interface ExperimentPlan {
+  id: string
+  run_id: string | null
+  task_id: string | null
+  agent_id: string
+  title: string
+  objective: string
+  workspace_dir: string
+  files: ExperimentFile[]
+  commands: ExperimentCommand[]
+  env_vars: Record<string, string>
+  risk_level: "safe" | "needs_review" | "dangerous"
+  risk_reasons: string[]
+  status: "draft" | "needs_review" | "approved" | "rejected" | "running" | "completed" | "failed"
+  result: {
+    exit_code: number | null
+    stdout: string
+    stderr: string
+    elapsed_ms: number
+    command_results: Record<string, unknown>[]
+  } | null
+  artifacts: string[]
+  created_at: string
+  updated_at: string
+  approved_at: string | null
+  approved_by: string | null
+}
+
 export interface Task {
   id: string
   title: string

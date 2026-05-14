@@ -155,9 +155,32 @@ def init_db():
             last_used_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS experiment_plans (
+            id TEXT PRIMARY KEY,
+            run_id TEXT,
+            task_id TEXT,
+            agent_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            objective TEXT DEFAULT '',
+            workspace_dir TEXT NOT NULL,
+            files TEXT DEFAULT '[]',
+            commands TEXT DEFAULT '[]',
+            env_vars TEXT DEFAULT '{}',
+            risk_level TEXT DEFAULT 'needs_review',
+            risk_reasons TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'draft',
+            result TEXT,
+            artifacts TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            approved_at TEXT,
+            approved_by TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
+        CREATE INDEX IF NOT EXISTS idx_experiment_plans_run_task ON experiment_plans(run_id, task_id);
         """
     )
 

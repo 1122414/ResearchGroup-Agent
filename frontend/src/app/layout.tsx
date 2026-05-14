@@ -22,6 +22,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <Link href="/tasks" className="text-gray-600 hover:text-gray-900">任务板</Link>
               <Link href="/agents" className="text-gray-600 hover:text-gray-900">Agent</Link>
               <Link href="/skills" className="text-gray-600 hover:text-gray-900">Skills</Link>
+              <Link href="/experiments" className="text-gray-600 hover:text-gray-900">Experiments</Link>
               <Link href="/outputs" className="text-gray-600 hover:text-gray-900">输出</Link>
               <Link href="/office" className="text-gray-600 hover:text-gray-900">像素办公室</Link>
               <SettingsButton />
