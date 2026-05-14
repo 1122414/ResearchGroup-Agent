@@ -42,6 +42,13 @@ export interface AgentSkill {
   last_used_at: string | null
 }
 
+export interface SkillOwner {
+  id: string
+  name: string
+  type: string
+  scope: "advisor" | "graduate_agent" | "undergraduate_subagent" | string
+}
+
 export interface ExperimentFile {
   path: string
   content: string

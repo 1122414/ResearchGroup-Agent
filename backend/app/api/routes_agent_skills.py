@@ -15,6 +15,11 @@ async def list_agent_skills(
     return {"skills": agent_skill_service.list(agent_id=agent_id, status=status, q=q)}
 
 
+@router.get("/owners")
+async def list_agent_skill_owners():
+    return {"owners": agent_skill_service.owners()}
+
+
 @router.get("/{skill_id}")
 async def get_agent_skill(skill_id: str):
     return {"skill": agent_skill_service.get(skill_id)}

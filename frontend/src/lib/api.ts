@@ -1,4 +1,4 @@
-import type { AgentSkill, ExperimentPlan, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, Task } from "./types"
+import type { AgentSkill, ExperimentPlan, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, SkillOwner, Task } from "./types"
 import { frontendLogger } from "./logger"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
@@ -36,6 +36,7 @@ export const api = {
     return fetchApi<{ skills: AgentSkill[] }>(`/agent-skills${suffix}`)
   },
   getAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}`),
+  getAgentSkillOwners: () => fetchApi<{ owners: SkillOwner[] }>("/agent-skills/owners"),
   createAgentSkill: (body: Partial<AgentSkill>) =>
     fetchApi<{ skill: AgentSkill }>("/agent-skills", {
       method: "POST",

@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Archive, CheckCircle2, Edit3, Plus, RotateCcw, Save, Search, XCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { api } from "@/lib/api"
-import type { AgentSkill, GraduateAgent } from "@/lib/types"
+import type { AgentSkill, SkillOwner } from "@/lib/types"
 
 const EMPTY_FORM = {
   id: "",
@@ -22,12 +22,18 @@ const EMPTY_FORM = {
 const STATUS_LABELS: Record<string, string> = {
   draft: "草稿",
   active: "启用",
-  disabled: "禁用",
+  disabled: "停用",
   archived: "归档",
 }
 
+const OWNER_SCOPE_LABELS: Record<string, string> = {
+  advisor: "导师",
+  graduate_agent: "研究生",
+  undergraduate_subagent: "本科 SubAgent",
+}
+
 export default function SkillsPage() {
-  const [agents, setAgents] = useState<GraduateAgent[]>([])
+  const [owners, setOwners] = useState<SkillOwner[]>([])
   const [skills, setSkills] = useState<AgentSkill[]>([])
   const [agentFilter, setAgentFilter] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
@@ -36,33 +42,32 @@ export default function SkillsPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [message, setMessage] = useState("")
 
-  const agentOptions = useMemo(() => [{ id: "advisor", name: "导师 Agent" }, ...agents], [agents])
-  const agentName = (id: string) => agentOptions.find((agent) => agent.id === id)?.name || id
+  const ownerById = useMemo(() => new Map(owners.map((owner) => [owner.id, owner])), [owners])
+  const ownerName = (id: string) => ownerById.get(id)?.name || id
 
-  async function load() {
-    const [{ agents }, { skills }] = await Promise.all([
-      api.getAgents(),
+  const load = useCallback(async () => {
+    const [ownersResult, skillsResult] = await Promise.all([
+      api.getAgentSkillOwners(),
       api.getAgentSkills({ agent_id: agentFilter || undefined, status: statusFilter || undefined, q: query || undefined }),
     ])
-    setAgents(agents)
-    setSkills(skills)
-  }
+    setOwners(ownersResult.owners)
+    setSkills(skillsResult.skills)
+  }, [agentFilter, query, statusFilter])
 
-  function refresh() {
+  const refresh = () => {
     load().catch((err) => setMessage(err instanceof Error ? err.message : "刷新失败"))
   }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      load().catch((err) => setMessage(err instanceof Error ? err.message : "加载 Skill 失败"))
+      load().catch((err) => setMessage(err instanceof Error ? err.message : "加载 Skill 失败，请确认后端已重启并包含 /api/agent-skills/owners"))
     }, 0)
     return () => window.clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentFilter, statusFilter])
+  }, [load])
 
   const startCreate = () => {
     setSelected(null)
-    setForm({ ...EMPTY_FORM, agent_id: agentFilter || "advisor" })
+    setForm({ ...EMPTY_FORM, agent_id: agentFilter || owners[0]?.id || "advisor" })
   }
 
   const startEdit = (skill: AgentSkill) => {
@@ -82,28 +87,32 @@ export default function SkillsPage() {
   const save = async () => {
     const payload = {
       agent_id: form.agent_id,
-      title: form.title,
-      description: form.description,
-      content: form.content,
+      title: form.title.trim(),
+      description: form.description.trim(),
+      content: form.content.trim(),
       status: form.status,
       confidence: Number(form.confidence),
       tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
     }
     if (!payload.agent_id || !payload.title || !payload.content) {
-      setMessage("Agent、标题和内容不能为空")
+      setMessage("请选择 Agent，并填写标题和内容")
       return
     }
-    const result = selected
-      ? await api.updateAgentSkill(selected.id, payload)
-      : await api.createAgentSkill(payload)
-    setSelected(result.skill)
-    startEdit(result.skill)
-    setMessage("Skill 已保存")
-    refresh()
+    try {
+      const result = selected
+        ? await api.updateAgentSkill(selected.id, payload)
+        : await api.createAgentSkill(payload)
+      setSelected(result.skill)
+      startEdit(result.skill)
+      setMessage("Skill 已保存")
+      await load()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Skill 保存失败")
+    }
   }
 
   const archiveSkill = async (skill: AgentSkill) => {
-    if (!window.confirm(`确认归档 Skill：${skill.title}？归档后不会参与 Agent 上下文注入。`)) return
+    if (!window.confirm(`确认归档 Skill「${skill.title}」？归档后不会被后续任务使用。`)) return
     await api.archiveAgentSkill(skill.id)
     setMessage("Skill 已归档")
     refresh()
@@ -112,7 +121,7 @@ export default function SkillsPage() {
   const setStatus = async (skill: AgentSkill, status: "active" | "disabled") => {
     if (status === "active") await api.enableAgentSkill(skill.id)
     else await api.disableAgentSkill(skill.id)
-    setMessage(status === "active" ? "Skill 已启用" : "Skill 已禁用")
+    setMessage(status === "active" ? "Skill 已启用" : "Skill 已停用")
     refresh()
   }
 
@@ -128,7 +137,7 @@ export default function SkillsPage() {
         <div>
           <div className="text-xs font-medium uppercase text-slate-500">Agent Skill Library</div>
           <h1 className="mt-1 text-2xl font-bold text-slate-950">Agent Skills</h1>
-          <p className="mt-1 text-sm text-slate-500">管理每个 Agent 的专属技能沉淀。只有启用状态的 skill 才会被后续任务使用。</p>
+          <p className="mt-1 text-sm text-slate-500">管理导师、研究生 Agent 和本科 SubAgent 共享池的技能沉淀。只有启用状态的 Skill 会被后续任务使用。</p>
         </div>
         <Button onClick={startCreate}>
           <Plus className="mr-2 size-4" />
@@ -142,7 +151,11 @@ export default function SkillsPage() {
         <CardContent className="flex flex-wrap gap-3 pt-6">
           <select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-sm">
             <option value="">全部 Agent</option>
-            {agentOptions.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+            {owners.map((owner) => (
+              <option key={owner.id} value={owner.id}>
+                {owner.name}
+              </option>
+            ))}
           </select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-sm">
             <option value="">全部状态</option>
@@ -166,7 +179,7 @@ export default function SkillsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="font-semibold text-slate-950">{skill.title}</h2>
                       <Badge variant="outline">{STATUS_LABELS[skill.status] || skill.status}</Badge>
-                      <Badge variant="outline">{agentName(skill.agent_id)}</Badge>
+                      <Badge variant="outline">{ownerName(skill.agent_id)}</Badge>
                     </div>
                     <p className="mt-1 text-sm text-slate-500">{skill.description || "暂无描述"}</p>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
@@ -188,7 +201,7 @@ export default function SkillsPage() {
                     ) : (
                       <>
                         {skill.status === "active" ? (
-                          <Button variant="outline" onClick={() => setStatus(skill, "disabled")}><XCircle className="mr-2 size-4" />禁用</Button>
+                          <Button variant="outline" onClick={() => setStatus(skill, "disabled")}><XCircle className="mr-2 size-4" />停用</Button>
                         ) : (
                           <Button variant="outline" onClick={() => setStatus(skill, "active")}><CheckCircle2 className="mr-2 size-4" />启用</Button>
                         )}
@@ -214,7 +227,11 @@ export default function SkillsPage() {
           <CardContent className="space-y-3 text-sm">
             <Field label="Agent" as="select" value={form.agent_id} onChange={(value) => setForm({ ...form, agent_id: value })}>
               <option value="">请选择 Agent</option>
-              {agentOptions.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name} · {OWNER_SCOPE_LABELS[owner.scope] || owner.scope}
+                </option>
+              ))}
             </Field>
             <Field label="标题" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
             <Field label="描述" value={form.description} onChange={(value) => setForm({ ...form, description: value })} />
@@ -254,3 +271,4 @@ function Field({ label, value, onChange, type = "text", as, children }: { label:
     </label>
   )
 }
+

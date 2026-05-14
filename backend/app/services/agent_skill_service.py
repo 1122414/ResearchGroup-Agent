@@ -12,9 +12,30 @@ from ..storage.repositories import AgentRepository, AgentSkillRepository
 
 
 ACTIVE_STATUSES = {"draft", "active", "disabled"}
+VIRTUAL_SKILL_OWNERS = {
+    "advisor": {"id": "advisor", "name": "导师 Agent", "type": "advisor", "scope": "advisor"},
+    "undergrad_subagent_shared": {
+        "id": "undergrad_subagent_shared",
+        "name": "本科 SubAgent 共享 Skill",
+        "type": "subagent_shared",
+        "scope": "undergraduate_subagent",
+    },
+}
 
 
 class AgentSkillService:
+    def owners(self) -> list[dict]:
+        graduate_agents = [
+            {
+                "id": agent["id"],
+                "name": agent["name"],
+                "type": agent["type"],
+                "scope": "graduate_agent",
+            }
+            for agent in AgentRepository.get_all()
+        ]
+        return [VIRTUAL_SKILL_OWNERS["advisor"], *graduate_agents, VIRTUAL_SKILL_OWNERS["undergrad_subagent_shared"]]
+
     def list(self, agent_id: str | None = None, status: str | None = None, q: str | None = None) -> list[dict]:
         return AgentSkillRepository.get_all(agent_id=agent_id, status=status, q=q)
 
@@ -114,7 +135,7 @@ class AgentSkillService:
         AgentSkillRepository.delete(skill_id)
 
     def _ensure_agent(self, agent_id: str) -> None:
-        if agent_id == "advisor":
+        if agent_id in VIRTUAL_SKILL_OWNERS:
             return
         if not AgentRepository.get_by_id(agent_id):
             raise HTTPException(status_code=404, detail="Agent 不存在")
