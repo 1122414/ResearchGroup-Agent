@@ -2,13 +2,13 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { KeyRound, Save, X } from "lucide-react"
+import { KeyRound, Save, Settings, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 
 type SystemSettings = Record<string, string | number | boolean>
 
-const TEXT_FIELDS = [
+const MODEL_TEXT_FIELDS = [
   ["llm_base_url", "API Base URL", "text"],
   ["llm_model_name", "默认模型", "text"],
   ["advisor_model_name", "导师模型", "text"],
@@ -18,13 +18,16 @@ const TEXT_FIELDS = [
   ["log_level", "日志级别", "text"],
 ] as const
 
-const NUMBER_FIELDS = [
+const MODEL_NUMBER_FIELDS = [
   ["llm_timeout", "LLM 超时秒数"],
   ["llm_max_retries", "LLM 重试次数"],
   ["llm_max_tokens", "LLM 最大输出 Tokens"],
   ["advisor_temperature", "导师温度"],
   ["graduate_temperature", "研究生温度"],
   ["subagent_temperature", "SubAgent 温度"],
+] as const
+
+const RUNTIME_NUMBER_FIELDS = [
   ["scheduler_skill_weight", "调度能力权重"],
   ["scheduler_idle_weight", "调度空闲权重"],
   ["scheduler_idle_scale", "空闲分缩放"],
@@ -41,10 +44,33 @@ const NUMBER_FIELDS = [
   ["attachment_extract_max_chars", "附件提取最大字符"],
   ["attachment_max_file_size_mb", "附件最大 MB"],
   ["token_estimate_chars_per_token", "Token 估算字符数"],
+] as const
+
+const COST_NUMBER_FIELDS = [
   ["default_input_cost_per_token", "输入单 Token 成本"],
   ["default_output_cost_per_token", "输出单 Token 成本"],
   ["mock_input_cost_per_token", "Mock 输入单 Token 成本"],
   ["mock_output_cost_per_token", "Mock 输出单 Token 成本"],
+] as const
+
+const SKILL_NUMBER_FIELDS = [
+  ["skill_min_confidence", "Skill 最低置信度"],
+  ["skill_max_injected", "每次最多注入 Skill 数"],
+] as const
+
+const EXPERIMENT_TEXT_FIELDS = [
+  ["experiment_workspace_dir", "实验 workspace"],
+  ["experiment_execution_backend", "执行后端"],
+  ["experiment_env_file", "环境变量文件"],
+  ["experiment_remote_host", "远程服务器地址"],
+  ["experiment_docker_image", "Docker 镜像"],
+  ["experiment_queue_backend", "队列后端"],
+] as const
+
+const EXPERIMENT_NUMBER_FIELDS = [
+  ["experiment_command_timeout_seconds", "命令超时秒数"],
+  ["experiment_max_output_chars", "最大输出字符"],
+  ["experiment_remote_port", "远程端口"],
 ] as const
 
 export function SettingsButton() {
@@ -53,10 +79,7 @@ export function SettingsButton() {
   return (
     <>
       <button onClick={() => setOpen(true)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950" title="系统设置">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
+        <Settings className="size-5" />
       </button>
       {open && createPortal(<SettingsPanel onClose={() => setOpen(false)} />, document.body)}
     </>
@@ -107,20 +130,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45" onClick={onClose}>
-        <div className="rounded-xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
-          正在读取系统设置...
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onClick={onClose}>
-      <div className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-xl bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <div className="mb-5 flex items-center justify-between">
+      <div className="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-950">系统设置</h2>
             <p className="mt-1 text-sm text-slate-500">这里的修改会同步写入项目根目录 .env。密钥只写入，不回显。</p>
@@ -132,6 +145,8 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
 
         {message && <div className="mb-4 rounded-lg bg-sky-50 p-3 text-sm text-sky-700">{message}</div>}
 
+        {loading && <div className="rounded-lg border border-slate-200 p-4 text-sm text-slate-500">正在读取系统设置...</div>}
+
         {draft && (
           <div className="space-y-4 text-sm">
             <Section title="运行开关">
@@ -139,6 +154,13 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
                 <ToggleRow label="Mock 模式" description="开启后使用本地模拟结果，不调用真实 LLM。" checked={Boolean(draft.mock_mode)} onChange={(value) => setValue("mock_mode", value)} />
                 <ToggleRow label="运行取消检查" description="开启后执行链路会在阶段边界响应取消。" checked={Boolean(draft.run_cancel_check_enabled)} onChange={(value) => setValue("run_cancel_check_enabled", value)} />
                 <ToggleRow label="多模态输入" description="开启后允许图片进入可用性检查，需配置视觉模型。" checked={Boolean(draft.multimodal_enabled)} onChange={(value) => setValue("multimodal_enabled", value)} />
+                <ToggleRow label="Agent Skill 系统" description="开启后允许维护和使用 Agent 专属 skill。" checked={Boolean(draft.agent_skill_enabled)} onChange={(value) => setValue("agent_skill_enabled", value)} />
+                <ToggleRow label="自动沉淀 Skill" description="开启后任务完成时会生成并评估 skill 候选。" checked={Boolean(draft.skill_auto_capture_enabled)} onChange={(value) => setValue("skill_auto_capture_enabled", value)} />
+                <ToggleRow label="Skill 敏感信息扫描" description="开启后写入 skill 前会过滤密钥、环境变量和隐私内容。" checked={Boolean(draft.skill_sensitive_scan_enabled)} onChange={(value) => setValue("skill_sensitive_scan_enabled", value)} />
+                <ToggleRow label="实验执行器" description="开启后实验 Agent 可以提交待审查实验计划。" checked={Boolean(draft.experiment_execution_enabled)} onChange={(value) => setValue("experiment_execution_enabled", value)} />
+                <ToggleRow label="实验强制审查" description="开启后所有实验计划都必须用户确认后执行。" checked={Boolean(draft.experiment_require_review)} onChange={(value) => setValue("experiment_require_review", value)} />
+                <ToggleRow label="允许实验联网" description="仅影响风险扫描，危险命令仍会要求确认。" checked={Boolean(draft.experiment_allow_network)} onChange={(value) => setValue("experiment_allow_network", value)} />
+                <ToggleRow label="允许安装依赖" description="允许 pip/npm/conda 安装类命令进入可审查流程。" checked={Boolean(draft.experiment_allow_package_install)} onChange={(value) => setValue("experiment_allow_package_install", value)} />
               </div>
             </Section>
 
@@ -161,23 +183,31 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
                   清空当前 API Key
                 </label>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {TEXT_FIELDS.map(([key, label, type]) => (
-                  <Field key={key} label={label} type={type} value={String(draft[key] ?? "")} onChange={(value) => setValue(key, value)} />
-                ))}
-              </div>
+              <FieldGrid fields={MODEL_TEXT_FIELDS} draft={draft} setValue={setValue} />
+              <FieldGrid fields={MODEL_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
             </Section>
 
-            <Section title="调度与运行参数">
+            <Section title="调度、运行与成本">
+              <FieldGrid fields={RUNTIME_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
+              <FieldGrid fields={COST_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
+            </Section>
+
+            <Section title="Agent Skill">
               <div className="grid gap-3 md:grid-cols-2">
-                {NUMBER_FIELDS.map(([key, label]) => (
+                <Field label="默认 Skill 状态" type="text" value={String(draft.skill_default_status ?? "")} onChange={(value) => setValue("skill_default_status", value)} />
+                {SKILL_NUMBER_FIELDS.map(([key, label]) => (
                   <Field key={key} label={label} type="number" value={String(draft[key] ?? "")} onChange={(value) => setValue(key, Number(value))} />
                 ))}
               </div>
             </Section>
 
+            <Section title="实验执行器">
+              <FieldGrid fields={EXPERIMENT_TEXT_FIELDS} draft={draft} setValue={setValue} />
+              <FieldGrid fields={EXPERIMENT_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
+            </Section>
+
             <div className="rounded-lg bg-amber-50 p-3 text-xs leading-6 text-amber-800">
-              修改模型、端口、跨域等启动参数后，建议重启后端和前端服务。运行中的任务不会自动迁移到新配置。
+              修改模型、端口、跨域、实验 workspace 等启动或运行参数后，建议重启后端和前端服务。实验执行器默认关闭，开启后仍会经过审查和风险扫描。
             </div>
 
             <div className="flex justify-end gap-2">
@@ -190,6 +220,16 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function FieldGrid({ fields, draft, setValue, type = "text" }: { fields: readonly (readonly [string, string, string?])[]; draft: SystemSettings; setValue: (key: string, value: string | number | boolean) => void; type?: string }) {
+  return (
+    <div className="mt-3 grid gap-3 md:grid-cols-2">
+      {fields.map(([key, label, fieldType]) => (
+        <Field key={key} label={label} type={fieldType || type} value={String(draft[key] ?? "")} onChange={(value) => setValue(key, (fieldType || type) === "number" ? Number(value) : value)} />
+      ))}
     </div>
   )
 }

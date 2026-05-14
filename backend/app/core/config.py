@@ -71,6 +71,29 @@ class Settings(BaseSettings):
     multimodal_enabled: bool = False
     vision_model_name: str = ""
 
+    # Agent skill evolution
+    agent_skill_enabled: bool = True
+    skill_auto_capture_enabled: bool = True
+    skill_default_status: str = "draft"
+    skill_min_confidence: float = 0.7
+    skill_max_injected: int = 5
+    skill_sensitive_scan_enabled: bool = True
+
+    # Experiment execution. Local execution is intentionally opt-in and guarded.
+    experiment_execution_enabled: bool = False
+    experiment_workspace_dir: str = "artifacts/experiment_workspace"
+    experiment_execution_backend: str = "local"
+    experiment_command_timeout_seconds: int = 300
+    experiment_max_output_chars: int = 20000
+    experiment_allow_network: bool = False
+    experiment_allow_package_install: bool = False
+    experiment_require_review: bool = True
+    experiment_env_file: str = ""
+    experiment_remote_host: str = ""
+    experiment_remote_port: int = 22
+    experiment_docker_image: str = ""
+    experiment_queue_backend: str = ""
+
     # Logging and artifacts
     log_level: str = "INFO"
     log_dir: str = "artifacts/logs"
