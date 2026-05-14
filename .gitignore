@@ -37,3 +37,6 @@ artifacts/runs/*
 
 # Plans
 .sisyphus/
+
+# logs
+*.log

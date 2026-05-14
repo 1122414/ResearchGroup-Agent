@@ -1,7 +1,7 @@
 # ResearchGroup-Agent — Project Knowledge Base
 
-**Generated:** 2026-05-04
-**Commit:** b851b2e
+**Generated:** 2026-05-12
+**Commit:** 545d650
 **Branch:** main
 
 ## OVERVIEW

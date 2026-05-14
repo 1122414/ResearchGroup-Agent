@@ -31,7 +31,7 @@ backend/
 ## CONVENTIONS
 - **相对导入**: `from ..storage.repositories import ...`
 - **服务单例**: 所有service模块底部实例化 (如 `task_decomposer = TaskDecomposer()`)
-- **空`__init__.py`**: 所有子包`__init__.py`为空, 无`__all__`导出
+- **空`__init__.py`**: 大部分子包`__init__.py`为空, 仅`storage/__init__.py`有`__all__`导出
 - **Pydantic v2**: `model_validate`/`model_dump`, 使用`Field(default=..., ge=, le=)`
 - **SQLite直接SQL**: 无ORM, 无alembic, `init_db()`用raw SQL建表
 - **sys.path处理**: `main.py` L4插入backend目录到path, 支持直接`python main.py`运行
@@ -39,5 +39,5 @@ backend/
 ## NOTES
 - `sys.path.insert` 是为了支持 `python backend/main.py` 直接运行, uvicorn模式不需要
 - 无reload模式 (uvicorn.run未传reload=True), 开发需手动重启
-- CORS origin硬编码在 `main.py:34`, 未从settings读取
+- CORS origins loaded from `.env` via `settings.parsed_cors_origins` (main.py:45)
 - 4个预留service文件在services/中但标记为stub, 导入安全但不调用
