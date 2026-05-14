@@ -78,7 +78,7 @@ export function SettingsButton() {
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950" title="系统设置">
+      <button onClick={() => setOpen(true)} className="rounded-lg p-2 text-[var(--rg-muted)] hover:bg-[var(--rg-surface-card)] hover:text-[var(--rg-ink)]" title="系统设置">
         <Settings className="size-5" />
       </button>
       {open && createPortal(<SettingsPanel onClose={() => setOpen(false)} />, document.body)}
@@ -131,21 +131,21 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onClick={onClose}>
-      <div className="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1011]/55 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="surface-card max-h-[88vh] w-full max-w-5xl overflow-auto p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-950">系统设置</h2>
-            <p className="mt-1 text-sm text-slate-500">这里的修改会同步写入项目根目录 .env。密钥只写入，不回显。</p>
+            <h2 className="text-xl font-bold text-[var(--rg-ink)]">系统设置</h2>
+            <p className="mt-1 text-sm text-[var(--rg-muted)]">这里的修改会同步写入项目根目录 .env。密钥只写入，不回显。</p>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+          <button onClick={onClose} className="rounded-lg p-1 text-[var(--rg-muted)] hover:bg-[var(--rg-surface-soft)] hover:text-[var(--rg-ink)]">
             <X className="size-4" />
           </button>
         </div>
 
-        {message && <div className="mb-4 rounded-lg bg-sky-50 p-3 text-sm text-sky-700">{message}</div>}
+        {message && <div className="info-banner mb-4 p-3 text-sm">{message}</div>}
 
-        {loading && <div className="rounded-lg border border-slate-200 p-4 text-sm text-slate-500">正在读取系统设置...</div>}
+        {loading && <div className="soft-card p-4 text-sm text-[var(--rg-muted)]">正在读取系统设置...</div>}
 
         {draft && (
           <div className="space-y-4 text-sm">
@@ -165,20 +165,20 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
             </Section>
 
             <Section title="模型与 API">
-              <div className="mb-3 rounded-lg border border-slate-200 p-3">
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <div className="soft-card mb-3 p-3">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--rg-muted)]">
                   <KeyRound className="size-4" />
                   LLM API Key
-                  {draft.has_llm_api_key ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{String(draft.llm_api_key_masked)}</span> : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">未配置</span>}
+                  {draft.has_llm_api_key ? <span className="rounded-full bg-[#f0fbf2] px-2 py-0.5 text-[#2f7341]">{String(draft.llm_api_key_masked)}</span> : <span className="rounded-full bg-white px-2 py-0.5 text-[var(--rg-muted)]">未配置</span>}
                 </div>
                 <input
                   type="password"
                   value={apiKeyDraft}
                   placeholder="留空表示不修改现有密钥"
                   onChange={(event) => setApiKeyDraft(event.target.value)}
-                  className="h-9 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400"
+                  className="control-input h-9 w-full px-3 text-sm"
                 />
-                <label className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                <label className="mt-2 flex items-center gap-2 text-xs text-[var(--rg-muted)]">
                   <input type="checkbox" checked={clearApiKey} onChange={(event) => setClearApiKey(event.target.checked)} />
                   清空当前 API Key
                 </label>
@@ -206,7 +206,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <FieldGrid fields={EXPERIMENT_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
             </Section>
 
-            <div className="rounded-lg bg-amber-50 p-3 text-xs leading-6 text-amber-800">
+            <div className="rounded-lg border border-[#f1d3a3] bg-[#fff6e8] p-3 text-xs leading-6 text-[#8b5a14]">
               修改模型、端口、跨域、实验 workspace 等启动或运行参数后，建议重启后端和前端服务。实验执行器默认关闭，开启后仍会经过审查和风险扫描。
             </div>
 
@@ -236,8 +236,8 @@ function FieldGrid({ fields, draft, setValue, type = "text" }: { fields: readonl
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-slate-200">
-      <div className="border-b bg-slate-50 px-3 py-2 text-xs font-semibold uppercase text-slate-500">{title}</div>
+    <div className="rounded-lg border border-[var(--rg-hairline)]">
+      <div className="border-b border-[var(--rg-hairline)] bg-[var(--rg-surface-soft)] px-3 py-2 text-xs font-semibold uppercase text-[var(--rg-muted)]">{title}</div>
       <div className="p-3">{children}</div>
     </div>
   )
@@ -246,12 +246,12 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function Field({ label, type, value, onChange }: { label: string; type: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-[var(--rg-muted)]">{label}</span>
       <input
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400"
+        className="control-input h-9 w-full px-3 text-sm"
       />
     </label>
   )
@@ -259,12 +259,12 @@ function Field({ label, type, value, onChange }: { label: string; type: string; 
 
 function ToggleRow({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-100 p-3">
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--rg-hairline)] bg-white/55 p-3">
       <div>
-        <div className="font-medium text-slate-950">{label}</div>
-        <div className="text-xs text-slate-500">{description}</div>
+        <div className="font-medium text-[var(--rg-ink)]">{label}</div>
+        <div className="text-xs text-[var(--rg-muted)]">{description}</div>
       </div>
-      <button type="button" onClick={() => onChange(!checked)} className={`relative h-6 w-11 rounded-full transition-colors ${checked ? "bg-slate-950" : "bg-slate-200"}`}>
+      <button type="button" onClick={() => onChange(!checked)} className={`relative h-6 w-11 rounded-full transition-colors ${checked ? "bg-[var(--rg-linear)]" : "bg-[var(--rg-surface-card)]"}`}>
         <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${checked ? "translate-x-5" : ""}`} />
       </button>
     </div>

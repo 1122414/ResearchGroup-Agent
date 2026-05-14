@@ -3,6 +3,8 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ..core.config import PROJECT_ROOT, settings
+from ..storage.repositories import RunRepository
+from .run_artifact_service import run_artifact_service
 
 
 class ExperimentWorkspaceService:
@@ -27,7 +29,8 @@ class ExperimentWorkspaceService:
     def artifacts_dir(self, plan: dict) -> Path:
         run_id = plan.get("run_id")
         if run_id:
-            path = settings.artifacts_dir / "runs" / run_id / "experiments" / plan["id"]
+            run = RunRepository.get_by_id(run_id)
+            path = run_artifact_service.run_dir(run, run_id) / "experiments" / plan["id"]
         else:
             path = settings.artifacts_dir / "experiments" / plan["id"]
         path.mkdir(parents=True, exist_ok=True)
@@ -43,4 +46,3 @@ class ExperimentWorkspaceService:
 
 
 experiment_workspace_service = ExperimentWorkspaceService()
-

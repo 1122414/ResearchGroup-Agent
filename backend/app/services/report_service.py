@@ -8,6 +8,7 @@ from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..core.research_goal import primary_goal
 from ..storage.repositories import AgentRepository, OutputRepository, RunRepository, TaskRepository
+from .run_artifact_service import run_artifact_service
 
 
 class ReportService:
@@ -158,7 +159,11 @@ class ReportService:
             "---",
             "",
         ]
-        return "\n".join(lines[: title_index + 1] + metadata + lines[title_index + 1 :]).strip() + "\n"
+        normalized = "\n".join(lines[: title_index + 1] + metadata + lines[title_index + 1 :]).strip()
+        evidence = self._evidence_section(run)
+        if evidence and "可追溯证据" not in normalized:
+            normalized = f"{normalized}\n\n{evidence}"
+        return normalized + "\n"
 
     def _build_writer_draft(self, run: dict, task_summaries: list[dict], agent_time: str) -> str:
         goal = self._primary_goal(run)
@@ -327,7 +332,8 @@ class ReportService:
         return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
     def _save_report(self, run_id: str, content: str, review_summary: str, writer_draft: str):
-        run_dir = settings.artifacts_dir / "runs" / run_id
+        run_data = RunRepository.get_by_id(run_id) or {}
+        run_dir = run_artifact_service.run_dir(run_data, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "final_report.md").write_text(content, encoding="utf-8")
         (run_dir / "review_summary.md").write_text(review_summary, encoding="utf-8")
@@ -349,7 +355,6 @@ class ReportService:
             ),
             encoding="utf-8",
         )
-        run_data = RunRepository.get_by_id(run_id) or {}
         (run_dir / "run_log.md").write_text(
             "\n".join(
                 [
@@ -371,6 +376,33 @@ class ReportService:
             ),
             encoding="utf-8",
         )
+
+    def _evidence_section(self, run: dict) -> str:
+        tasks = TaskRepository.get_all(run_id=run["id"])
+        lines = ["## 可追溯证据", ""]
+        run_dir = run_artifact_service.run_dir(run, run["id"])
+        lines.append(f"- 运行产物目录：`{run_dir}`")
+        found = False
+        for task in tasks:
+            for output in task.get("outputs", []) or []:
+                if not isinstance(output, dict):
+                    continue
+                experiment = output.get("reproducible_experiment") or {}
+                if experiment:
+                    found = True
+                    lines.append(f"- 实验任务 `{task.get('title', '')}` workspace：`{experiment.get('workspace_dir')}`")
+                    lines.append(f"  - 脚本：`{experiment.get('script_path')}`")
+                    data_paths = experiment.get("data_paths") or {}
+                    for label, path in data_paths.items():
+                        lines.append(f"  - {label}：`{path}`")
+                source_artifacts = output.get("source_artifacts") or {}
+                papers = output.get("papers_read") or []
+                if source_artifacts or papers:
+                    found = True
+                    lines.append(f"- 文献任务 `{task.get('title', '')}` 来源记录：`{source_artifacts.get('sources_json', '')}`")
+                    for paper in papers[:5]:
+                        lines.append(f"  - {paper.get('authors')} ({paper.get('year')}). {paper.get('title')}. {paper.get('url')}")
+        return "\n".join(lines) if found else ""
 
 
 report_service = ReportService()

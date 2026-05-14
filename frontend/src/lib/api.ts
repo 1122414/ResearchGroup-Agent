@@ -48,6 +48,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   archiveAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}`, { method: "DELETE" }),
+  deleteAgentSkill: (id: string) => fetchApi<{ id: string; deleted: boolean }>(`/agent-skills/${id}/physical`, { method: "DELETE" }),
   restoreAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/restore`, { method: "POST" }),
   enableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/enable`, { method: "POST" }),
   disableAgentSkill: (id: string) => fetchApi<{ skill: AgentSkill }>(`/agent-skills/${id}/disable`, { method: "POST" }),
@@ -94,7 +95,7 @@ export const api = {
   getTask: (id: string) => fetchApi<{ task: Task }>(`/tasks/${id}`),
 
   createRun: (researchGoal: string, attachments: Record<string, unknown>[] = []) =>
-    fetchApi<{ run_id: string; status: string }>("/runs", {
+    fetchApi<{ run_id: string; status: string; display_name?: string; artifact_dir?: string }>("/runs", {
       method: "POST",
       body: JSON.stringify({ research_goal: researchGoal, attachments }),
     }),

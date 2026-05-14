@@ -10,12 +10,12 @@ import { api } from "@/lib/api"
 import { AGENT_STATUS_LABELS, SKILL_NAMES, type GraduateAgent, type Task } from "@/lib/types"
 
 const STATUS_COLORS: Record<string, string> = {
-  idle: "bg-green-100 text-green-700",
-  working: "bg-blue-100 text-blue-700",
-  waiting: "bg-yellow-100 text-yellow-700",
-  reviewing: "bg-purple-100 text-purple-700",
-  blocked: "bg-red-100 text-red-700",
-  finished: "bg-gray-100 text-gray-700",
+  idle: "bg-[#f0fbf2] text-[#2f7341]",
+  working: "bg-[#eef0ff] text-[#3b4395]",
+  waiting: "bg-[#fff6e8] text-[#8b5a14]",
+  reviewing: "bg-[#fff3ef] text-[#964b36]",
+  blocked: "bg-[#fff1f1] text-[#9d2d2d]",
+  finished: "bg-[var(--rg-surface-soft)] text-[var(--rg-muted)]",
 }
 
 const SKILL_BARS = ["literature_review", "coding", "experiment", "data_analysis", "academic_writing", "mentoring"]
@@ -44,15 +44,16 @@ export default function AgentsPage() {
   )
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-bold">Agent 状态</h2>
-        <p className="text-sm text-gray-500">查看每个研究生 Agent 的职责、技能和当前负载。</p>
+    <div className="page-stack">
+      <div className="page-hero">
+        <div className="eyebrow">Graduate agent roster</div>
+        <h2 className="page-title">Agent 状态</h2>
+        <p className="page-copy">查看每个研究生 Agent 的职责、技能矩阵、当前负载和任务占用情况。</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {graduateAgents.map((agent) => (
-          <Card key={agent.id} className="transition-shadow hover:shadow-md">
+          <Card key={agent.id} className="surface-card transition-shadow hover:shadow-md">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between gap-3 text-base">
                 <span>{agent.name}</span>
@@ -62,18 +63,18 @@ export default function AgentsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <p className="text-xs leading-5 text-gray-600">
+              <p className="text-xs leading-5 text-[var(--rg-body)]">
                 {agent.description || AGENT_TYPE_DESCRIPTION[agent.type] || ""}
               </p>
 
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-medium">当前负载</span>
+                  <span className="text-xs font-medium text-[var(--rg-muted)]">当前负载</span>
                   <span className="text-xs">{Math.round(agent.current_load * 100)}%</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-gray-200">
+                <div className="h-2 w-full rounded-full bg-[var(--rg-surface-card)]">
                   <div
-                    className="h-2 rounded-full bg-gray-900 transition-all"
+                    className="h-2 rounded-full bg-[var(--rg-linear)] transition-all"
                     style={{ width: `${agent.current_load * 100}%` }}
                   />
                 </div>
@@ -82,13 +83,13 @@ export default function AgentsPage() {
               <Separator />
 
               <div>
-                <div className="mb-2 text-xs font-medium">技能矩阵</div>
+                <div className="mb-2 text-xs font-medium text-[var(--rg-muted)]">技能矩阵</div>
                 {SKILL_BARS.map((skill) => (
                   <div key={skill} className="mb-1 flex items-center gap-2">
-                    <span className="w-16 text-xs text-gray-500">{SKILL_NAMES[skill]}</span>
-                    <div className="h-1.5 flex-1 rounded-full bg-gray-100">
+                    <span className="w-16 text-xs text-[var(--rg-muted)]">{SKILL_NAMES[skill]}</span>
+                    <div className="h-1.5 flex-1 rounded-full bg-[var(--rg-surface-soft)]">
                       <div
-                        className="h-1.5 rounded-full bg-gray-700"
+                        className="h-1.5 rounded-full bg-[var(--rg-dark-3)]"
                         style={{ width: `${agent.skills[skill as keyof typeof agent.skills] * 10}%` }}
                       />
                     </div>
@@ -100,7 +101,7 @@ export default function AgentsPage() {
               <Separator />
 
               <div className="space-y-1">
-                <div className="text-xs font-medium text-gray-500">当前任务</div>
+                <div className="text-xs font-medium text-[var(--rg-muted)]">当前任务</div>
                 {agent.current_tasks?.length > 0 ? (
                   <div className="space-y-1">
                     {agent.current_tasks.map((taskId) => {
@@ -109,7 +110,7 @@ export default function AgentsPage() {
                         <button
                           key={taskId}
                           onClick={() => router.push(`/tasks?run_id=${task?.run_id || ""}`)}
-                          className="block w-full rounded-md bg-gray-50 px-2 py-1 text-left text-xs hover:bg-gray-100"
+                          className="block w-full rounded-md bg-[var(--rg-surface-soft)] px-2 py-1 text-left text-xs hover:bg-[var(--rg-surface-card)]"
                         >
                           {task ? task.title : taskId}
                         </button>
@@ -117,15 +118,17 @@ export default function AgentsPage() {
                     })}
                   </div>
                 ) : (
-                  <div className="text-xs text-gray-400">暂无任务</div>
+                  <div className="text-xs text-[var(--rg-muted)]">暂无任务</div>
                 )}
               </div>
 
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span>可创建 SubAgent：{agent.max_subagents} 个</span>
-                <span>{agent.preferred_task_types?.length ? `偏好：${agent.preferred_task_types.join(", ")}` : ""}</span>
+              <div className="grid gap-1 text-xs text-[var(--rg-muted)] sm:grid-cols-[auto_minmax(0,1fr)] sm:items-start">
+                <span className="shrink-0">可创建 SubAgent：{agent.max_subagents} 个</span>
+                <span className="min-w-0 [overflow-wrap:anywhere] sm:text-right">
+                  {agent.preferred_task_types?.length ? `偏好：${agent.preferred_task_types.join(", ")}` : ""}
+                </span>
               </div>
-              <Link href={`/skills?agent_id=${agent.id}`} className="block rounded-lg border border-slate-200 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Link href={`/skills?agent_id=${agent.id}`} className="block rounded-lg border border-[var(--rg-hairline)] px-3 py-2 text-center text-xs font-medium text-[var(--rg-body)] hover:bg-[var(--rg-surface-soft)]">
                 管理专属 Skills
               </Link>
             </CardContent>

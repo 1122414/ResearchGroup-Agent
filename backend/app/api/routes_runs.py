@@ -15,6 +15,7 @@ from ..core.logger import logger
 from ..core.research_goal import merge_goal_with_attachments
 from ..core.state_machine import assert_run_transition, can_delete_run
 from ..models.run import RunStatus
+from ..services.run_artifact_service import run_artifact_service
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..storage.repositories import LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository
@@ -125,10 +126,10 @@ def _preflight_attachments(attachments: list[dict]) -> dict:
     }
 
 
-def _save_and_extract_attachments(run_id: str, attachments: list[dict]) -> list[dict]:
+def _save_and_extract_attachments(run_id: str, attachments: list[dict], artifact_dir: Path | None = None) -> list[dict]:
     if not attachments:
         return []
-    input_dir = settings.artifacts_dir / "runs" / run_id / "inputs"
+    input_dir = (artifact_dir or settings.artifacts_dir / "runs" / run_id) / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     extracted: list[dict] = []
 
@@ -164,13 +165,16 @@ async def create_run(req: RunCreateRequest):
         raise HTTPException(status_code=400, detail="；".join(preflight["errors"]))
 
     run_id = f"run_{uuid.uuid4().hex[:8]}"
-    extracted_attachments = _save_and_extract_attachments(run_id, req.attachments)
+    now = datetime.now().isoformat()
+    artifact_meta = run_artifact_service.allocate(run_id, req.research_goal, now)
+    extracted_attachments = _save_and_extract_attachments(run_id, req.attachments, Path(artifact_meta["artifact_dir"]))
     research_goal = merge_goal_with_attachments(req.research_goal, extracted_attachments, settings.attachment_extract_max_chars)
     logger.info("[API] create_run | run_id=%s | goal=%s | attachments=%d", run_id, req.research_goal[:80], len(extracted_attachments))
 
-    now = datetime.now().isoformat()
     run = {
         "id": run_id,
+        "display_name": artifact_meta["display_name"],
+        "artifact_dir": artifact_meta["artifact_dir"],
         "research_goal": research_goal,
         "status": RunStatus.created.value,
         "current_step": "已创建，等待启动",
@@ -189,7 +193,7 @@ async def create_run(req: RunCreateRequest):
     }
     RunRepository.insert(run)
     run_event_service.emit(run_id, "run.created", "run", "运行已创建", "已保存研究目标，等待启动")
-    return {"run_id": run_id, "status": RunStatus.created.value, "preflight": preflight}
+    return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "preflight": preflight}
 
 
 @router.post("/preflight")
@@ -253,7 +257,7 @@ async def delete_run(run_id: str):
     if not can_delete_run(str(run.get("status"))):
         raise HTTPException(status_code=400, detail="运行正在执行中，请先取消或等待结束后再删除。")
     RunRepository.delete(run_id)
-    run_dir = settings.artifacts_dir / "runs" / run_id
+    run_dir = Path(str(run.get("artifact_dir") or "")) if run.get("artifact_dir") else settings.artifacts_dir / "runs" / run_id
     if run_dir.exists():
         shutil.rmtree(run_dir)
     return {"deleted": True, "run_id": run_id}

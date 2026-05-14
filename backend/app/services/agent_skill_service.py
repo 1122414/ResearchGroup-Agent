@@ -42,6 +42,58 @@ class AgentSkillService:
     def list(self, agent_id: str | None = None, status: str | None = None, q: str | None = None) -> list[dict]:
         return AgentSkillRepository.get_all(agent_id=agent_id, status=status, q=q)
 
+    def active_for_task(self, agent_id: str, task: dict) -> list[dict]:
+        if not settings.agent_skill_enabled or not agent_id:
+            return []
+        skills = [
+            skill
+            for skill in AgentSkillRepository.get_all(agent_id=agent_id, status="active")
+            if self._matches_task(skill, task)
+        ]
+        skills.sort(
+            key=lambda skill: (
+                float(skill.get("confidence") or 0),
+                int(skill.get("usage_count") or 0) - int(skill.get("failure_count") or 0),
+                skill.get("last_used_at") or "",
+            ),
+            reverse=True,
+        )
+        return skills[: settings.skill_max_injected]
+
+    def render_for_prompt(self, skills: list[dict]) -> str:
+        if not skills:
+            return ""
+        blocks = ["## 可复用 Skill", "", "下面是当前 Agent 已启用并匹配本任务的可复用经验。使用时必须结合本次任务目标，不要机械套用。", ""]
+        for index, skill in enumerate(skills, start=1):
+            blocks.extend(
+                [
+                    f"### Skill {index}: {skill.get('title', '')}",
+                    f"- id: {skill.get('id')}",
+                    f"- 置信度: {skill.get('confidence', 0)}",
+                    f"- 历史使用: {skill.get('usage_count', 0)} 次；失败: {skill.get('failure_count', 0)} 次；最近使用: {skill.get('last_used_at') or '从未使用'}",
+                    "",
+                    str(skill.get("content", ""))[:2500],
+                    "",
+                ]
+            )
+        return "\n".join(blocks).strip()
+
+    def record_usage(self, skills: list[dict], success: bool = True) -> None:
+        now = datetime.now().astimezone().isoformat()
+        for skill in skills:
+            current = AgentSkillRepository.get_by_id(skill["id"])
+            if not current:
+                continue
+            updated = {
+                **current,
+                "usage_count": int(current.get("usage_count") or 0) + (1 if success else 0),
+                "failure_count": int(current.get("failure_count") or 0) + (0 if success else 1),
+                "last_used_at": now,
+                "updated_at": now,
+            }
+            self._write_skill_file(updated)
+            AgentSkillRepository.update(skill["id"], updated)
+
     def seed_defaults(self) -> int:
         seed_file = settings.data_dir / "seed_agent_skills.json"
         if not seed_file.exists():
@@ -150,6 +202,13 @@ class AgentSkillService:
             return self.archive(skill_id)
         return self.update(skill_id, AgentSkillUpdate(status=status))
 
+    def delete(self, skill_id: str) -> dict:
+        skill = self.get(skill_id)
+        if skill.get("file_path") and Path(skill["file_path"]).exists():
+            Path(skill["file_path"]).unlink()
+        AgentSkillRepository.delete(skill_id)
+        return {"id": skill_id, "deleted": True}
+
     def delete_physical_for_tests(self, skill_id: str) -> None:
         skill = AgentSkillRepository.get_by_id(skill_id)
         if skill and skill.get("file_path") and Path(skill["file_path"]).exists():
@@ -161,6 +220,22 @@ class AgentSkillService:
             return
         if not AgentRepository.get_by_id(agent_id):
             raise HTTPException(status_code=404, detail="Agent 不存在")
+
+    def _matches_task(self, skill: dict, task: dict) -> bool:
+        tags = {str(tag).lower() for tag in skill.get("tags", [])}
+        task_type = str(task.get("task_type") or "").lower()
+        if task_type and task_type in tags:
+            return True
+        haystack = " ".join(
+            [
+                str(skill.get("title") or ""),
+                str(skill.get("description") or ""),
+                " ".join(str(tag) for tag in skill.get("tags", [])),
+            ]
+        ).lower()
+        task_text = " ".join([str(task.get("title") or ""), str(task.get("description") or "")]).lower()
+        tokens = [token for token in re.split(r"[\s,，。；;:_\-]+", task_text) if len(token) >= 2]
+        return any(token in haystack for token in tokens[:20])
 
     def _skill_path(self, skill: dict) -> Path:
         folder = "archived" if skill.get("status") == "archived" else "skills"

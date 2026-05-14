@@ -40,6 +40,11 @@ async def archive_agent_skill(skill_id: str):
     return {"skill": agent_skill_service.archive(skill_id)}
 
 
+@router.delete("/{skill_id}/physical")
+async def delete_agent_skill(skill_id: str):
+    return agent_skill_service.delete(skill_id)
+
+
 @router.post("/{skill_id}/restore")
 async def restore_agent_skill(skill_id: str):
     return {"skill": agent_skill_service.restore(skill_id)}

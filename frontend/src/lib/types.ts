@@ -118,6 +118,8 @@ export interface Task {
 
 export interface Run {
   id: string
+  display_name?: string | null
+  artifact_dir?: string | null
   research_goal: string
   status: string
   current_step: string

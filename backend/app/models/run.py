@@ -20,6 +20,8 @@ class RunStatus(str, Enum):
 
 class Run(BaseModel):
     id: str
+    display_name: Optional[str] = None
+    artifact_dir: Optional[str] = None
     research_goal: str
     status: RunStatus = RunStatus.created
     current_step: str = ""

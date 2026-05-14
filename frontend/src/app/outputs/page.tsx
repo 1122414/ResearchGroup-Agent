@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { api } from "@/lib/api"
+import { runDisplayName } from "@/lib/run-display"
 import { OUTPUT_TYPE_LABELS, RUN_STATUS_LABELS, type Output, type Run, type Task } from "@/lib/types"
 
 function primaryGoal(goal: string) {
@@ -14,10 +15,7 @@ function primaryGoal(goal: string) {
 }
 
 function formatRunName(run: Run, index: number) {
-  const goal = primaryGoal(run.research_goal || "") || "未命名研究"
-  const date = run.created_at ? new Date(run.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""
-  const prefix = index === 0 ? "最新运行" : `历史运行 ${index + 1}`
-  return `${prefix} · ${goal.slice(0, 28)}${goal.length > 28 ? "..." : ""}${date ? ` · ${date}` : ""}`
+  return runDisplayName(run, index)
 }
 
 function taskName(task: Task, index: number) {
@@ -29,6 +27,10 @@ function safeFilename(text: string) {
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, "-")
     .slice(0, 80) || "research-report"
+}
+
+function safeRunFilename(run: Run) {
+  return (run.display_name || safeFilename(run.research_goal)).replace(/[\\/:*?"<>|]+/g, "-")
 }
 
 function downloadMarkdown(filename: string, content: string) {
@@ -45,7 +47,7 @@ function downloadMarkdown(filename: string, content: string) {
 
 export default function OutputsPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-sm text-slate-500">正在加载输出...</div>}>
+    <Suspense fallback={<div className="p-8 text-center text-sm text-[var(--rg-muted)]">正在加载输出...</div>}>
       <OutputsContent />
     </Suspense>
   )
@@ -107,16 +109,16 @@ function OutputsContent() {
   const otherOutputs = filteredOutputs.filter((output) => output.output_type !== "final_report")
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="page-stack">
+      <div className="page-hero">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+            <div className="eyebrow">
               <FolderOpen className="size-4" />
               Research artifacts
             </div>
-            <h2 className="mt-2 text-2xl font-bold text-slate-950">输出中心</h2>
-            <p className="mt-1 text-sm text-slate-500">查看任务产出、写作初稿、导师审核汇总和最终 Markdown 报告。</p>
+            <h2 className="page-title">输出中心</h2>
+            <p className="page-copy">查看任务产出、写作初稿、导师审核汇总和最终 Markdown 报告。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -126,7 +128,7 @@ function OutputsContent() {
                 setSelectedTaskId("")
                 setSelectedType("")
               }}
-              className="h-9 min-w-[320px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-slate-400"
+              className="control-input h-9 min-w-[320px] px-3 text-sm"
             >
               {runs.map((run, index) => (
                 <option key={run.id} value={run.id}>
@@ -135,7 +137,7 @@ function OutputsContent() {
               ))}
             </select>
             {finalReport && selectedRunData && (
-              <Button size="sm" onClick={() => downloadMarkdown(`${safeFilename(selectedRunData.research_goal)}-${selectedRunData.id}.md`, finalReport.content)}>
+              <Button size="sm" onClick={() => downloadMarkdown(`${safeRunFilename(selectedRunData)}.md`, finalReport.content)}>
                 <Download className="size-3.5" />
                 下载 Markdown
               </Button>
@@ -154,12 +156,12 @@ function OutputsContent() {
       </div>
 
       {selectedRun && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+        <div className="surface-card flex flex-wrap items-center gap-3 p-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-[var(--rg-muted)]">
             <Filter className="size-4" />
             筛选
           </div>
-          <select value={selectedTaskId} onChange={(event) => setSelectedTaskId(event.target.value)} className="h-9 min-w-[260px] rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">
+          <select value={selectedTaskId} onChange={(event) => setSelectedTaskId(event.target.value)} className="control-input h-9 min-w-[260px] px-3 text-sm">
             <option value="">全部任务</option>
             {tasks.map((task, index) => (
               <option key={task.id} value={task.id}>
@@ -167,7 +169,7 @@ function OutputsContent() {
               </option>
             ))}
           </select>
-          <select value={selectedType} onChange={(event) => setSelectedType(event.target.value)} className="h-9 min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">
+          <select value={selectedType} onChange={(event) => setSelectedType(event.target.value)} className="control-input h-9 min-w-[180px] px-3 text-sm">
             <option value="">全部类型</option>
             {outputTypes.map((type) => (
               <option key={type} value={type}>
@@ -191,15 +193,15 @@ function OutputsContent() {
       )}
 
       {finalReport && (
-        <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="border-b border-slate-100">
+        <Card className="surface-card">
+          <CardHeader className="border-b border-[var(--rg-hairline)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle className="flex items-center gap-2 text-lg">
-                <FileText className="size-5 text-slate-600" />
+                <FileText className="size-5 text-[var(--rg-coral)]" />
                 {finalReport.title}
               </CardTitle>
               {selectedRunData && (
-                <Button variant="outline" size="sm" onClick={() => downloadMarkdown(`${safeFilename(selectedRunData.research_goal)}-${selectedRunData.id}.md`, finalReport.content)}>
+                <Button variant="outline" size="sm" onClick={() => downloadMarkdown(`${safeRunFilename(selectedRunData)}.md`, finalReport.content)}>
                   <Download className="size-3.5" />
                   下载 .md
                 </Button>
@@ -213,7 +215,7 @@ function OutputsContent() {
       )}
 
       <section className="space-y-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--rg-body)]">
           <ListChecks className="size-4" />
           过程产出
           <Badge variant="secondary">{otherOutputs.length}</Badge>
@@ -226,7 +228,7 @@ function OutputsContent() {
       </section>
 
       {selectedRun && filteredOutputs.length === 0 && (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="surface-card border-dashed p-8 text-center text-sm text-[var(--rg-muted)]">
           当前筛选下还没有产出。运行完成后会在这里展示 Markdown 报告和过程文件。
         </div>
       )}
@@ -236,16 +238,16 @@ function OutputsContent() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold text-slate-950">{value}</div>
+    <div className="metric-card">
+      <div className="text-xs text-[var(--rg-muted)]">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-[var(--rg-ink)]">{value}</div>
     </div>
   )
 }
 
 function MarkdownArticle({ content }: { content: string }) {
   return (
-    <article className="max-h-[680px] overflow-auto rounded-lg border border-slate-200 bg-white px-6 py-5 text-slate-800 shadow-inner">
+    <article className="max-h-[680px] overflow-auto rounded-lg border border-[var(--rg-hairline)] bg-[#fffdf8] px-6 py-5 text-[var(--rg-body)] shadow-inner">
       {renderMarkdown(content)}
     </article>
   )
@@ -253,25 +255,70 @@ function MarkdownArticle({ content }: { content: string }) {
 
 function renderMarkdown(content: string) {
   const blocks: ReactNode[] = []
-  const lines = content.replace(/\r\n/g, "\n").split("\n")
+  const lines = normalizeMarkdownTables(content).replace(/\r\n/g, "\n").split("\n")
   let paragraph: string[] = []
   let list: string[] = []
+  let table: string[] = []
   let code: string[] | null = null
 
   const flushParagraph = () => {
     if (!paragraph.length) return
     blocks.push(
-      <p key={`p-${blocks.length}`} className="my-3 leading-8 text-slate-700">
+      <p key={`p-${blocks.length}`} className="my-3 leading-8 text-[var(--rg-body)]">
         {renderInline(paragraph.join(" "))}
       </p>,
     )
     paragraph = []
   }
 
+  const flushTable = () => {
+    if (table.length < 2) {
+      if (table.length) paragraph.push(...table)
+      table = []
+      return
+    }
+    const rows = table.map(parseTableRow).filter((row) => row.length > 0)
+    const separatorIndex = rows.findIndex((row) => row.every((cell) => /^:?-{3,}:?$/.test(cell)))
+    if (separatorIndex < 1 || rows.length <= separatorIndex + 1) {
+      paragraph.push(...table)
+      table = []
+      return
+    }
+    const headers = rows[separatorIndex - 1]
+    const bodyRows = rows.slice(separatorIndex + 1).filter((row) => row.some(Boolean))
+    blocks.push(
+      <div key={`table-${blocks.length}`} className="my-4 overflow-x-auto rounded-lg border border-[var(--rg-hairline)]">
+        <table className="min-w-full border-collapse text-left text-sm">
+          <thead className="bg-[var(--rg-surface-soft)] text-[var(--rg-ink)]">
+            <tr>
+              {headers.map((header, index) => (
+                <th key={index} className="border-b border-[var(--rg-hairline)] px-3 py-2 font-semibold">
+                  {renderInline(header)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {bodyRows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="odd:bg-white even:bg-[var(--rg-surface-soft)]/45">
+                {headers.map((_, cellIndex) => (
+                  <td key={cellIndex} className="border-t border-[var(--rg-hairline)] px-3 py-2 align-top leading-6">
+                    {renderInline(row[cellIndex] || "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    )
+    table = []
+  }
+
   const flushList = () => {
     if (!list.length) return
     blocks.push(
-      <ul key={`ul-${blocks.length}`} className="my-3 list-disc space-y-2 pl-6 text-slate-700">
+      <ul key={`ul-${blocks.length}`} className="my-3 list-disc space-y-2 pl-6 text-[var(--rg-body)]">
         {list.map((item, index) => (
           <li key={index}>{renderInline(item)}</li>
         ))}
@@ -284,7 +331,7 @@ function renderMarkdown(content: string) {
     if (line.trim().startsWith("```")) {
       if (code) {
         blocks.push(
-          <pre key={`code-${blocks.length}`} className="my-4 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+          <pre key={`code-${blocks.length}`} className="code-panel my-4 overflow-auto p-4 text-xs leading-6">
             {code.join("\n")}
           </pre>,
         )
@@ -292,6 +339,7 @@ function renderMarkdown(content: string) {
       } else {
         flushParagraph()
         flushList()
+        flushTable()
         code = []
       }
       return
@@ -306,13 +354,22 @@ function renderMarkdown(content: string) {
     if (!trimmed) {
       flushParagraph()
       flushList()
+      flushTable()
+      return
+    }
+
+    if (isTableLine(trimmed)) {
+      flushParagraph()
+      flushList()
+      table.push(trimmed)
       return
     }
 
     if (trimmed === "---") {
       flushParagraph()
       flushList()
-      blocks.push(<hr key={`hr-${blocks.length}`} className="my-5 border-slate-200" />)
+      flushTable()
+      blocks.push(<hr key={`hr-${blocks.length}`} className="my-5 border-[var(--rg-hairline)]" />)
       return
     }
 
@@ -320,13 +377,14 @@ function renderMarkdown(content: string) {
     if (heading) {
       flushParagraph()
       flushList()
+      flushTable()
       const level = heading[1].length
       const className =
         level === 1
-          ? "mt-1 mb-5 text-2xl font-bold text-slate-950"
+          ? "mt-1 mb-5 text-2xl font-bold text-[var(--rg-ink)]"
           : level === 2
-            ? "mt-7 mb-3 text-lg font-semibold text-slate-950"
-            : "mt-5 mb-2 text-base font-semibold text-slate-900"
+            ? "mt-7 mb-3 text-lg font-semibold text-[var(--rg-ink)]"
+            : "mt-5 mb-2 text-base font-semibold text-[var(--rg-ink)]"
       blocks.push(
         <div key={`h-${blocks.length}`} className={className}>
           {renderInline(heading[2])}
@@ -338,6 +396,7 @@ function renderMarkdown(content: string) {
     const bullet = trimmed.match(/^[-*]\s+(.*)$/)
     if (bullet) {
       flushParagraph()
+      flushTable()
       list.push(bullet[1])
       return
     }
@@ -347,10 +406,11 @@ function renderMarkdown(content: string) {
 
   flushParagraph()
   flushList()
+  flushTable()
   const pendingCode = code as string[] | null
   if (pendingCode) {
     blocks.push(
-      <pre key={`code-${blocks.length}`} className="my-4 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+      <pre key={`code-${blocks.length}`} className="code-panel my-4 overflow-auto p-4 text-xs leading-6">
         {pendingCode.join("\n")}
       </pre>,
     )
@@ -358,14 +418,32 @@ function renderMarkdown(content: string) {
   return blocks
 }
 
+function normalizeMarkdownTables(content: string) {
+  return content.replace(/\s+\|\s*\|\s*/g, " |\n| ")
+}
+
+function isTableLine(line: string) {
+  const trimmed = line.trim()
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.split("|").length >= 3
+}
+
+function parseTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim())
+}
+
 function renderInline(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
   return parts.map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={index} className="font-semibold text-slate-950">{part.slice(2, -2)}</strong>
+      return <strong key={index} className="font-semibold text-[var(--rg-ink)]">{part.slice(2, -2)}</strong>
     }
     if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={index} className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.9em] text-slate-900">{part.slice(1, -1)}</code>
+      return <code key={index} className="rounded bg-[var(--rg-surface-card)] px-1.5 py-0.5 text-[0.9em] text-[var(--rg-ink)]">{part.slice(1, -1)}</code>
     }
     return <Fragment key={index}>{part}</Fragment>
   })
@@ -373,18 +451,18 @@ function renderInline(text: string) {
 
 function OutputCard({ output, taskLabel }: { output: Output; taskLabel?: string }) {
   return (
-    <Card className="border-slate-200 shadow-sm">
+    <Card className="surface-card">
       <CardHeader className="pb-2">
         <CardTitle className="space-y-2 text-sm">
           <div className="flex items-center justify-between gap-3">
             <span className="line-clamp-2">{output.title}</span>
             <Badge variant="secondary" className="shrink-0">{OUTPUT_TYPE_LABELS[output.output_type] || output.output_type}</Badge>
           </div>
-          {taskLabel && <div className="text-xs font-normal text-slate-500">{taskLabel}</div>}
+          {taskLabel && <div className="text-xs font-normal text-[var(--rg-muted)]">{taskLabel}</div>}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <pre className="max-h-[280px] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700 whitespace-pre-wrap">
+        <pre className="max-h-[280px] overflow-auto rounded-lg border border-[var(--rg-hairline)] bg-[var(--rg-surface-soft)] p-3 text-xs leading-5 text-[var(--rg-body)] whitespace-pre-wrap">
           {output.content}
         </pre>
       </CardContent>

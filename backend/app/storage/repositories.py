@@ -251,14 +251,16 @@ class RunRepository:
         conn.execute(
             """
             INSERT INTO runs (
-                id, research_goal, status, current_step, task_ids, agent_assignments,
+                id, display_name, artifact_dir, research_goal, status, current_step, task_ids, agent_assignments,
                 created_at, updated_at, started_at, completed_at, cancel_requested_at,
                 cancel_reason, total_cost_usd, total_tokens, total_llm_calls, last_event_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run["id"],
+                run.get("display_name"),
+                run.get("artifact_dir"),
                 run["research_goal"],
                 run.get("status", "created"),
                 run.get("current_step", ""),
@@ -294,6 +296,13 @@ class RunRepository:
         return [_deserialize_run(row) for row in rows]
 
     @staticmethod
+    def count_created_on(day_key: str) -> int:
+        conn = get_connection()
+        row = conn.execute("SELECT COUNT(*) AS total FROM runs WHERE created_at LIKE ?", (f"{day_key}%",)).fetchone()
+        conn.close()
+        return int(row["total"] if row else 0)
+
+    @staticmethod
     def update_status(run_id: str, status: str, **kwargs):
         conn = get_connection()
         updates = ["status = ?", "updated_at = ?"]
@@ -303,6 +312,8 @@ class RunRepository:
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False))
             elif key in (
+                "display_name",
+                "artifact_dir",
                 "current_step",
                 "started_at",
                 "completed_at",
@@ -526,7 +537,10 @@ class AgentSkillRepository:
             like = f"%{q}%"
             params.extend([like, like, like])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = conn.execute(f"SELECT * FROM agent_skills {where} ORDER BY updated_at DESC", params).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM agent_skills {where} ORDER BY COALESCE(last_used_at, updated_at) DESC, updated_at DESC",
+            params,
+        ).fetchall()
         conn.close()
         return [_deserialize_agent_skill(row) for row in rows]
 
@@ -755,6 +769,8 @@ def _deserialize_run(row) -> dict:
     keys = set(row.keys())
     return {
         "id": row["id"],
+        "display_name": row["display_name"] if "display_name" in keys else None,
+        "artifact_dir": row["artifact_dir"] if "artifact_dir" in keys else None,
         "research_goal": row["research_goal"],
         "status": row["status"],
         "current_step": row["current_step"],

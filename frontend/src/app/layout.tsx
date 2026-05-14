@@ -8,28 +8,37 @@ export const metadata: Metadata = {
   description: "多 Agent 模拟研究生课题组协作系统",
 }
 
+const NAV_ITEMS = [
+  { href: "/", label: "工作台" },
+  { href: "/tasks", label: "任务板" },
+  { href: "/agents", label: "Agent" },
+  { href: "/skills", label: "Skills" },
+  { href: "/experiments", label: "实验" },
+  { href: "/outputs", label: "输出" },
+  { href: "/office", label: "办公室" },
+]
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className="min-h-screen bg-gray-50 font-sans antialiased text-gray-900" suppressHydrationWarning>
-        <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-            <Link href="/" className="text-lg font-bold text-gray-900">
-              ResearchGroup-Agent
+      <body className="min-h-screen font-sans antialiased" suppressHydrationWarning>
+        <header className="app-header">
+          <div className="app-container flex min-h-14 items-center justify-between gap-4 py-2">
+            <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-[var(--rg-ink)]">
+              <span className="brand-mark">R</span>
+              <span className="hidden sm:inline">ResearchGroup-Agent</span>
             </Link>
-            <nav className="flex items-center gap-6 text-sm">
-              <Link href="/" className="text-gray-600 hover:text-gray-900">首页</Link>
-              <Link href="/tasks" className="text-gray-600 hover:text-gray-900">任务板</Link>
-              <Link href="/agents" className="text-gray-600 hover:text-gray-900">Agent</Link>
-              <Link href="/skills" className="text-gray-600 hover:text-gray-900">Skills</Link>
-              <Link href="/experiments" className="text-gray-600 hover:text-gray-900">Experiments</Link>
-              <Link href="/outputs" className="text-gray-600 hover:text-gray-900">输出</Link>
-              <Link href="/office" className="text-gray-600 hover:text-gray-900">像素办公室</Link>
+            <nav className="flex min-w-0 items-center gap-1 overflow-x-auto">
+              {NAV_ITEMS.map((item) => (
+                <Link key={item.href} href={item.href} className="nav-link">
+                  {item.label}
+                </Link>
+              ))}
               <SettingsButton />
             </nav>
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        <main className="app-container py-6">{children}</main>
       </body>
     </html>
   )

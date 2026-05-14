@@ -5,6 +5,9 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
+from .agent_skill_service import agent_skill_service
+from .literature_source_service import literature_source_service
+from .reproducible_experiment_service import reproducible_experiment_service
 
 
 class TaskExecutor:
@@ -24,11 +27,15 @@ class TaskExecutor:
             "writer": "grad_writer",
         }
         system_prompt = prompt_loader.load(prompt_map.get(agent_type, "grad_researcher"))
+        active_skills = agent_skill_service.active_for_task(owner_id, task)
+        skill_prompt = agent_skill_service.render_for_prompt(active_skills)
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
 任务标题：{task_title}
 任务类型：{task_type}
 任务描述：{task.get("description", "")}
+
+{skill_prompt}
 
 输出要求：
 1. 给出 summary。
@@ -39,15 +46,35 @@ class TaskExecutor:
 
         llm = create_llm_provider()
         prompt_len = len(system_prompt) + len(user_prompt)
-        logger.info("[TaskExecutor] calling LLM | task_id=%s | role=graduate | prompt_len=%d", task.get("id"), prompt_len)
-        raw_response = await llm.generate(
-            prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
-            role="graduate",
-            run_id=task.get("run_id"),
-            task_id=task.get("id"),
-            agent_id=owner_id,
-        )
+        logger.info("[TaskExecutor] calling LLM | task_id=%s | role=graduate | prompt_len=%d | active_skills=%d", task.get("id"), prompt_len, len(active_skills))
+        try:
+            raw_response = await llm.generate(
+                prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
+                role="graduate",
+                run_id=task.get("run_id"),
+                task_id=task.get("id"),
+                agent_id=owner_id,
+            )
+        except Exception:
+            agent_skill_service.record_usage(active_skills, success=False)
+            raise
         result = self._parse_result(raw_response)
+        if task_type == "literature_survey":
+            result = literature_source_service.enrich_result(task, result)
+        if task_type == "experiment_design":
+            experiment_result = reproducible_experiment_service.run_for_task(task, owner_id)
+            result = {**result, "reproducible_experiment": experiment_result}
+        if active_skills:
+            result["used_skills"] = [
+                {
+                    "id": skill["id"],
+                    "title": skill["title"],
+                    "usage_count_before": skill.get("usage_count", 0),
+                    "last_used_at_before": skill.get("last_used_at"),
+                }
+                for skill in active_skills
+            ]
+            agent_skill_service.record_usage(active_skills, success=True)
         logger.info("[TaskExecutor] LLM response parsed | task_id=%s | has_summary=%s", task.get("id"), "summary" in result)
         TaskRepository.update_status(task["id"], "running", outputs=task.get("outputs", []) + [result])
 

@@ -87,6 +87,8 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS runs (
             id TEXT PRIMARY KEY,
+            display_name TEXT,
+            artifact_dir TEXT,
             research_goal TEXT NOT NULL,
             status TEXT DEFAULT 'created',
             current_step TEXT DEFAULT '',
@@ -190,6 +192,8 @@ def init_db():
     })
 
     _ensure_columns(conn, "runs", {
+        "display_name": "TEXT",
+        "artifact_dir": "TEXT",
         "started_at": "TEXT",
         "cancel_requested_at": "TEXT",
         "cancel_reason": "TEXT",

@@ -107,12 +107,12 @@ export default function ExperimentsPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="page-stack">
+      <div className="page-hero flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-xs font-medium uppercase text-slate-500">Experiment Executor</div>
-          <h1 className="mt-1 text-2xl font-bold text-slate-950">实验执行与审查</h1>
-          <p className="mt-1 text-sm text-slate-500">实验 Agent 的代码、命令和环境变量先进入审查队列，批准后才允许在配置工作区运行。</p>
+          <div className="eyebrow">Experiment Executor</div>
+          <h1 className="page-title">实验执行与审查</h1>
+          <p className="page-copy">实验 Agent 的代码、命令和环境变量先进入审查队列，批准后才允许在配置工作区运行。</p>
         </div>
         <Button variant="outline" onClick={() => load().catch((err) => setMessage(err instanceof Error ? err.message : "刷新失败"))}>
           <RefreshCw className="mr-2 size-4" />
@@ -120,9 +120,9 @@ export default function ExperimentsPage() {
         </Button>
       </div>
 
-      {message && <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">{message}</div>}
+      {message && <div className="info-banner px-3 py-2 text-sm">{message}</div>}
 
-      <Card>
+      <Card className="surface-card">
         <CardHeader>
           <CardTitle className="text-base">执行配置</CardTitle>
         </CardHeader>
@@ -139,7 +139,7 @@ export default function ExperimentsPage() {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]">
-        <Card className="h-fit">
+        <Card className="surface-card h-fit">
           <CardHeader>
             <CardTitle className="flex items-center text-base">
               <FlaskConical className="mr-2 size-4" />
@@ -164,17 +164,17 @@ export default function ExperimentsPage() {
 
         <div className="space-y-3">
           {plans.map((plan) => (
-            <Card key={plan.id} className="transition-shadow hover:shadow-md">
+            <Card key={plan.id} className="surface-card transition-shadow hover:shadow-md">
               <CardContent className="p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-semibold text-slate-950">{plan.title}</h2>
+                      <h2 className="font-semibold text-[var(--rg-ink)]">{plan.title}</h2>
                       <Badge variant="outline">{STATUS_LABELS[plan.status] || plan.status}</Badge>
                       <Badge variant={plan.risk_level === "dangerous" ? "destructive" : "outline"}>{RISK_LABELS[plan.risk_level] || plan.risk_level}</Badge>
                     </div>
-                    <p className="mt-1 text-sm text-slate-500">{plan.objective || "暂无实验目标说明"}</p>
-                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                    <p className="mt-1 text-sm text-[var(--rg-muted)]">{plan.objective || "暂无实验目标说明"}</p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-[var(--rg-muted)]">
                       <span>{plan.id}</span>
                       <span>{plan.agent_id}</span>
                       <span>{plan.commands.length} commands</span>
@@ -182,7 +182,7 @@ export default function ExperimentsPage() {
                     </div>
                     {plan.risk_reasons.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {plan.risk_reasons.map((reason) => <span key={reason} className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">{reason}</span>)}
+                        {plan.risk_reasons.map((reason) => <span key={reason} className="rounded-full bg-[#fff6e8] px-2 py-0.5 text-xs text-[#8b5a14]">{reason}</span>)}
                       </div>
                     )}
                   </div>
@@ -210,15 +210,15 @@ export default function ExperimentsPage() {
             </Card>
           ))}
           {plans.length === 0 && (
-            <Card>
-              <CardContent className="p-8 text-center text-sm text-slate-500">暂无实验计划。先提交一份计划进入审查队列。</CardContent>
+            <Card className="surface-card">
+              <CardContent className="p-8 text-center text-sm text-[var(--rg-muted)]">暂无实验计划。先提交一份计划进入审查队列。</CardContent>
             </Card>
           )}
         </div>
       </div>
 
       {selected && (
-        <Card>
+        <Card className="surface-card">
           <CardHeader>
             <CardTitle className="text-base">实验详情：{selected.title}</CardTitle>
           </CardHeader>
@@ -237,8 +237,8 @@ export default function ExperimentsPage() {
 function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="h-9 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400" />
+      <span className="mb-1 block text-xs font-medium text-[var(--rg-muted)]">{label}</span>
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="control-input h-9 w-full px-3 text-sm" />
     </label>
   )
 }
@@ -246,16 +246,16 @@ function Field({ label, value, onChange, type = "text" }: { label: string; value
 function TextArea({ label, value, onChange, rows }: { label: string; value: string; onChange: (value: string) => void; rows: number }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={rows} className="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-slate-400" />
+      <span className="mb-1 block text-xs font-medium text-[var(--rg-muted)]">{label}</span>
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={rows} className="control-input w-full px-3 py-2 font-mono text-xs" />
     </label>
   )
 }
 
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
   return (
-    <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm">
-      <span className="text-slate-700">{label}</span>
+    <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--rg-hairline)] bg-white/60 px-3 py-2 text-sm">
+      <span className="text-[var(--rg-body)]">{label}</span>
       <input type="checkbox" checked={value} onChange={(event) => onChange(event.target.checked)} className="size-4" />
     </label>
   )
@@ -264,8 +264,8 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 function Preview({ title, value }: { title: string; value: string }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-medium text-slate-600">{title}</div>
-      <pre className="max-h-72 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{value}</pre>
+      <div className="mb-1 text-xs font-medium text-[var(--rg-muted)]">{title}</div>
+      <pre className="code-panel max-h-72 overflow-auto p-3 text-xs">{value}</pre>
     </div>
   )
 }
