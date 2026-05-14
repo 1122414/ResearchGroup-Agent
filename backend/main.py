@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.logger import logger, setup_logging
 from app.core.logging_middleware import LoggingMiddleware
 from app.services.agent_registry import agent_registry
+from app.services.agent_skill_service import agent_skill_service
 from app.storage import init_db
 
 setup_logging(settings.log_level)
@@ -29,6 +30,8 @@ setup_logging(settings.log_level)
 async def lifespan(app: FastAPI):
     init_db()
     agent_registry.load_seed_agents()
+    seeded_skills = agent_skill_service.seed_defaults()
+    logger.info("Default agent skills seeded | created=%d", seeded_skills)
     logger.info("Backend started | port=%s | mock_mode=%s", settings.backend_port, settings.mock_mode)
     yield
 

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 import re
 import shutil
 import uuid
@@ -38,6 +41,25 @@ class AgentSkillService:
 
     def list(self, agent_id: str | None = None, status: str | None = None, q: str | None = None) -> list[dict]:
         return AgentSkillRepository.get_all(agent_id=agent_id, status=status, q=q)
+
+    def seed_defaults(self) -> int:
+        seed_file = settings.data_dir / "seed_agent_skills.json"
+        if not seed_file.exists():
+            return 0
+
+        records = json.loads(seed_file.read_text(encoding="utf-8"))
+        created = 0
+        for item in records:
+            agent_id = str(item.get("agent_id", "")).strip()
+            title = str(item.get("title", "")).strip()
+            if not agent_id or not title:
+                continue
+            existing = AgentSkillRepository.get_all(agent_id=agent_id)
+            if any(skill.get("title") == title for skill in existing):
+                continue
+            self.create(AgentSkillCreate(**item))
+            created += 1
+        return created
 
     def get(self, skill_id: str) -> dict:
         skill = AgentSkillRepository.get_by_id(skill_id)
