@@ -16,6 +16,7 @@ from ..core.research_goal import merge_goal_with_attachments
 from ..core.state_machine import assert_run_transition, can_delete_run
 from ..models.run import RunStatus
 from ..services.run_artifact_service import run_artifact_service
+from ..services.artifact_manifest_service import artifact_manifest_service
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..services.approval_service import approval_service
@@ -199,9 +200,11 @@ def _save_and_extract_attachments(run_id: str, attachments: list[dict], artifact
             continue
         path = input_dir / f"{index:02d}_{name}"
         path.write_bytes(_decode_data_url(data_url))
+        artifact_manifest_service.register(input_dir.parent, kind="input", path=str(path), metadata={"mime_type": mime_type})
         text = _extract_attachment_text(path, mime_type)
         if text and (path.suffix.lower() == ".pdf" or mime_type == "application/pdf"):
             path.with_suffix(".md").write_text(f"# {name}\n\n{text}", encoding="utf-8")
+            artifact_manifest_service.register(input_dir.parent, kind="input_extract", path=str(path.with_suffix(".md")))
         extracted.append(
             {
                 "name": name,
@@ -212,7 +215,9 @@ def _save_and_extract_attachments(run_id: str, attachments: list[dict], artifact
             }
         )
 
-    (input_dir / "attachments.json").write_text(json.dumps(extracted, ensure_ascii=False, indent=2), encoding="utf-8")
+    attachments_index = input_dir / "attachments.json"
+    attachments_index.write_text(json.dumps(extracted, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact_manifest_service.register(input_dir.parent, kind="input_index", path=str(attachments_index))
     return extracted
 
 
@@ -416,6 +421,15 @@ async def get_run_research_loop(run_id: str):
     if not RunRepository.get_by_id(run_id):
         raise HTTPException(status_code=404, detail="run not found")
     return research_loop_service.snapshot(run_id)
+
+
+@router.get("/{run_id}/artifact-manifest")
+async def get_run_artifact_manifest(run_id: str):
+    run = RunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    run_dir = run_artifact_service.run_dir(run, run_id)
+    return artifact_manifest_service.read(run_dir)
 
 
 @router.post("/{run_id}/evidence/sources")

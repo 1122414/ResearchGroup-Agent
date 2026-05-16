@@ -142,6 +142,7 @@ class Settings(BaseSettings):
     # Logging and artifacts
     log_level: str = "INFO"
     log_dir: str = "artifacts/logs"
+    artifact_manifest_filename: str = "manifest.json"
 
     class Config:
         env_file = str(PROJECT_ROOT / ".env")

@@ -18,6 +18,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .run_artifact_service import run_artifact_service
+from .artifact_manifest_service import artifact_manifest_service
 
 
 class ReportService:
@@ -347,9 +348,12 @@ class ReportService:
         (run_dir / "final_report.md").write_text(content, encoding="utf-8")
         (run_dir / "review_summary.md").write_text(review_summary, encoding="utf-8")
         (run_dir / "writer_final_draft.md").write_text(writer_draft, encoding="utf-8")
+        for name in ("final_report.md", "review_summary.md", "writer_final_draft.md"):
+            artifact_manifest_service.register(run_dir, kind="report", path=str(run_dir / name))
 
         tasks = TaskRepository.get_all(run_id=run_id)
         (run_dir / "tasks.json").write_text(json.dumps(tasks, ensure_ascii=False, indent=2), encoding="utf-8")
+        artifact_manifest_service.register(run_dir, kind="run_snapshot", path=str(run_dir / "tasks.json"))
         (run_dir / "agent_assignments.json").write_text(
             json.dumps(
                 {
@@ -364,6 +368,7 @@ class ReportService:
             ),
             encoding="utf-8",
         )
+        artifact_manifest_service.register(run_dir, kind="run_snapshot", path=str(run_dir / "agent_assignments.json"))
         (run_dir / "run_log.md").write_text(
             "\n".join(
                 [
@@ -385,6 +390,7 @@ class ReportService:
             ),
             encoding="utf-8",
         )
+        artifact_manifest_service.register(run_dir, kind="run_log", path=str(run_dir / "run_log.md"))
 
     def _evidence_section(self, run: dict) -> str:
         tasks = TaskRepository.get_all(run_id=run["id"])

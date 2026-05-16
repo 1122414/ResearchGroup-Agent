@@ -14,6 +14,7 @@ from ..core.research_goal import primary_goal
 from ..storage.repositories import ExperimentPlanRepository, ExperimentRunRepository, RunEventRepository, RunRepository
 from .experiment_protocol_service import experiment_protocol_service
 from .experiment_result_service import experiment_result_service
+from .artifact_manifest_service import artifact_manifest_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -66,6 +67,13 @@ class ReproducibleExperimentService:
         chart_path = workspace / "chart_data.json"
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
         artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
+        for artifact_path in artifact_paths:
+            artifact_manifest_service.register(
+                run_artifact_service.run_dir(run, run_id),
+                kind="experiment",
+                path=artifact_path,
+                metadata={"task_id": task.get("id"), "protocol_id": protocol["id"]},
+            )
         status = "completed" if proc.returncode == 0 else "failed"
         ExperimentPlanRepository.update(
             plan["id"],

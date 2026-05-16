@@ -7,6 +7,7 @@ from pathlib import Path
 from ..core.config import settings
 from ..core.research_goal import primary_goal
 from ..storage.repositories import RunRepository
+from .artifact_manifest_service import artifact_manifest_service
 
 
 class RunArtifactService:
@@ -21,6 +22,7 @@ class RunArtifactService:
         artifact_dir = self._dedupe(artifact_dir)
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / ".run_id").write_text(run_id, encoding="utf-8")
+        artifact_manifest_service.initialize(artifact_dir, run_id=run_id, display_name=display_name)
         return {
             "display_name": display_name,
             "artifact_dir": str(artifact_dir),
