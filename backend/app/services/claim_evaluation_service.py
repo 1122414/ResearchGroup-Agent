@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ..core.config import settings
-from ..storage.repositories import EvidenceRepository, ResearchClaimRepository
+from ..storage.repositories import EvidenceRepository, ExperimentFindingRepository, ResearchClaimRepository
 
 
 class ClaimEvaluationService:
@@ -15,9 +15,12 @@ class ClaimEvaluationService:
         links = [item for item in evidence["links"] if item["claim_id"] == claim_id]
         supporting = [item for item in links if item["relation_type"] == "supports"]
         opposing = [item for item in links if item["relation_type"] == "opposes"]
+        findings = ExperimentFindingRepository.get_by_claim(claim_id)
 
         support_score = sum(item["confidence"] * settings.evidence_link_support_weight for item in supporting)
         oppose_score = sum(item["confidence"] * settings.evidence_link_oppose_weight for item in opposing)
+        support_score += sum(item["confidence"] for item in findings if item["relation_type"] == "supports")
+        oppose_score += sum(item["confidence"] for item in findings if item["relation_type"] in {"weakens", "rejects"})
         total = support_score + oppose_score
         confidence = round(support_score / total, 4) if total else 0.0
 
@@ -25,6 +28,8 @@ class ClaimEvaluationService:
             status = "contested"
         elif support_score >= settings.claim_support_threshold:
             status = "supported"
+        elif oppose_score >= settings.claim_conflict_threshold:
+            status = "contested"
         else:
             status = "draft"
 

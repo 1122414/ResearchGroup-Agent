@@ -10,6 +10,8 @@ from ..core.research_goal import primary_goal
 from ..storage.repositories import (
     AgentRepository,
     EvidenceRepository,
+    ExperimentFindingRepository,
+    ExperimentResultRepository,
     OutputRepository,
     ResearchClaimRepository,
     RunRepository,
@@ -388,6 +390,8 @@ class ReportService:
         tasks = TaskRepository.get_all(run_id=run["id"])
         research_claims = ResearchClaimRepository.get_by_run(run["id"])
         evidence_bundle = EvidenceRepository.get_by_run(run["id"])
+        experiment_results = ExperimentResultRepository.get_by_run(run["id"])
+        experiment_findings = ExperimentFindingRepository.get_by_run(run["id"])
         source_map = {item["id"]: item for item in evidence_bundle["sources"]}
         excerpt_map = {item["id"]: item for item in evidence_bundle["excerpts"]}
         lines = ["## 可追溯证据", ""]
@@ -404,8 +408,10 @@ class ReportService:
                 opposing = [item for item in related_links if item["relation_type"] == "opposes"]
                 lines.append(f"- `{claim['status']}` {claim['statement']}")
                 if not related_links:
-                    lines.append("  - 证据缺口：当前还没有已绑定证据。")
-                    continue
+                    claim_findings = [item for item in experiment_findings if item.get("claim_id") == claim["id"]]
+                    if not claim_findings:
+                        lines.append("  - 证据缺口：当前还没有已绑定证据或实验 finding。")
+                        continue
                 lines.append(
                     f"  - 支持={len(supporting)}，反驳={len(opposing)}，置信度={round(claim.get('confidence', 0) * 100)}%"
                 )
@@ -427,6 +433,17 @@ class ReportService:
                     ).strip()
                     locator = excerpt.get("locator") or source.get("url") or ""
                     lines.append(f"  - {relation_label}: {citation or link['source_id']} [{locator}]")
+                for finding in [item for item in experiment_findings if item.get("claim_id") == claim["id"]]:
+                    lines.append(f"  - 实验 finding: {finding['relation_type']} / {finding['statement']}")
+
+        if experiment_results:
+            found = True
+            lines.extend(["", "### 实验结果", ""])
+            for item in experiment_results:
+                lines.append(f"- `{item['status']}` {item['summary']}")
+                if item.get("metrics"):
+                    lines.append(f"  - metrics：`{json.dumps(item['metrics'], ensure_ascii=False)}`")
+                lines.append(f"  - exit_code：`{item.get('exit_code')}`")
 
         for task in tasks:
             for output in task.get("outputs", []) or []:

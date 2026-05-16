@@ -380,6 +380,10 @@ class RunRepository:
         conn.execute("DELETE FROM evidence_sources WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM review_decisions WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM approval_requests WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM experiment_findings WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM experiment_results WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM experiment_runs WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM experiment_protocols WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_briefs WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_hypotheses WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_claims WHERE run_id = ?", (run_id,))
@@ -707,6 +711,235 @@ class ExperimentPlanRepository:
             conn.execute(f"UPDATE experiment_plans SET {', '.join(assignments)} WHERE id = ?", params)
             conn.commit()
         conn.close()
+
+
+class ExperimentProtocolRepository:
+    @staticmethod
+    def insert(protocol: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO experiment_protocols (
+                id, run_id, hypothesis_id, task_id, title, research_question,
+                independent_variables, dependent_variables, datasets, metrics, baselines,
+                stopping_conditions, expected_risks, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                protocol["id"],
+                protocol["run_id"],
+                protocol["hypothesis_id"],
+                protocol.get("task_id"),
+                protocol["title"],
+                protocol["research_question"],
+                json.dumps(protocol.get("independent_variables", []), ensure_ascii=False),
+                json.dumps(protocol.get("dependent_variables", []), ensure_ascii=False),
+                json.dumps(protocol.get("datasets", []), ensure_ascii=False),
+                json.dumps(protocol.get("metrics", []), ensure_ascii=False),
+                json.dumps(protocol.get("baselines", []), ensure_ascii=False),
+                json.dumps(protocol.get("stopping_conditions", []), ensure_ascii=False),
+                json.dumps(protocol.get("expected_risks", []), ensure_ascii=False),
+                protocol.get("status", "draft"),
+                protocol["created_at"],
+                protocol["updated_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_id(protocol_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM experiment_protocols WHERE id = ?", (protocol_id,)).fetchone()
+        conn.close()
+        return _deserialize_experiment_protocol(row) if row else None
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM experiment_protocols WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_experiment_protocol(row) for row in rows]
+
+    @staticmethod
+    def get_latest_for_hypothesis(run_id: str, hypothesis_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute(
+            """
+            SELECT * FROM experiment_protocols
+            WHERE run_id = ? AND hypothesis_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (run_id, hypothesis_id),
+        ).fetchone()
+        conn.close()
+        return _deserialize_experiment_protocol(row) if row else None
+
+    @staticmethod
+    def update(protocol_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("title", "research_question", "status", "updated_at"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        for key in (
+            "independent_variables",
+            "dependent_variables",
+            "datasets",
+            "metrics",
+            "baselines",
+            "stopping_conditions",
+            "expected_risks",
+        ):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(json.dumps(updates[key], ensure_ascii=False))
+        if assignments:
+            params.append(protocol_id)
+            conn.execute(f"UPDATE experiment_protocols SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+
+class ExperimentRunRepository:
+    @staticmethod
+    def insert(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO experiment_runs (
+                id, protocol_id, plan_id, run_id, task_id, status, command,
+                dataset_snapshot, started_at, completed_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"],
+                item["protocol_id"],
+                item.get("plan_id"),
+                item["run_id"],
+                item.get("task_id"),
+                item.get("status", "pending"),
+                item.get("command", ""),
+                json.dumps(item.get("dataset_snapshot", {}), ensure_ascii=False),
+                item.get("started_at"),
+                item.get("completed_at"),
+                item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM experiment_runs WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_experiment_run(row) for row in rows]
+
+    @staticmethod
+    def update(run_item_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("plan_id", "status", "command", "started_at", "completed_at"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        if "dataset_snapshot" in updates:
+            assignments.append("dataset_snapshot = ?")
+            params.append(json.dumps(updates["dataset_snapshot"], ensure_ascii=False))
+        if assignments:
+            params.append(run_item_id)
+            conn.execute(f"UPDATE experiment_runs SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+
+class ExperimentResultRepository:
+    @staticmethod
+    def insert(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO experiment_results (
+                id, experiment_run_id, protocol_id, run_id, status, summary,
+                metrics, exit_code, stdout, stderr, artifacts, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"],
+                item["experiment_run_id"],
+                item["protocol_id"],
+                item["run_id"],
+                item["status"],
+                item.get("summary", ""),
+                json.dumps(item.get("metrics", {}), ensure_ascii=False),
+                item.get("exit_code"),
+                item.get("stdout", ""),
+                item.get("stderr", ""),
+                json.dumps(item.get("artifacts", []), ensure_ascii=False),
+                item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM experiment_results WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_experiment_result(row) for row in rows]
+
+
+class ExperimentFindingRepository:
+    @staticmethod
+    def insert(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO experiment_findings (
+                id, protocol_id, experiment_run_id, result_id, run_id, hypothesis_id,
+                claim_id, relation_type, statement, confidence, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"],
+                item["protocol_id"],
+                item["experiment_run_id"],
+                item["result_id"],
+                item["run_id"],
+                item["hypothesis_id"],
+                item.get("claim_id"),
+                item["relation_type"],
+                item["statement"],
+                item.get("confidence", 0),
+                item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM experiment_findings WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_experiment_finding(row) for row in rows]
+
+    @staticmethod
+    def get_by_claim(claim_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM experiment_findings WHERE claim_id = ? ORDER BY created_at", (claim_id,)).fetchall()
+        conn.close()
+        return [_deserialize_experiment_finding(row) for row in rows]
 
 
 class TaskDependencyRepository:
@@ -1259,6 +1492,28 @@ class ResearchHypothesisRepository:
         conn.close()
         return [_deserialize_research_hypothesis(row) for row in rows]
 
+    @staticmethod
+    def get_by_id(hypothesis_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM research_hypotheses WHERE id = ?", (hypothesis_id,)).fetchone()
+        conn.close()
+        return _deserialize_research_hypothesis(row) if row else None
+
+    @staticmethod
+    def update(hypothesis_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("statement", "rationale", "status", "confidence", "updated_at"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        if assignments:
+            params.append(hypothesis_id)
+            conn.execute(f"UPDATE research_hypotheses SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
 
 class ResearchClaimRepository:
     @staticmethod
@@ -1573,6 +1828,76 @@ def _deserialize_experiment_plan(row) -> dict:
         "updated_at": row["updated_at"],
         "approved_at": row["approved_at"],
         "approved_by": row["approved_by"],
+    }
+
+
+def _deserialize_experiment_protocol(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "hypothesis_id": row["hypothesis_id"],
+        "task_id": row["task_id"],
+        "title": row["title"],
+        "research_question": row["research_question"],
+        "independent_variables": _json_loads(row["independent_variables"], []),
+        "dependent_variables": _json_loads(row["dependent_variables"], []),
+        "datasets": _json_loads(row["datasets"], []),
+        "metrics": _json_loads(row["metrics"], []),
+        "baselines": _json_loads(row["baselines"], []),
+        "stopping_conditions": _json_loads(row["stopping_conditions"], []),
+        "expected_risks": _json_loads(row["expected_risks"], []),
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_experiment_run(row) -> dict:
+    return {
+        "id": row["id"],
+        "protocol_id": row["protocol_id"],
+        "plan_id": row["plan_id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "status": row["status"],
+        "command": row["command"],
+        "dataset_snapshot": _json_loads(row["dataset_snapshot"], {}),
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_experiment_result(row) -> dict:
+    return {
+        "id": row["id"],
+        "experiment_run_id": row["experiment_run_id"],
+        "protocol_id": row["protocol_id"],
+        "run_id": row["run_id"],
+        "status": row["status"],
+        "summary": row["summary"],
+        "metrics": _json_loads(row["metrics"], {}),
+        "exit_code": row["exit_code"],
+        "stdout": row["stdout"],
+        "stderr": row["stderr"],
+        "artifacts": _json_loads(row["artifacts"], []),
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_experiment_finding(row) -> dict:
+    return {
+        "id": row["id"],
+        "protocol_id": row["protocol_id"],
+        "experiment_run_id": row["experiment_run_id"],
+        "result_id": row["result_id"],
+        "run_id": row["run_id"],
+        "hypothesis_id": row["hypothesis_id"],
+        "claim_id": row["claim_id"],
+        "relation_type": row["relation_type"],
+        "statement": row["statement"],
+        "confidence": row["confidence"],
+        "created_at": row["created_at"],
     }
 
 

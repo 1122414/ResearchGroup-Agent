@@ -185,6 +185,68 @@ def init_db():
             approved_by TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS experiment_protocols (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            hypothesis_id TEXT NOT NULL,
+            task_id TEXT,
+            title TEXT NOT NULL,
+            research_question TEXT NOT NULL,
+            independent_variables TEXT DEFAULT '[]',
+            dependent_variables TEXT DEFAULT '[]',
+            datasets TEXT DEFAULT '[]',
+            metrics TEXT DEFAULT '[]',
+            baselines TEXT DEFAULT '[]',
+            stopping_conditions TEXT DEFAULT '[]',
+            expected_risks TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS experiment_runs (
+            id TEXT PRIMARY KEY,
+            protocol_id TEXT NOT NULL,
+            plan_id TEXT,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            status TEXT DEFAULT 'pending',
+            command TEXT DEFAULT '',
+            dataset_snapshot TEXT DEFAULT '{}',
+            started_at TEXT,
+            completed_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS experiment_results (
+            id TEXT PRIMARY KEY,
+            experiment_run_id TEXT NOT NULL,
+            protocol_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            summary TEXT DEFAULT '',
+            metrics TEXT DEFAULT '{}',
+            exit_code INTEGER,
+            stdout TEXT DEFAULT '',
+            stderr TEXT DEFAULT '',
+            artifacts TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS experiment_findings (
+            id TEXT PRIMARY KEY,
+            protocol_id TEXT NOT NULL,
+            experiment_run_id TEXT NOT NULL,
+            result_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            hypothesis_id TEXT NOT NULL,
+            claim_id TEXT,
+            relation_type TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            confidence REAL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS task_dependencies (
             task_id TEXT NOT NULL,
             depends_on_task_id TEXT NOT NULL,
@@ -379,6 +441,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
         CREATE INDEX IF NOT EXISTS idx_experiment_plans_run_task ON experiment_plans(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_experiment_protocols_run_hypothesis ON experiment_protocols(run_id, hypothesis_id);
+        CREATE INDEX IF NOT EXISTS idx_experiment_runs_run_protocol ON experiment_runs(run_id, protocol_id);
+        CREATE INDEX IF NOT EXISTS idx_experiment_results_run_protocol ON experiment_results(run_id, protocol_id);
+        CREATE INDEX IF NOT EXISTS idx_experiment_findings_run_hypothesis ON experiment_findings(run_id, hypothesis_id);
         CREATE INDEX IF NOT EXISTS idx_task_dependencies_task ON task_dependencies(task_id);
         CREATE INDEX IF NOT EXISTS idx_task_attempts_run_task ON task_attempts(run_id, task_id);
         CREATE INDEX IF NOT EXISTS idx_memory_records_run_scope ON memory_records(run_id, scope);

@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     experiment_remote_port: int = 22
     experiment_docker_image: str = ""
     experiment_queue_backend: str = ""
+    experiment_support_base_confidence: float = 0.6
+    experiment_support_max_confidence: float = 0.95
+    experiment_weaken_confidence: float = 0.45
+    experiment_reject_confidence: float = 0.8
+    experiment_inconclusive_failure_confidence: float = 0.2
+    experiment_inconclusive_missing_metric_confidence: float = 0.3
 
     # Review heuristics
     review_pass_threshold: float = 0.75

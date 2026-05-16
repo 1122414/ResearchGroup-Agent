@@ -11,7 +11,9 @@ from pathlib import Path
 
 from ..core.config import settings
 from ..core.research_goal import primary_goal
-from ..storage.repositories import ExperimentPlanRepository, RunEventRepository, RunRepository
+from ..storage.repositories import ExperimentPlanRepository, ExperimentRunRepository, RunEventRepository, RunRepository
+from .experiment_protocol_service import experiment_protocol_service
+from .experiment_result_service import experiment_result_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -19,6 +21,7 @@ class ReproducibleExperimentService:
     def run_for_task(self, task: dict, agent_id: str) -> dict:
         run_id = task.get("run_id")
         run = RunRepository.get_by_id(run_id) if run_id else None
+        protocol = experiment_protocol_service.ensure_for_task(task)
         workspace = self._workspace(run, task, agent_id)
         data_dir = workspace / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -28,11 +31,13 @@ class ReproducibleExperimentService:
         self._write_input_documents(input_path, task, run)
         script_path.write_text(self._script(), encoding="utf-8")
 
-        plan = self._create_plan(task, agent_id, workspace, input_path, script_path)
+        plan = self._create_plan(task, agent_id, workspace, input_path, script_path, protocol)
+        experiment_run = self._create_run(task, protocol, plan, input_path)
         self._emit(task, plan["id"], "experiment.workspace_created", "实验研究生工作空间已创建", {"workspace": str(workspace)})
 
         started = datetime.now().isoformat()
         ExperimentPlanRepository.update(plan["id"], {"status": "running", "updated_at": started})
+        ExperimentRunRepository.update(experiment_run["id"], status="running", started_at=started)
         proc = subprocess.run(
             [sys.executable, str(script_path.name)],
             cwd=str(workspace),
@@ -71,11 +76,24 @@ class ReproducibleExperimentService:
                 "updated_at": datetime.now().isoformat(),
             },
         )
+        ExperimentRunRepository.update(experiment_run["id"], status=status, completed_at=datetime.now().isoformat())
+        recorded = experiment_result_service.record(
+            protocol=protocol,
+            experiment_run={**experiment_run, "status": status},
+            status=status,
+            result=result,
+            metrics=metrics,
+            artifacts=artifact_paths,
+        )
         self._emit(task, plan["id"], f"experiment.{status}", "实验脚本已执行" if status == "completed" else "实验脚本执行失败", {"artifacts": artifact_paths})
 
         return {
             "summary": "实验研究生已创建专属 workspace，并实际运行了可复现实验脚本。",
             "experiment_ran": status == "completed",
+            "protocol": protocol,
+            "experiment_run": {**experiment_run, "status": status},
+            "experiment_result": recorded["result"],
+            "finding": recorded["finding"],
             "experiment_plan_id": plan["id"],
             "workspace_dir": str(workspace),
             "script_path": str(script_path),
@@ -95,15 +113,15 @@ class ReproducibleExperimentService:
         safe_title = re.sub(r'[\\/:*?"<>|#`]+', "", str(task.get("title") or task.get("id") or "experiment_task")).strip()
         return run_artifact_service.run_dir(run, task.get("run_id")) / "workspaces" / agent_id / f"{task.get('id')}_{safe_title[:24]}"
 
-    def _create_plan(self, task: dict, agent_id: str, workspace: Path, input_path: Path, script_path: Path) -> dict:
+    def _create_plan(self, task: dict, agent_id: str, workspace: Path, input_path: Path, script_path: Path, protocol: dict) -> dict:
         now = datetime.now().isoformat()
         plan = {
             "id": f"exp_{uuid.uuid4().hex[:8]}",
             "run_id": task.get("run_id"),
             "task_id": task.get("id"),
             "agent_id": agent_id,
-            "title": f"可复现实验：{task.get('title', '')}",
-            "objective": task.get("description", ""),
+            "title": protocol["title"],
+            "objective": protocol["research_question"],
             "workspace_dir": str(workspace),
             "files": [
                 {"path": str(input_path.relative_to(workspace)), "content": input_path.read_text(encoding="utf-8")},
@@ -124,9 +142,37 @@ class ReproducibleExperimentService:
         ExperimentPlanRepository.insert(plan)
         return plan
 
+    def _create_run(self, task: dict, protocol: dict, plan: dict, input_path: Path) -> dict:
+        now = datetime.now().isoformat()
+        item = {
+            "id": f"exp_run_{uuid.uuid4().hex[:10]}",
+            "protocol_id": protocol["id"],
+            "plan_id": plan["id"],
+            "run_id": protocol["run_id"],
+            "task_id": task.get("id"),
+            "status": "pending",
+            "command": plan["commands"][0]["command"] if plan.get("commands") else "",
+            "dataset_snapshot": {
+                "input_documents": str(input_path),
+                "datasets": protocol.get("datasets", []),
+            },
+            "started_at": None,
+            "completed_at": None,
+            "created_at": now,
+        }
+        ExperimentRunRepository.insert(item)
+        return item
+
     def _write_input_documents(self, path: Path, task: dict, run: dict | None) -> None:
         goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
         seed = goal or task.get("title", "research task")
+        documents = self._documents_from_uploads(run, task)
+        if documents:
+            with path.open("w", encoding="utf-8") as fh:
+                for item in documents:
+                    fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+            return
+
         documents = [
             {"id": "doc_rag", "text": f"{seed} 需要比较 RAG 检索、文本切分、召回率、MRR 和答案质量之间的关系。"},
             {"id": "doc_chunk_short", "text": "固定长度切分实现简单，但可能切断语义边界；无 overlap 时召回容易下降。"},
@@ -140,6 +186,25 @@ class ReproducibleExperimentService:
         with path.open("w", encoding="utf-8") as fh:
             for item in documents:
                 fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    def _documents_from_uploads(self, run: dict | None, task: dict) -> list[dict]:
+        if not run:
+            return []
+        run_dir = run_artifact_service.run_dir(run, task.get("run_id"))
+        attachments_path = run_dir / "inputs" / "attachments.json"
+        if not attachments_path.exists():
+            return []
+        try:
+            items = json.loads(attachments_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return []
+        documents: list[dict] = []
+        for index, item in enumerate(items, start=1):
+            text = str(item.get("extracted_markdown") or "").strip()
+            if not text:
+                continue
+            documents.append({"id": f"upload_{index}", "text": text})
+        return documents
 
     @staticmethod
     def _read_metrics(path: Path) -> dict:

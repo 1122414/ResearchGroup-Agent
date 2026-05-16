@@ -60,6 +60,32 @@ class ResearchStateService:
                 "resolved_at": None,
             }
         )
+        hypothesis_id = f"hypothesis_{uuid.uuid4().hex[:10]}"
+        ResearchHypothesisRepository.insert(
+            {
+                "id": hypothesis_id,
+                "run_id": run["id"],
+                "statement": f"针对“{question}”，改进后的研究方案应优于最小基线。",
+                "rationale": "先以一个可检验假设约束研究流程，再让证据和实验逐步修正它。",
+                "status": "active",
+                "confidence": 0.5,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        ResearchClaimRepository.insert(
+            {
+                "id": f"claim_{uuid.uuid4().hex[:10]}",
+                "run_id": run["id"],
+                "hypothesis_id": hypothesis_id,
+                "statement": "改进后的方案相较基线能够带来可测量收益。",
+                "status": "draft",
+                "evidence_ids": [],
+                "confidence": 0.0,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
 
     def get_state(self, run_id: str) -> dict:
         return {
