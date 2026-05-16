@@ -19,6 +19,7 @@ from ..services.run_artifact_service import run_artifact_service
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..services.approval_service import approval_service
+from ..services.research_state_service import research_state_service
 from ..services.task_graph_service import task_graph_service
 from ..storage.repositories import (
     ApprovalRequestRepository,
@@ -220,6 +221,7 @@ async def create_run(req: RunCreateRequest):
         "last_event_id": None,
     }
     RunRepository.insert(run)
+    research_state_service.ensure_initialized(run)
     run_event_service.emit(run_id, "run.created", "run", "运行已创建", "已保存研究目标，等待启动")
     return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "preflight": preflight}
 
@@ -336,6 +338,15 @@ async def get_run_memory(run_id: str):
 @router.get("/{run_id}/evidence")
 async def get_run_evidence(run_id: str):
     return EvidenceRepository.get_by_run(run_id)
+
+
+@router.get("/{run_id}/research-state")
+async def get_run_research_state(run_id: str):
+    run = RunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="è¿è¡Œä¸å­˜åœ¨")
+    research_state_service.ensure_initialized(run)
+    return research_state_service.get_state(run_id)
 
 
 @router.post("/{run_id}/evidence/sources")

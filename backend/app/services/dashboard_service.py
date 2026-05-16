@@ -9,6 +9,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .task_graph_service import task_graph_service
+from .research_state_service import research_state_service
 
 
 class DashboardService:
@@ -23,9 +24,11 @@ class DashboardService:
                 "failed_or_retried": [],
                 "evidence_coverage": 0,
                 "experiment_completion": 0,
+                "research_state": None,
             }
         tasks = TaskRepository.get_all(run_id=run["id"])
         graph = task_graph_service.get_graph(run["id"])
+        research_state_service.ensure_initialized(run)
         evidence = EvidenceRepository.get_by_run(run["id"])
         experiments = ExperimentPlanRepository.get_all(run_id=run["id"])
         experiment_completed = [item for item in experiments if item["status"] == "completed"]
@@ -39,6 +42,7 @@ class DashboardService:
             "failed_or_retried": RecoveryActionRepository.get_by_run(run["id"]),
             "evidence_coverage": round(len(evidence_task_ids) / max(len(research_tasks), 1), 4),
             "experiment_completion": round(len(experiment_completed) / max(len(experiments), 1), 4) if experiments else 0,
+            "research_state": research_state_service.summary(run["id"]),
             "graph": graph,
         }
 

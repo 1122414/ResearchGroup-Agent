@@ -377,6 +377,11 @@ class RunRepository:
         conn.execute("DELETE FROM evidence_sources WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM review_decisions WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM approval_requests WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_briefs WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_hypotheses WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_claims WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_decisions WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_uncertainties WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM tasks WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         conn.commit()
@@ -1077,6 +1082,172 @@ class ApprovalRequestRepository:
         return _deserialize_approval_request(row) if row else None
 
 
+class ResearchBriefRepository:
+    @staticmethod
+    def insert(brief: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO research_briefs (
+                id, run_id, research_question, objective, scope, success_criteria,
+                constraints, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                brief["id"],
+                brief["run_id"],
+                brief["research_question"],
+                brief["objective"],
+                brief.get("scope", ""),
+                json.dumps(brief.get("success_criteria", []), ensure_ascii=False),
+                json.dumps(brief.get("constraints", []), ensure_ascii=False),
+                brief.get("status", "active"),
+                brief["created_at"],
+                brief["updated_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM research_briefs WHERE run_id = ?", (run_id,)).fetchone()
+        conn.close()
+        return _deserialize_research_brief(row) if row else None
+
+
+class ResearchHypothesisRepository:
+    @staticmethod
+    def insert(hypothesis: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO research_hypotheses (
+                id, run_id, statement, rationale, status, confidence, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                hypothesis["id"],
+                hypothesis["run_id"],
+                hypothesis["statement"],
+                hypothesis.get("rationale", ""),
+                hypothesis.get("status", "proposed"),
+                hypothesis.get("confidence", 0),
+                hypothesis["created_at"],
+                hypothesis["updated_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM research_hypotheses WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_research_hypothesis(row) for row in rows]
+
+
+class ResearchClaimRepository:
+    @staticmethod
+    def insert(claim: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO research_claims (
+                id, run_id, hypothesis_id, statement, status, evidence_ids,
+                confidence, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                claim["id"],
+                claim["run_id"],
+                claim.get("hypothesis_id"),
+                claim["statement"],
+                claim.get("status", "draft"),
+                json.dumps(claim.get("evidence_ids", []), ensure_ascii=False),
+                claim.get("confidence", 0),
+                claim["created_at"],
+                claim["updated_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM research_claims WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_research_claim(row) for row in rows]
+
+
+class ResearchDecisionRepository:
+    @staticmethod
+    def insert(decision: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO research_decisions (id, run_id, decision, rationale, impact, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision["id"],
+                decision["run_id"],
+                decision["decision"],
+                decision.get("rationale", ""),
+                decision.get("impact", ""),
+                decision["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM research_decisions WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_research_decision(row) for row in rows]
+
+
+class ResearchUncertaintyRepository:
+    @staticmethod
+    def insert(uncertainty: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO research_uncertainties (
+                id, run_id, description, category, severity, status, created_at, resolved_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                uncertainty["id"],
+                uncertainty["run_id"],
+                uncertainty["description"],
+                uncertainty.get("category", "research_question"),
+                uncertainty.get("severity", "medium"),
+                uncertainty.get("status", "open"),
+                uncertainty["created_at"],
+                uncertainty.get("resolved_at"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM research_uncertainties WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_research_uncertainty(row) for row in rows]
+
+
 def _json_loads(value, default):
     if value is None:
         return default
@@ -1371,4 +1542,70 @@ def _deserialize_approval_request(row) -> dict:
         "created_at": row["created_at"],
         "resolved_at": row["resolved_at"],
         "resolved_by": row["resolved_by"],
+    }
+
+
+def _deserialize_research_brief(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "research_question": row["research_question"],
+        "objective": row["objective"],
+        "scope": row["scope"],
+        "success_criteria": _json_loads(row["success_criteria"], []),
+        "constraints": _json_loads(row["constraints"], []),
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_research_hypothesis(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "statement": row["statement"],
+        "rationale": row["rationale"],
+        "status": row["status"],
+        "confidence": row["confidence"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_research_claim(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "hypothesis_id": row["hypothesis_id"],
+        "statement": row["statement"],
+        "status": row["status"],
+        "evidence_ids": _json_loads(row["evidence_ids"], []),
+        "confidence": row["confidence"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_research_decision(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "decision": row["decision"],
+        "rationale": row["rationale"],
+        "impact": row["impact"],
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_research_uncertainty(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "description": row["description"],
+        "category": row["category"],
+        "severity": row["severity"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "resolved_at": row["resolved_at"],
     }

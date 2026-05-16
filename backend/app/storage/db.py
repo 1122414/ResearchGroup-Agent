@@ -281,6 +281,62 @@ def init_db():
             resolved_by TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS research_briefs (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE,
+            research_question TEXT NOT NULL,
+            objective TEXT NOT NULL,
+            scope TEXT DEFAULT '',
+            success_criteria TEXT DEFAULT '[]',
+            constraints TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS research_hypotheses (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            rationale TEXT DEFAULT '',
+            status TEXT DEFAULT 'proposed',
+            confidence REAL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS research_claims (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            hypothesis_id TEXT,
+            statement TEXT NOT NULL,
+            status TEXT DEFAULT 'draft',
+            evidence_ids TEXT DEFAULT '[]',
+            confidence REAL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS research_decisions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            rationale TEXT DEFAULT '',
+            impact TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS research_uncertainties (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT DEFAULT 'research_question',
+            severity TEXT DEFAULT 'medium',
+            status TEXT DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
@@ -292,6 +348,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_evidence_claims_run_task ON evidence_claims(run_id, task_id);
         CREATE INDEX IF NOT EXISTS idx_review_decisions_run_task ON review_decisions(run_id, task_id);
         CREATE INDEX IF NOT EXISTS idx_approval_requests_run_status ON approval_requests(run_id, status);
+        CREATE INDEX IF NOT EXISTS idx_research_hypotheses_run_status ON research_hypotheses(run_id, status);
+        CREATE INDEX IF NOT EXISTS idx_research_claims_run_status ON research_claims(run_id, status);
+        CREATE INDEX IF NOT EXISTS idx_research_decisions_run_created ON research_decisions(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_research_uncertainties_run_status ON research_uncertainties(run_id, status);
         """
     )
 
