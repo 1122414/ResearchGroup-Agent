@@ -147,6 +147,8 @@ class ReviewService:
             elif dimension == "evidence":
                 if task.get("task_type") == "report_writing":
                     score = settings.review_report_evidence_score if latest else settings.review_default_rejected_score
+                elif task.get("task_type") == "result_analysis":
+                    score = 1.0 if latest.get("key_metrics") or latest.get("metrics") else settings.review_default_rejected_score
                 else:
                     score = 1.0 if latest.get("papers_read") or latest.get("reproducible_experiment") else settings.review_default_rejected_score
             scores[dimension] = round(score, 4)

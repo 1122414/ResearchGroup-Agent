@@ -43,9 +43,6 @@ def ensure_run_completed(run_id: str, timeout: int = 180) -> dict:
             for item in approvals:
                 if item["status"] == "pending":
                     req("POST", f"/runs/approvals/{item['id']}/resolve", {"approved": True})
-            req("POST", f"/runs/{run_id}/run_all")
-        else:
-            req("POST", f"/runs/{run_id}/run_all")
         time.sleep(1)
     raise TimeoutError("run did not finish in time")
 
@@ -60,7 +57,7 @@ def main() -> int:
     run_id = created["run_id"]
 
     print("[3/8] execute run")
-    req("POST", f"/runs/{run_id}/run_all")
+    req("POST", f"/runs/{run_id}/start")
     summary = ensure_run_completed(run_id)
     assert summary["run"]["status"] == "completed", summary["run"]
 
