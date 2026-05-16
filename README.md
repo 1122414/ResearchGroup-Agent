@@ -112,6 +112,40 @@ python scripts/functional_p0_smoke.py
 - 未开始 Run 的停止接口
 - 像素办公室 API
 
+## 升级版研究工作台验收
+
+建议先使用 mock 模式完成闭环验收：
+
+```ini
+MOCK_MODE=true
+```
+
+启动后端后执行：
+
+```bash
+python scripts/functional_research_workbench_upgrade.py
+```
+
+该脚本会依次验证：
+
+- 研究对象初始化；
+- hypothesis 驱动的实验协议、实验结果与 finding；
+- 迭代式研究编排快照；
+- artifact manifest；
+- 最终报告产物；
+- claim / evidence 查询链路。
+
+如果需要手动调试，优先看这几个接口：
+
+```http
+GET /api/runs/{run_id}/research-state
+GET /api/runs/{run_id}/research-loop
+GET /api/experiments/protocols?run_id={run_id}
+GET /api/experiments/results?run_id={run_id}
+GET /api/experiments/findings?run_id={run_id}
+GET /api/runs/{run_id}/artifact-manifest
+```
+
 ## 常用 API
 
 ```http
