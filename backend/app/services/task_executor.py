@@ -7,6 +7,7 @@ from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
 from .agent_skill_service import agent_skill_service
 from .external_memory import external_memory
+from .evidence_pipeline_service import evidence_pipeline_service
 from .literature_source_service import literature_source_service
 from .reproducible_experiment_service import reproducible_experiment_service
 
@@ -61,7 +62,18 @@ class TaskExecutor:
             raise
         result = self._parse_result(raw_response)
         if task_type == "literature_survey":
-            result = literature_source_service.enrich_result(task, result)
+            evidence_bundle = evidence_pipeline_service.collect_for_task(task)
+            methods = literature_source_service.methods_from_sources(evidence_bundle["sources"])
+            artifacts = literature_source_service.write_artifacts(task, evidence_bundle["sources"], methods)
+            result = {
+                **result,
+                "source_mode": evidence_bundle["mode"],
+                "papers_read": evidence_bundle["sources"],
+                "methods_found": methods,
+                "evidence_excerpts": evidence_bundle["excerpts"],
+                "evidence_assessments": evidence_bundle["assessments"],
+                "source_artifacts": artifacts,
+            }
         if task_type == "experiment_design":
             experiment_result = reproducible_experiment_service.run_for_task(task, owner_id)
             result = {**result, "reproducible_experiment": experiment_result}

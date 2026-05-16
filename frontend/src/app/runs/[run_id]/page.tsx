@@ -14,10 +14,14 @@ import {
   TASK_STATUS_LABELS,
   TASK_TYPE_LABELS,
   type ApprovalRequest,
+  type EvidenceAssessment,
   type EvidenceClaim,
+  type EvidenceExcerpt,
+  type EvidenceLink,
   type EvidenceSource,
   type LLMUsage,
   type MemoryRecord,
+  type ResearchClaim,
   type ReviewDecision,
   type RunEvent,
   type RunSummary,
@@ -26,6 +30,12 @@ import {
 } from "@/lib/types"
 
 const FINAL_STATUSES = new Set(["completed", "failed", "cancelled"])
+const RESEARCH_CLAIM_STATUS_LABELS: Record<string, string> = {
+  draft: "待验证",
+  supported: "已支持",
+  contested: "有争议",
+  retracted: "已撤回",
+}
 
 export default function RunDetailPage() {
   const params = useParams<{ run_id: string }>()
@@ -39,6 +49,10 @@ export default function RunDetailPage() {
   const [memory, setMemory] = useState<MemoryRecord[]>([])
   const [sources, setSources] = useState<EvidenceSource[]>([])
   const [claims, setClaims] = useState<EvidenceClaim[]>([])
+  const [researchClaims, setResearchClaims] = useState<ResearchClaim[]>([])
+  const [excerpts, setExcerpts] = useState<EvidenceExcerpt[]>([])
+  const [assessments, setAssessments] = useState<EvidenceAssessment[]>([])
+  const [links, setLinks] = useState<EvidenceLink[]>([])
   const [reviews, setReviews] = useState<ReviewDecision[]>([])
   const [attempts, setAttempts] = useState<TaskAttempt[]>([])
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
@@ -48,13 +62,14 @@ export default function RunDetailPage() {
   const [canceling, setCanceling] = useState(false)
 
   const refresh = useCallback(async () => {
-    const [summaryData, eventsData, usageData, graphData, memoryData, evidenceData, reviewData, attemptData, approvalData] = await Promise.all([
+    const [summaryData, eventsData, usageData, graphData, memoryData, evidenceData, researchStateData, reviewData, attemptData, approvalData] = await Promise.all([
       api.getRunSummary(runId),
       api.getRunEvents(runId, 200),
       api.getRunUsage(runId),
       api.getRunGraph(runId),
       api.getRunMemory(runId),
       api.getRunEvidence(runId),
+      api.getRunResearchState(runId),
       api.getRunReviews(runId),
       api.getRunAttempts(runId),
       api.getRunApprovals(runId),
@@ -66,6 +81,10 @@ export default function RunDetailPage() {
     setMemory(memoryData.items)
     setSources(evidenceData.sources)
     setClaims(evidenceData.claims)
+    setResearchClaims(researchStateData.claims)
+    setExcerpts(evidenceData.excerpts)
+    setAssessments(evidenceData.assessments)
+    setLinks(evidenceData.links)
     setReviews(reviewData.items)
     setAttempts(attemptData.items)
     setApprovals(approvalData.items)
@@ -199,7 +218,14 @@ export default function RunDetailPage() {
 
       {view === "research" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <EvidencePanel sources={sources} claims={claims} />
+          <EvidenceWorkbenchPanel
+            sources={sources}
+            claims={claims}
+            researchClaims={researchClaims}
+            excerpts={excerpts}
+            assessments={assessments}
+            links={links}
+          />
           <MemoryPanel items={memory} />
           <ReviewPanel items={reviews} />
         </div>
@@ -346,27 +372,6 @@ function AttemptPanel({ attempts }: { attempts: TaskAttempt[] }) {
               <Badge variant="secondary">{item.status}</Badge>
             </div>
             <div className="mt-1 text-xs text-[var(--rg-muted)]">{item.failure_message || item.checkpoint || "执行完成"}</div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function EvidencePanel({ sources, claims }: { sources: EvidenceSource[]; claims: EvidenceClaim[] }) {
-  return (
-    <Card className="surface-card">
-      <CardHeader>
-        <CardTitle className="text-base">证据链</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {sources.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无证据来源。</div>}
-        {sources.map((source) => (
-          <div key={source.id} className="data-row p-3 text-sm">
-            <div className="font-medium">{source.title}</div>
-            <div className="mt-1 text-xs text-[var(--rg-muted)]">
-              {source.authors} {source.year ? `(${source.year})` : ""} · {claims.filter((item) => item.source_id === source.id).length} 条关联
-            </div>
           </div>
         ))}
       </CardContent>
@@ -560,6 +565,67 @@ function inferRelation(event: RunEvent, agentMap: Record<string, string>, agentR
   if (event.phase === "review") return { source: actor || "研究生", sourceRole: role, action: "提交审核", target: "导师 Agent", targetRole: "advisor" }
   if (event.phase === "approval") return { source: "系统", sourceRole: "system", action: "等待确认", target: actor, targetRole: role }
   return { source: actor, sourceRole: role, action: "推进任务", target: event.task_id || "任务板", targetRole: "task" }
+}
+
+function EvidenceWorkbenchPanel({
+  sources,
+  claims,
+  researchClaims,
+  excerpts,
+  assessments,
+  links,
+}: {
+  sources: EvidenceSource[]
+  claims: EvidenceClaim[]
+  researchClaims: ResearchClaim[]
+  excerpts: EvidenceExcerpt[]
+  assessments: EvidenceAssessment[]
+  links: EvidenceLink[]
+}) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">证据工作台</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {researchClaims.map((claim) => {
+          const claimLinks = links.filter((item) => item.claim_id === claim.id)
+          const supporting = claimLinks.filter((item) => item.relation_type === "supports").length
+          const opposing = claimLinks.filter((item) => item.relation_type === "opposes").length
+          const hasGap = claimLinks.length === 0
+          return (
+            <div key={claim.id} className="data-row p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">{claim.statement}</div>
+                <Badge variant="secondary">{RESEARCH_CLAIM_STATUS_LABELS[claim.status] || claim.status}</Badge>
+              </div>
+              <div className="mt-1 text-xs text-[var(--rg-muted)]">
+                支持 {supporting} / 反驳 {opposing} / 置信度 {Math.round(claim.confidence * 100)}%
+              </div>
+              {hasGap && <div className="mt-2 text-xs text-[#964b36]">当前还没有绑定证据，结论暂不可采信。</div>}
+            </div>
+          )
+        })}
+        {sources.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无证据来源。</div>}
+        {sources.map((source) => (
+          <div key={source.id} className="data-row p-3 text-sm">
+            <div className="font-medium">{source.title}</div>
+            <div className="mt-1 text-xs text-[var(--rg-muted)]">
+              {source.authors} {source.year ? `(${source.year})` : ""} / {claims.filter((item) => item.source_id === source.id).length} 条抽取主张 / {excerpts.filter((item) => item.source_id === source.id).length} 条摘录
+            </div>
+            {assessments
+              .filter((item) => item.source_id === source.id)
+              .slice(0, 1)
+              .map((item) => (
+                <div key={item.id} className="mt-2 text-xs text-[var(--rg-muted)]">
+                  评分 {Math.round(item.overall_score * 100)}% / 一手来源 {item.is_primary ? "是" : "否"} / 同行评审 {item.is_peer_reviewed ? "是" : "否"}
+                </div>
+              ))}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

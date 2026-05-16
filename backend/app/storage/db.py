@@ -255,6 +255,44 @@ def init_db():
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS evidence_excerpts (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            excerpt TEXT NOT NULL,
+            locator TEXT DEFAULT '',
+            excerpt_type TEXT DEFAULT 'summary',
+            captured_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS evidence_assessments (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            excerpt_id TEXT,
+            relevance_score REAL DEFAULT 0,
+            credibility_score REAL DEFAULT 0,
+            freshness_score REAL DEFAULT 0,
+            conflict_score REAL DEFAULT 0,
+            overall_score REAL DEFAULT 0,
+            is_primary INTEGER DEFAULT 0,
+            is_peer_reviewed INTEGER DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS evidence_links (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            claim_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            excerpt_id TEXT,
+            relation_type TEXT DEFAULT 'supports',
+            confidence REAL DEFAULT 0,
+            rationale TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS review_decisions (
             id TEXT PRIMARY KEY,
             run_id TEXT NOT NULL,
@@ -346,6 +384,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_memory_records_run_scope ON memory_records(run_id, scope);
         CREATE INDEX IF NOT EXISTS idx_evidence_sources_run_task ON evidence_sources(run_id, task_id);
         CREATE INDEX IF NOT EXISTS idx_evidence_claims_run_task ON evidence_claims(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_excerpts_run_source ON evidence_excerpts(run_id, source_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_assessments_run_source ON evidence_assessments(run_id, source_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_links_run_claim ON evidence_links(run_id, claim_id);
         CREATE INDEX IF NOT EXISTS idx_review_decisions_run_task ON review_decisions(run_id, task_id);
         CREATE INDEX IF NOT EXISTS idx_approval_requests_run_status ON approval_requests(run_id, status);
         CREATE INDEX IF NOT EXISTS idx_research_hypotheses_run_status ON research_hypotheses(run_id, status);

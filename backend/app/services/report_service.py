@@ -7,7 +7,14 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..core.research_goal import primary_goal
-from ..storage.repositories import AgentRepository, OutputRepository, RunRepository, TaskRepository
+from ..storage.repositories import (
+    AgentRepository,
+    EvidenceRepository,
+    OutputRepository,
+    ResearchClaimRepository,
+    RunRepository,
+    TaskRepository,
+)
 from .run_artifact_service import run_artifact_service
 
 
@@ -379,10 +386,48 @@ class ReportService:
 
     def _evidence_section(self, run: dict) -> str:
         tasks = TaskRepository.get_all(run_id=run["id"])
+        research_claims = ResearchClaimRepository.get_by_run(run["id"])
+        evidence_bundle = EvidenceRepository.get_by_run(run["id"])
+        source_map = {item["id"]: item for item in evidence_bundle["sources"]}
+        excerpt_map = {item["id"]: item for item in evidence_bundle["excerpts"]}
         lines = ["## 可追溯证据", ""]
         run_dir = run_artifact_service.run_dir(run, run["id"])
         lines.append(f"- 运行产物目录：`{run_dir}`")
         found = False
+
+        if research_claims:
+            found = True
+            lines.extend(["", "### 结论与证据映射", ""])
+            for claim in research_claims:
+                related_links = [item for item in evidence_bundle["links"] if item["claim_id"] == claim["id"]]
+                supporting = [item for item in related_links if item["relation_type"] == "supports"]
+                opposing = [item for item in related_links if item["relation_type"] == "opposes"]
+                lines.append(f"- `{claim['status']}` {claim['statement']}")
+                if not related_links:
+                    lines.append("  - 证据缺口：当前还没有已绑定证据。")
+                    continue
+                lines.append(
+                    f"  - 支持={len(supporting)}，反驳={len(opposing)}，置信度={round(claim.get('confidence', 0) * 100)}%"
+                )
+                for link in related_links[: settings.report_evidence_paper_limit]:
+                    source = source_map.get(link["source_id"], {})
+                    excerpt = excerpt_map.get(link.get("excerpt_id") or "", {})
+                    relation_label = {"supports": "支持", "opposes": "反驳", "context": "上下文"}.get(
+                        link["relation_type"],
+                        link["relation_type"],
+                    )
+                    citation = " ".join(
+                        str(item)
+                        for item in [
+                            source.get("authors", "").strip(),
+                            f"({source.get('year')})" if source.get("year") else "",
+                            source.get("title", "").strip(),
+                        ]
+                        if item
+                    ).strip()
+                    locator = excerpt.get("locator") or source.get("url") or ""
+                    lines.append(f"  - {relation_label}: {citation or link['source_id']} [{locator}]")
+
         for task in tasks:
             for output in task.get("outputs", []) or []:
                 if not isinstance(output, dict):

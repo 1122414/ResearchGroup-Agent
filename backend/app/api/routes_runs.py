@@ -19,6 +19,9 @@ from ..services.run_artifact_service import run_artifact_service
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..services.approval_service import approval_service
+from ..services.claim_evaluation_service import claim_evaluation_service
+from ..services.evidence_pipeline_service import evidence_pipeline_service
+from ..services.evidence_provider import evidence_provider
 from ..services.research_state_service import research_state_service
 from ..services.task_graph_service import task_graph_service
 from ..storage.repositories import (
@@ -29,6 +32,7 @@ from ..storage.repositories import (
     ReviewDecisionRepository,
     RunEventRepository,
     RunRepository,
+    ResearchClaimRepository,
     TaskAttemptRepository,
     TaskRepository,
 )
@@ -65,6 +69,30 @@ class EvidenceSourceCreateRequest(BaseModel):
     doi: str | None = None
     url: str | None = None
     source_type: str = "paper"
+
+
+class EvidenceSearchRequest(BaseModel):
+    query: str
+
+
+class EvidenceExcerptCreateRequest(BaseModel):
+    excerpt: str
+    locator: str = ""
+    excerpt_type: str = "summary"
+
+
+class EvidenceLinkCreateRequest(BaseModel):
+    claim_id: str
+    source_id: str
+    excerpt_id: str | None = None
+    relation_type: str = "supports"
+    confidence: float = Field(default=0.8, ge=0, le=1)
+    rationale: str = ""
+
+
+class ResearchClaimCreateRequest(BaseModel):
+    hypothesis_id: str | None = None
+    statement: str
 
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -340,6 +368,39 @@ async def get_run_evidence(run_id: str):
     return EvidenceRepository.get_by_run(run_id)
 
 
+@router.get("/evidence/providers")
+async def get_evidence_providers():
+    return {"items": evidence_provider.list_capabilities()}
+
+
+@router.post("/{run_id}/evidence/search")
+async def search_run_evidence(run_id: str, body: EvidenceSearchRequest):
+    run = RunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    return evidence_pipeline_service.collect_for_query(run_id, body.query)
+
+
+@router.post("/{run_id}/claims")
+async def create_run_claim(run_id: str, body: ResearchClaimCreateRequest):
+    if not RunRepository.get_by_id(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    now = datetime.now().isoformat()
+    claim = {
+        "id": f"claim_{uuid.uuid4().hex[:10]}",
+        "run_id": run_id,
+        "hypothesis_id": body.hypothesis_id,
+        "statement": body.statement,
+        "status": "draft",
+        "evidence_ids": [],
+        "confidence": 0.0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    ResearchClaimRepository.insert(claim)
+    return {"claim": claim}
+
+
 @router.get("/{run_id}/research-state")
 async def get_run_research_state(run_id: str):
     run = RunRepository.get_by_id(run_id)
@@ -371,6 +432,52 @@ async def create_run_evidence_source(run_id: str, body: EvidenceSourceCreateRequ
         }
     )
     return {"source": next(item for item in EvidenceRepository.get_by_run(run_id)["sources"] if item["id"] == source_id)}
+
+
+@router.post("/{run_id}/evidence/sources/{source_id}/excerpts")
+async def create_run_evidence_excerpt(run_id: str, source_id: str, body: EvidenceExcerptCreateRequest):
+    if not EvidenceRepository.get_source(run_id, source_id):
+        raise HTTPException(status_code=404, detail="source not found")
+    excerpt = {
+        "id": f"excerpt_{uuid.uuid4().hex[:10]}",
+        "run_id": run_id,
+        "source_id": source_id,
+        "excerpt": body.excerpt,
+        "locator": body.locator,
+        "excerpt_type": body.excerpt_type,
+        "captured_at": datetime.now().isoformat(),
+    }
+    EvidenceRepository.insert_excerpt(excerpt)
+    return {"excerpt": excerpt}
+
+
+@router.post("/{run_id}/evidence/links")
+async def create_run_evidence_link(run_id: str, body: EvidenceLinkCreateRequest):
+    claim = ResearchClaimRepository.get_by_id(body.claim_id)
+    source = EvidenceRepository.get_source(run_id, body.source_id)
+    excerpt = EvidenceRepository.get_excerpt(run_id, body.excerpt_id) if body.excerpt_id else None
+    if not claim or claim["run_id"] != run_id:
+        raise HTTPException(status_code=404, detail="claim not found")
+    if not source:
+        raise HTTPException(status_code=404, detail="source not found")
+    if body.excerpt_id and (not excerpt or excerpt["source_id"] != body.source_id):
+        raise HTTPException(status_code=400, detail="excerpt does not belong to source")
+    if body.relation_type not in {"supports", "opposes", "context"}:
+        raise HTTPException(status_code=400, detail="invalid relation_type")
+    link = {
+        "id": f"link_{uuid.uuid4().hex[:10]}",
+        "run_id": run_id,
+        "claim_id": body.claim_id,
+        "source_id": body.source_id,
+        "excerpt_id": body.excerpt_id,
+        "relation_type": body.relation_type,
+        "confidence": body.confidence,
+        "rationale": body.rationale,
+        "created_at": datetime.now().isoformat(),
+    }
+    EvidenceRepository.insert_link(link)
+    updated_claim = claim_evaluation_service.evaluate(body.claim_id)
+    return {"link": link, "claim": updated_claim}
 
 
 @router.get("/{run_id}/reviews")

@@ -78,6 +78,23 @@ class Settings(BaseSettings):
     report_evidence_paper_limit: int = 5
     run_artifact_title_max_length: int = 28
     run_artifact_dedupe_limit: int = 100
+    evidence_provider_mode: str = "auto"
+    evidence_remote_search_enabled: bool = False
+    evidence_search_max_results: int = 5
+    evidence_excerpt_max_chars: int = 1200
+    evidence_stale_after_years: int = 8
+    evidence_primary_source_bonus: float = 0.15
+    evidence_peer_review_bonus: float = 0.15
+    evidence_link_support_weight: float = 1.0
+    evidence_link_oppose_weight: float = 1.0
+    claim_support_threshold: float = 0.65
+    claim_conflict_threshold: float = 0.35
+    tavily_api_key: str = ""
+    tavily_base_url: str = "https://api.tavily.com"
+    tavily_search_depth: str = "basic"
+    crossref_enabled: bool = True
+    crossref_base_url: str = "https://api.crossref.org"
+    crossref_mailto: str = ""
 
     # Agent skill evolution
     agent_skill_enabled: bool = True

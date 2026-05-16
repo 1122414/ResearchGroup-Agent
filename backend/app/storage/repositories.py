@@ -373,6 +373,9 @@ class RunRepository:
         conn.execute("DELETE FROM run_events WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM llm_usage WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM memory_records WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM evidence_links WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM evidence_assessments WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM evidence_excerpts WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM evidence_claims WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM evidence_sources WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM review_decisions WHERE run_id = ?", (run_id,))
@@ -947,14 +950,120 @@ class EvidenceRepository:
         conn.close()
 
     @staticmethod
+    def insert_excerpt(excerpt: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO evidence_excerpts (
+                id, run_id, source_id, excerpt, locator, excerpt_type, captured_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                excerpt["id"],
+                excerpt["run_id"],
+                excerpt["source_id"],
+                excerpt["excerpt"],
+                excerpt.get("locator", ""),
+                excerpt.get("excerpt_type", "summary"),
+                excerpt["captured_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_assessment(assessment: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO evidence_assessments (
+                id, run_id, source_id, excerpt_id, relevance_score, credibility_score,
+                freshness_score, conflict_score, overall_score, is_primary,
+                is_peer_reviewed, notes, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                assessment["id"],
+                assessment["run_id"],
+                assessment["source_id"],
+                assessment.get("excerpt_id"),
+                assessment.get("relevance_score", 0),
+                assessment.get("credibility_score", 0),
+                assessment.get("freshness_score", 0),
+                assessment.get("conflict_score", 0),
+                assessment.get("overall_score", 0),
+                int(assessment.get("is_primary", False)),
+                int(assessment.get("is_peer_reviewed", False)),
+                assessment.get("notes", ""),
+                assessment["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_link(link: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO evidence_links (
+                id, run_id, claim_id, source_id, excerpt_id, relation_type,
+                confidence, rationale, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                link["id"],
+                link["run_id"],
+                link["claim_id"],
+                link["source_id"],
+                link.get("excerpt_id"),
+                link.get("relation_type", "supports"),
+                link.get("confidence", 0),
+                link.get("rationale", ""),
+                link["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_source(run_id: str, source_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT * FROM evidence_sources WHERE run_id = ? AND id = ?",
+            (run_id, source_id),
+        ).fetchone()
+        conn.close()
+        return _deserialize_evidence_source(row) if row else None
+
+    @staticmethod
+    def get_excerpt(run_id: str, excerpt_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT * FROM evidence_excerpts WHERE run_id = ? AND id = ?",
+            (run_id, excerpt_id),
+        ).fetchone()
+        conn.close()
+        return _deserialize_evidence_excerpt(row) if row else None
+
+    @staticmethod
     def get_by_run(run_id: str) -> dict:
         conn = get_connection()
         sources = conn.execute("SELECT * FROM evidence_sources WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
         claims = conn.execute("SELECT * FROM evidence_claims WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        excerpts = conn.execute("SELECT * FROM evidence_excerpts WHERE run_id = ? ORDER BY captured_at", (run_id,)).fetchall()
+        assessments = conn.execute("SELECT * FROM evidence_assessments WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        links = conn.execute("SELECT * FROM evidence_links WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
         conn.close()
         return {
             "sources": [_deserialize_evidence_source(row) for row in sources],
             "claims": [_deserialize_evidence_claim(row) for row in claims],
+            "excerpts": [_deserialize_evidence_excerpt(row) for row in excerpts],
+            "assessments": [_deserialize_evidence_assessment(row) for row in assessments],
+            "links": [_deserialize_evidence_link(row) for row in links],
         }
 
 
@@ -1184,6 +1293,31 @@ class ResearchClaimRepository:
         rows = conn.execute("SELECT * FROM research_claims WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
         conn.close()
         return [_deserialize_research_claim(row) for row in rows]
+
+    @staticmethod
+    def get_by_id(claim_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM research_claims WHERE id = ?", (claim_id,)).fetchone()
+        conn.close()
+        return _deserialize_research_claim(row) if row else None
+
+    @staticmethod
+    def update(claim_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("statement", "status", "confidence", "updated_at"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        if "evidence_ids" in updates:
+            assignments.append("evidence_ids = ?")
+            params.append(json.dumps(updates["evidence_ids"], ensure_ascii=False))
+        if assignments:
+            params.append(claim_id)
+            conn.execute(f"UPDATE research_claims SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
 
 
 class ResearchDecisionRepository:
@@ -1511,6 +1645,50 @@ def _deserialize_evidence_claim(row) -> dict:
         "claim": row["claim"],
         "method": row["method"],
         "relation_type": row["relation_type"],
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_evidence_excerpt(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "source_id": row["source_id"],
+        "excerpt": row["excerpt"],
+        "locator": row["locator"],
+        "excerpt_type": row["excerpt_type"],
+        "captured_at": row["captured_at"],
+    }
+
+
+def _deserialize_evidence_assessment(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "source_id": row["source_id"],
+        "excerpt_id": row["excerpt_id"],
+        "relevance_score": row["relevance_score"],
+        "credibility_score": row["credibility_score"],
+        "freshness_score": row["freshness_score"],
+        "conflict_score": row["conflict_score"],
+        "overall_score": row["overall_score"],
+        "is_primary": bool(row["is_primary"]),
+        "is_peer_reviewed": bool(row["is_peer_reviewed"]),
+        "notes": row["notes"],
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_evidence_link(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "claim_id": row["claim_id"],
+        "source_id": row["source_id"],
+        "excerpt_id": row["excerpt_id"],
+        "relation_type": row["relation_type"],
+        "confidence": row["confidence"],
+        "rationale": row["rationale"],
         "created_at": row["created_at"],
     }
 

@@ -2,13 +2,17 @@ import type {
   AgentSkill,
   ApprovalRequest,
   DashboardOverview,
+  EvidenceAssessment,
   EvidenceClaim,
+  EvidenceExcerpt,
+  EvidenceLink,
   EvidenceSource,
   ExperimentPlan,
   GraduateAgent,
   LLMUsage,
   MemoryRecord,
   Output,
+  ResearchState,
   ReviewDecision,
   Run,
   RunEvent,
@@ -178,7 +182,15 @@ export const api = {
     fetchApi<{ summary: RunSummary["usage"]; items: LLMUsage[] }>(`/runs/${id}/usage`),
   getRunGraph: (id: string) => fetchApi<TaskGraph>(`/runs/${id}/graph`),
   getRunMemory: (id: string) => fetchApi<{ items: MemoryRecord[] }>(`/runs/${id}/memory`),
-  getRunEvidence: (id: string) => fetchApi<{ sources: EvidenceSource[]; claims: EvidenceClaim[] }>(`/runs/${id}/evidence`),
+  getRunEvidence: (id: string) =>
+    fetchApi<{
+      sources: EvidenceSource[]
+      claims: EvidenceClaim[]
+      excerpts: EvidenceExcerpt[]
+      assessments: EvidenceAssessment[]
+      links: EvidenceLink[]
+    }>(`/runs/${id}/evidence`),
+  getRunResearchState: (id: string) => fetchApi<ResearchState>(`/runs/${id}/research-state`),
   createRunEvidenceSource: (id: string, body: Partial<EvidenceSource>) =>
     fetchApi<{ source: EvidenceSource }>(`/runs/${id}/evidence/sources`, {
       method: "POST",

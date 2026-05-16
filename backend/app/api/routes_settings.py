@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 READONLY_FIELDS = {
     "has_llm_api_key",
     "llm_api_key_masked",
+    "has_tavily_api_key",
 }
 
 ALLOWED_FIELDS = {
@@ -53,6 +54,23 @@ ALLOWED_FIELDS = {
     "report_evidence_paper_limit",
     "run_artifact_title_max_length",
     "run_artifact_dedupe_limit",
+    "evidence_provider_mode",
+    "evidence_remote_search_enabled",
+    "evidence_search_max_results",
+    "evidence_excerpt_max_chars",
+    "evidence_stale_after_years",
+    "evidence_primary_source_bonus",
+    "evidence_peer_review_bonus",
+    "evidence_link_support_weight",
+    "evidence_link_oppose_weight",
+    "claim_support_threshold",
+    "claim_conflict_threshold",
+    "tavily_api_key",
+    "tavily_base_url",
+    "tavily_search_depth",
+    "crossref_enabled",
+    "crossref_base_url",
+    "crossref_mailto",
     "agent_skill_enabled",
     "skill_auto_capture_enabled",
     "skill_default_status",
@@ -139,6 +157,24 @@ async def get_settings():
         "report_evidence_paper_limit": settings.report_evidence_paper_limit,
         "run_artifact_title_max_length": settings.run_artifact_title_max_length,
         "run_artifact_dedupe_limit": settings.run_artifact_dedupe_limit,
+        "evidence_provider_mode": settings.evidence_provider_mode,
+        "evidence_remote_search_enabled": settings.evidence_remote_search_enabled,
+        "evidence_search_max_results": settings.evidence_search_max_results,
+        "evidence_excerpt_max_chars": settings.evidence_excerpt_max_chars,
+        "evidence_stale_after_years": settings.evidence_stale_after_years,
+        "evidence_primary_source_bonus": settings.evidence_primary_source_bonus,
+        "evidence_peer_review_bonus": settings.evidence_peer_review_bonus,
+        "evidence_link_support_weight": settings.evidence_link_support_weight,
+        "evidence_link_oppose_weight": settings.evidence_link_oppose_weight,
+        "claim_support_threshold": settings.claim_support_threshold,
+        "claim_conflict_threshold": settings.claim_conflict_threshold,
+        "tavily_api_key": "",
+        "has_tavily_api_key": bool(settings.tavily_api_key),
+        "tavily_base_url": settings.tavily_base_url,
+        "tavily_search_depth": settings.tavily_search_depth,
+        "crossref_enabled": settings.crossref_enabled,
+        "crossref_base_url": settings.crossref_base_url,
+        "crossref_mailto": settings.crossref_mailto,
         "agent_skill_enabled": settings.agent_skill_enabled,
         "skill_auto_capture_enabled": settings.skill_auto_capture_enabled,
         "skill_default_status": settings.skill_default_status,
@@ -181,7 +217,7 @@ async def update_settings(body: dict):
     for key, raw_value in body.items():
         if key in READONLY_FIELDS or key not in ALLOWED_FIELDS:
             continue
-        if key == "llm_api_key" and not str(raw_value or "").strip():
+        if key in {"llm_api_key", "tavily_api_key"} and not str(raw_value or "").strip():
             continue
         value = _coerce_value(key, raw_value)
         setattr(settings, key, value)
@@ -190,6 +226,9 @@ async def update_settings(body: dict):
     if body.get("clear_llm_api_key"):
         settings.llm_api_key = ""
         updated["llm_api_key"] = ""
+    if body.get("clear_tavily_api_key"):
+        settings.tavily_api_key = ""
+        updated["tavily_api_key"] = ""
 
     if updated:
         try:
@@ -203,6 +242,9 @@ async def update_settings(body: dict):
         safe_updated["llm_api_key"] = ""
         safe_updated["has_llm_api_key"] = bool(settings.llm_api_key)
         safe_updated["llm_api_key_masked"] = _mask_secret(settings.llm_api_key)
+    if "tavily_api_key" in safe_updated:
+        safe_updated["tavily_api_key"] = ""
+        safe_updated["has_tavily_api_key"] = bool(settings.tavily_api_key)
 
     logger.info("[API] update_settings | updated=%s", _safe_log_settings(updated))
     return {"updated": safe_updated, "message": "配置已保存到 .env，重启服务后对启动参数完全生效。"}

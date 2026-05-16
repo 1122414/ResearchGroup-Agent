@@ -305,6 +305,64 @@ export interface EvidenceClaim {
   created_at: string
 }
 
+export interface EvidenceExcerpt {
+  id: string
+  run_id: string
+  source_id: string
+  excerpt: string
+  locator: string
+  excerpt_type: string
+  captured_at: string
+}
+
+export interface EvidenceAssessment {
+  id: string
+  run_id: string
+  source_id: string
+  excerpt_id: string | null
+  relevance_score: number
+  credibility_score: number
+  freshness_score: number
+  conflict_score: number
+  overall_score: number
+  is_primary: boolean
+  is_peer_reviewed: boolean
+  notes: string
+  created_at: string
+}
+
+export interface EvidenceLink {
+  id: string
+  run_id: string
+  claim_id: string
+  source_id: string
+  excerpt_id: string | null
+  relation_type: "supports" | "opposes" | "context"
+  confidence: number
+  rationale: string
+  created_at: string
+}
+
+export interface ResearchClaim {
+  id: string
+  run_id: string
+  hypothesis_id: string | null
+  statement: string
+  status: "draft" | "supported" | "contested" | "retracted"
+  evidence_ids: string[]
+  confidence: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ResearchState {
+  brief: Record<string, unknown> | null
+  hypotheses: Record<string, unknown>[]
+  claims: ResearchClaim[]
+  decisions: Record<string, unknown>[]
+  uncertainties: Record<string, unknown>[]
+}
+
 export interface ReviewDecision {
   id: string
   run_id: string
@@ -325,6 +383,7 @@ export interface DashboardOverview {
   failed_or_retried: RecoveryAction[]
   evidence_coverage: number
   experiment_completion: number
+  research_state?: Record<string, unknown> | null
   graph?: TaskGraph
 }
 
