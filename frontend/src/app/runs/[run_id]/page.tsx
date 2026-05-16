@@ -19,9 +19,13 @@ import {
   type EvidenceExcerpt,
   type EvidenceLink,
   type EvidenceSource,
+  type ExperimentFinding,
+  type ExperimentProtocol,
+  type ExperimentResultRecord,
   type LLMUsage,
   type MemoryRecord,
   type ResearchClaim,
+  type ResearchLoopSnapshot,
   type ReviewDecision,
   type RunEvent,
   type RunSummary,
@@ -53,16 +57,35 @@ export default function RunDetailPage() {
   const [excerpts, setExcerpts] = useState<EvidenceExcerpt[]>([])
   const [assessments, setAssessments] = useState<EvidenceAssessment[]>([])
   const [links, setLinks] = useState<EvidenceLink[]>([])
+  const [protocols, setProtocols] = useState<ExperimentProtocol[]>([])
+  const [experimentResults, setExperimentResults] = useState<ExperimentResultRecord[]>([])
+  const [experimentFindings, setExperimentFindings] = useState<ExperimentFinding[]>([])
+  const [loopSnapshot, setLoopSnapshot] = useState<ResearchLoopSnapshot | null>(null)
   const [reviews, setReviews] = useState<ReviewDecision[]>([])
   const [attempts, setAttempts] = useState<TaskAttempt[]>([])
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
-  const [view, setView] = useState<"manage" | "research" | "audit">("manage")
+  const [view, setView] = useState<"overview" | "workbench" | "evidence" | "audit">("overview")
   const [selectedEventIndex, setSelectedEventIndex] = useState(0)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState(false)
 
   const refresh = useCallback(async () => {
-    const [summaryData, eventsData, usageData, graphData, memoryData, evidenceData, researchStateData, reviewData, attemptData, approvalData] = await Promise.all([
+    const [
+      summaryData,
+      eventsData,
+      usageData,
+      graphData,
+      memoryData,
+      evidenceData,
+      researchStateData,
+      researchLoopData,
+      protocolData,
+      experimentResultData,
+      experimentFindingData,
+      reviewData,
+      attemptData,
+      approvalData,
+    ] = await Promise.all([
       api.getRunSummary(runId),
       api.getRunEvents(runId, 200),
       api.getRunUsage(runId),
@@ -70,6 +93,10 @@ export default function RunDetailPage() {
       api.getRunMemory(runId),
       api.getRunEvidence(runId),
       api.getRunResearchState(runId),
+      api.getRunResearchLoop(runId),
+      api.getExperimentProtocols(runId),
+      api.getExperimentResults(runId),
+      api.getExperimentFindings(runId),
       api.getRunReviews(runId),
       api.getRunAttempts(runId),
       api.getRunApprovals(runId),
@@ -85,6 +112,10 @@ export default function RunDetailPage() {
     setExcerpts(evidenceData.excerpts)
     setAssessments(evidenceData.assessments)
     setLinks(evidenceData.links)
+    setLoopSnapshot(researchLoopData)
+    setProtocols(protocolData.protocols)
+    setExperimentResults(experimentResultData.results)
+    setExperimentFindings(experimentFindingData.findings)
     setReviews(reviewData.items)
     setAttempts(attemptData.items)
     setApprovals(approvalData.items)
@@ -190,8 +221,9 @@ export default function RunDetailPage() {
 
       <div className="inline-flex w-fit rounded-xl border border-[var(--rg-hairline)] bg-white p-1">
         {[
-          { key: "manage", label: "管理视图" },
-          { key: "research", label: "研究视图" },
+          { key: "overview", label: "Overview" },
+          { key: "workbench", label: "Workbench" },
+          { key: "evidence", label: "Evidence & Report" },
           { key: "audit", label: "审计视图" },
         ].map((item) => (
           <button
@@ -206,17 +238,27 @@ export default function RunDetailPage() {
         ))}
       </div>
 
-      {view === "manage" && (
+      {view === "overview" && (
+        <OverviewPanel
+          summary={summary}
+          researchClaims={researchClaims}
+          loopSnapshot={loopSnapshot}
+          approvals={approvals}
+        />
+      )}
+
+      {view === "workbench" && (
         <>
           <TaskGraphPanel graph={graph} />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <TaskStatusPanel summary={summary} agentMap={agentMap} />
             <AttemptPanel attempts={attempts} />
           </div>
+          <ExperimentProtocolPanel protocols={protocols} results={experimentResults} />
         </>
       )}
 
-      {view === "research" && (
+      {view === "evidence" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <EvidenceWorkbenchPanel
             sources={sources}
@@ -226,6 +268,7 @@ export default function RunDetailPage() {
             assessments={assessments}
             links={links}
           />
+          <ExperimentFindingPanel findings={experimentFindings} results={experimentResults} />
           <MemoryPanel items={memory} />
           <ReviewPanel items={reviews} />
         </div>
@@ -297,6 +340,132 @@ function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResol
             </div>
           </div>
         ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function OverviewPanel({
+  summary,
+  researchClaims,
+  loopSnapshot,
+  approvals,
+}: {
+  summary: RunSummary
+  researchClaims: ResearchClaim[]
+  loopSnapshot: ResearchLoopSnapshot | null
+  approvals: ApprovalRequest[]
+}) {
+  const leadingClaim = researchClaims
+    .slice()
+    .sort((a, b) => b.confidence - a.confidence)[0]
+  const pendingApproval = approvals.find((item) => item.status === "pending")
+  const nextGap = loopSnapshot?.gaps[0]
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <Card className="surface-card">
+        <CardHeader>
+          <CardTitle className="text-base">当前研究判断</CardTitle>
+          <CardDescription>{summary.run.research_goal}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Metric label="当前阶段" value={loopSnapshot?.phase || summary.run.current_step || "待评估"} />
+          <div className="data-row p-3 text-sm">
+            <div className="text-xs text-[var(--rg-muted)]">关键结论</div>
+            <div className="mt-1 font-medium">{leadingClaim?.statement || "尚未形成关键结论"}</div>
+            <div className="mt-2 text-xs text-[var(--rg-muted)]">
+              状态：{leadingClaim ? RESEARCH_CLAIM_STATUS_LABELS[leadingClaim.status] || leadingClaim.status : "待生成"}
+              {leadingClaim ? ` · 置信度 ${Math.round(leadingClaim.confidence * 100)}%` : ""}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="surface-card">
+        <CardHeader>
+          <CardTitle className="text-base">下一步与用户介入</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div className="data-row p-3">
+            <div className="text-xs text-[var(--rg-muted)]">最大不确定性 / 下一步</div>
+            <div className="mt-1 font-medium">{nextGap?.reason || loopSnapshot?.stop_reason || "当前没有新的显式缺口"}</div>
+          </div>
+          <div className="data-row p-3">
+            <div className="text-xs text-[var(--rg-muted)]">需要你确认</div>
+            <div className="mt-1 font-medium">{pendingApproval?.title || "暂无待确认事项"}</div>
+            {pendingApproval && <div className="mt-2 text-xs text-[var(--rg-muted)]">{pendingApproval.message}</div>}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function ExperimentProtocolPanel({
+  protocols,
+  results,
+}: {
+  protocols: ExperimentProtocol[]
+  results: ExperimentResultRecord[]
+}) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">实验协议</CardTitle>
+        <CardDescription>从 hypothesis 显式落到协议、指标、基线与结果。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {protocols.length === 0 && <div className="text-sm text-[var(--rg-muted)]">尚未生成实验协议。</div>}
+        {protocols.map((protocol) => {
+          const relatedResults = results.filter((item) => item.protocol_id === protocol.id)
+          return (
+            <div key={protocol.id} className="data-row p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium">{protocol.title}</div>
+                <Badge variant="secondary">{protocol.status}</Badge>
+              </div>
+              <div className="mt-2 text-xs text-[var(--rg-muted)]">
+                指标：{protocol.metrics.map((item) => item.name).join(" / ")} · 基线：{protocol.baselines.map((item) => item.name).join(" / ")}
+              </div>
+              <div className="mt-2 text-xs text-[var(--rg-muted)]">
+                结果：{relatedResults[0]?.summary || "尚未执行"}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ExperimentFindingPanel({
+  findings,
+  results,
+}: {
+  findings: ExperimentFinding[]
+  results: ExperimentResultRecord[]
+}) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">实验 finding</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {findings.length === 0 && <div className="text-sm text-[var(--rg-muted)]">尚未形成实验 finding。</div>}
+        {findings.map((finding) => {
+          const result = results.find((item) => item.id === finding.result_id)
+          return (
+            <div key={finding.id} className="data-row p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">{finding.statement}</div>
+                <Badge variant="secondary">{finding.relation_type}</Badge>
+              </div>
+              <div className="mt-1 text-xs text-[var(--rg-muted)]">
+                置信度 {Math.round(finding.confidence * 100)}% · {result?.summary || "无结果摘要"}
+              </div>
+            </div>
+          )
+        })}
       </CardContent>
     </Card>
   )

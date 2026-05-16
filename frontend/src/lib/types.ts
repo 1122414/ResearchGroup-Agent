@@ -87,6 +87,73 @@ export interface ExperimentPlan {
   approved_by: string | null
 }
 
+export interface DatasetSpec {
+  name: string
+  source: string
+  path: string | null
+  description: string
+  snapshot_hash: string | null
+}
+
+export interface MetricSpec {
+  name: string
+  description: string
+  direction: "maximize" | "minimize"
+}
+
+export interface BaselineSpec {
+  name: string
+  description: string
+}
+
+export interface ExperimentProtocol {
+  id: string
+  run_id: string
+  hypothesis_id: string
+  task_id: string | null
+  title: string
+  research_question: string
+  independent_variables: string[]
+  dependent_variables: string[]
+  datasets: DatasetSpec[]
+  metrics: MetricSpec[]
+  baselines: BaselineSpec[]
+  stopping_conditions: string[]
+  expected_risks: string[]
+  status: "draft" | "ready" | "running" | "completed" | "failed"
+  created_at: string
+  updated_at: string
+}
+
+export interface ExperimentResultRecord {
+  id: string
+  experiment_run_id: string
+  protocol_id: string
+  run_id: string
+  status: string
+  summary: string
+  metrics: Record<string, unknown>
+  exit_code: number | null
+  stdout: string
+  stderr: string
+  artifacts: string[]
+  created_at: string
+}
+
+export interface ExperimentFinding {
+  id: string
+  protocol_id: string
+  experiment_run_id: string
+  result_id: string
+  run_id: string
+  hypothesis_id: string
+  claim_id: string | null
+  relation_type: "supports" | "weakens" | "rejects" | "inconclusive"
+  statement: string
+  confidence: number
+  created_at: string
+}
+
 export interface Task {
   id: string
   title: string
@@ -361,6 +428,14 @@ export interface ResearchState {
   claims: ResearchClaim[]
   decisions: Record<string, unknown>[]
   uncertainties: Record<string, unknown>[]
+}
+
+export interface ResearchLoopSnapshot {
+  phase: "framing" | "evidence_gathering" | "hypothesis_testing" | "synthesis" | "revision" | "ready_to_report" | string
+  gaps: { kind: string; reason: string; task_type: string }[]
+  loop_rounds: number
+  can_auto_continue: boolean
+  stop_reason: string
 }
 
 export interface ReviewDecision {

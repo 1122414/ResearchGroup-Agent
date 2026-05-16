@@ -8,11 +8,15 @@ import type {
   EvidenceLink,
   EvidenceSource,
   ExperimentPlan,
+  ExperimentProtocol,
+  ExperimentResultRecord,
+  ExperimentFinding,
   GraduateAgent,
   LLMUsage,
   MemoryRecord,
   Output,
   ResearchState,
+  ResearchLoopSnapshot,
   ReviewDecision,
   Run,
   RunEvent,
@@ -91,6 +95,9 @@ export const api = {
     const suffix = query.toString() ? `?${query.toString()}` : ""
     return fetchApi<{ plans: ExperimentPlan[] }>(`/experiments/plans${suffix}`)
   },
+  getExperimentProtocols: (runId: string) => fetchApi<{ protocols: ExperimentProtocol[] }>(`/experiments/protocols?run_id=${runId}`),
+  getExperimentResults: (runId: string) => fetchApi<{ results: ExperimentResultRecord[] }>(`/experiments/results?run_id=${runId}`),
+  getExperimentFindings: (runId: string) => fetchApi<{ findings: ExperimentFinding[] }>(`/experiments/findings?run_id=${runId}`),
   createExperimentPlan: (body: Partial<ExperimentPlan>) =>
     fetchApi<{ plan: ExperimentPlan }>("/experiments/plans", {
       method: "POST",
@@ -191,6 +198,7 @@ export const api = {
       links: EvidenceLink[]
     }>(`/runs/${id}/evidence`),
   getRunResearchState: (id: string) => fetchApi<ResearchState>(`/runs/${id}/research-state`),
+  getRunResearchLoop: (id: string) => fetchApi<ResearchLoopSnapshot>(`/runs/${id}/research-loop`),
   createRunEvidenceSource: (id: string, body: Partial<EvidenceSource>) =>
     fetchApi<{ source: EvidenceSource }>(`/runs/${id}/evidence/sources`, {
       method: "POST",
