@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { api } from "@/lib/api"
 import { frontendLogger } from "@/lib/logger"
 import { runDisplayName } from "@/lib/run-display"
-import { RUN_STATUS_LABELS, type Run } from "@/lib/types"
+import { RUN_STATUS_LABELS, type DashboardOverview, type Run } from "@/lib/types"
 
 type UploadAttachment = {
   name: string
@@ -50,6 +50,7 @@ export default function HomePage() {
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [mockMode, setMockMode] = useState<boolean | null>(null)
+  const [overview, setOverview] = useState<DashboardOverview | null>(null)
 
   const exampleGoal = "调研 ima 和 Obsidian 的区别、作用和适用场景，并输出一份可直接阅读的最终研究报告。"
 
@@ -59,6 +60,7 @@ export default function HomePage() {
     frontendLogger.info("HomePage mounted")
     api.health().then((data) => setMockMode(data.mock_mode)).catch(() => setMockMode(null))
     refreshRuns()
+    api.getDashboardOverview().then(setOverview).catch(() => setOverview(null))
   }, [])
 
   const handleFiles = async (files: FileList | null) => {
@@ -171,6 +173,43 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="surface-card p-4">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">Research cockpit</div>
+            <h2 className="mt-2 text-xl font-semibold text-[var(--rg-ink)]">研究驾驶舱</h2>
+          </div>
+          <div className="text-sm text-[var(--rg-muted)]">
+            {overview?.run ? `${runDisplayName(overview.run)} · ${RUN_STATUS_LABELS[overview.run.status] || overview.run.status}` : "暂无运行"}
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <HeroMetric label="关键路径" value={String(overview?.critical_path.length || 0)} />
+          <HeroMetric label="阻塞任务" value={String(overview?.blocked_tasks.length || 0)} />
+          <HeroMetric label="待确认" value={String(overview?.pending_approvals.length || 0)} />
+          <HeroMetric label="失败/重试" value={String(overview?.failed_or_retried.length || 0)} />
+          <HeroMetric label="证据完整度" value={`${Math.round((overview?.evidence_coverage || 0) * 100)}%`} />
+          <HeroMetric label="实验完成度" value={`${Math.round((overview?.experiment_completion || 0) * 100)}%`} />
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          <CockpitList
+            title="当前阻塞"
+            items={(overview?.blocked_tasks || []).map((task) => task.title)}
+            empty="暂无阻塞任务"
+          />
+          <CockpitList
+            title="待确认事项"
+            items={(overview?.pending_approvals || []).map((item) => item.title)}
+            empty="暂无待确认事项"
+          />
+          <CockpitList
+            title="关键路径"
+            items={(overview?.critical_path || []).map((task) => task.title)}
+            empty="暂无关键路径"
+          />
+        </div>
+      </section>
+
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
         <Card className="surface-card">
           <CardHeader>
@@ -276,6 +315,22 @@ function HeroMetric({ label, value }: { label: string; value: string }) {
     <div className="metric-card">
       <div className="text-xs text-[var(--rg-muted)]">{label}</div>
       <div className="mt-1 text-xl font-semibold text-[var(--rg-ink)]">{value}</div>
+    </div>
+  )
+}
+
+function CockpitList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return (
+    <div className="soft-card p-3">
+      <div className="text-sm font-semibold text-[var(--rg-ink)]">{title}</div>
+      <div className="mt-2 space-y-1 text-sm text-[var(--rg-body)]">
+        {items.length === 0 && <div className="text-[var(--rg-muted)]">{empty}</div>}
+        {items.slice(0, 4).map((item) => (
+          <div key={item} className="truncate">
+            {item}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

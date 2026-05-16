@@ -112,8 +112,27 @@ export interface Task {
     primary_skill_score?: number
   }
   subagent_triggered: boolean
+  blocked_reason: string | null
+  parallelizable: boolean
+  is_critical_path: boolean
+  attempt_count: number
+  last_checkpoint: string | null
+  revision_of_task_id: string | null
   created_at: string
   updated_at: string
+}
+
+export interface TaskCreateInput {
+  run_id: string
+  title: string
+  description?: string
+  task_type: string
+  required_skills?: Partial<SkillSet>
+  priority?: number
+  complexity?: number
+  decomposability?: number
+  parallelizable?: boolean
+  depends_on_task_ids?: string[]
 }
 
 export interface Run {
@@ -195,6 +214,120 @@ export interface RunSummary {
   agents: GraduateAgent[]
 }
 
+export interface TaskDependency {
+  task_id: string
+  depends_on_task_id: string
+  dependency_type: "hard"
+}
+
+export interface TaskGraph {
+  nodes: Task[]
+  edges: TaskDependency[]
+  ready_task_ids: string[]
+  critical_path_task_ids: string[]
+  adjacency: Record<string, string[]>
+}
+
+export interface TaskAttempt {
+  id: string
+  run_id: string
+  task_id: string
+  attempt_number: number
+  status: "running" | "completed" | "failed"
+  failure_type: string | null
+  failure_message: string | null
+  checkpoint: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export interface RecoveryAction {
+  id: string
+  run_id: string
+  task_id: string
+  action_type: "retry" | "resume_checkpoint" | "rerun_branch"
+  status: "requested" | "completed"
+  reason: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface ApprovalRequest {
+  id: string
+  run_id: string
+  task_id: string | null
+  request_type: "experiment_execute" | "revision_required" | "report_publish"
+  status: "pending" | "approved" | "rejected"
+  title: string
+  message: string
+  payload: Record<string, unknown>
+  created_at: string
+  resolved_at: string | null
+  resolved_by: string | null
+}
+
+export interface MemoryRecord {
+  id: string
+  run_id: string
+  agent_id: string | null
+  scope: "project" | "agent"
+  category: string
+  summary: string
+  payload: Record<string, unknown>
+  source_task_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EvidenceSource {
+  id: string
+  run_id: string
+  task_id: string | null
+  title: string
+  authors: string
+  year: number | null
+  venue: string
+  doi: string | null
+  url: string | null
+  source_type: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface EvidenceClaim {
+  id: string
+  run_id: string
+  task_id: string | null
+  source_id: string
+  claim: string
+  method: string
+  relation_type: string
+  created_at: string
+}
+
+export interface ReviewDecision {
+  id: string
+  run_id: string
+  task_id: string
+  rubric: { dimensions?: Record<string, number>; threshold?: number }
+  scores: Record<string, number>
+  approved: boolean
+  feedback: string
+  requires_revision: boolean
+  created_at: string
+}
+
+export interface DashboardOverview {
+  run: Run | null
+  critical_path: Task[]
+  blocked_tasks: Task[]
+  pending_approvals: ApprovalRequest[]
+  failed_or_retried: RecoveryAction[]
+  evidence_coverage: number
+  experiment_completion: number
+  graph?: TaskGraph
+}
+
 export interface SubAgent {
   id: string
   parent_agent: string
@@ -211,6 +344,7 @@ export const TASK_STATUS_LABELS: Record<string, string> = {
   running: "执行中",
   waiting_collab: "等待协作",
   waiting_subagent: "等待 SubAgent",
+  blocked: "被阻塞",
   waiting_review: "等待导师审核",
   need_revision: "需要修改",
   completed: "已完成",
@@ -234,6 +368,7 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   scheduling: "正在调度分配",
   executing: "正在执行任务",
   reviewing: "导师审核中",
+  waiting_confirmation: "等待确认",
   reporting: "正在生成报告",
   cancelling: "正在停止",
   cancelled: "已停止",

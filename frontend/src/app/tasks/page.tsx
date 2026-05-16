@@ -2,16 +2,16 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Archive, CheckCircle2, ChevronDown, CircleDashed, LayoutDashboard, RotateCcw } from "lucide-react"
+import { Archive, CheckCircle2, ChevronDown, CircleDashed, LayoutDashboard, Plus, RotateCcw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 import { runDisplayName } from "@/lib/run-display"
-import { SKILL_NAMES, TASK_STATUS_LABELS, TASK_TYPE_LABELS, type GraduateAgent, type Run, type Task } from "@/lib/types"
+import { SKILL_NAMES, TASK_STATUS_LABELS, TASK_TYPE_LABELS, type GraduateAgent, type Run, type Task, type TaskGraph } from "@/lib/types"
 
-const ACTIVE_COLUMNS = ["pending", "assigned", "running", "waiting_collab", "waiting_subagent", "waiting_review", "need_revision"]
+const ACTIVE_COLUMNS = ["pending", "assigned", "blocked", "running", "waiting_collab", "waiting_subagent", "waiting_review", "need_revision"]
 const FINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"])
 
 const STATUS_STYLES: Record<string, string> = {
@@ -20,6 +20,7 @@ const STATUS_STYLES: Record<string, string> = {
   running: "border-[#cfd3ff] bg-[#eef0ff] text-[#3b4395]",
   waiting_collab: "border-[#e6dfd8] bg-[#fff8ed] text-[#875b24]",
   waiting_subagent: "border-[#ead1c6] bg-[#fff3ef] text-[#964b36]",
+  blocked: "border-[#ead1c6] bg-[#fff3ef] text-[#964b36]",
   waiting_review: "border-[#f1d3a3] bg-[#fff6e8] text-[#8b5a14]",
   need_revision: "border-[#ecc6c6] bg-[#fff1f1] text-[#9d2d2d]",
   completed: "border-[#c8e4ce] bg-[#f0fbf2] text-[#2f7341]",
@@ -45,7 +46,14 @@ function TasksContent() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [agents, setAgents] = useState<GraduateAgent[]>([])
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [graph, setGraph] = useState<TaskGraph | null>(null)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const [draftTask, setDraftTask] = useState({
+    title: "",
+    description: "",
+    task_type: "literature_survey",
+  })
 
   useEffect(() => {
     Promise.all([api.getRuns(), api.getAgents()]).then(([{ runs }, { agents }]) => {
@@ -61,7 +69,10 @@ function TasksContent() {
       queueMicrotask(() => setTasks([]))
       return
     }
-    api.getTasks(selectedRunId).then(({ tasks }) => setTasks(tasks))
+    Promise.all([api.getTasks(selectedRunId), api.getRunGraph(selectedRunId)]).then(([taskData, graphData]) => {
+      setTasks(taskData.tasks)
+      setGraph(graphData)
+    })
   }, [selectedRunId])
 
   const selectedRun = runs.find((run) => run.id === selectedRunId)
@@ -74,6 +85,32 @@ function TasksContent() {
     return isFinalRun ? tasks : tasks.filter((task) => task.status === "completed")
   }, [isFinalRun, tasks])
   const allDone = tasks.length > 0 && (isFinalRun || boardTasks.length === 0)
+
+  const refreshTasks = async () => {
+    if (!selectedRunId) return
+    const [taskData, graphData] = await Promise.all([api.getTasks(selectedRunId), api.getRunGraph(selectedRunId)])
+    setTasks(taskData.tasks)
+    setGraph(graphData)
+  }
+
+  const handleCreateTask = async () => {
+    if (!selectedRunId || !draftTask.title.trim()) return
+    setCreatingTask(true)
+    try {
+      const result = await api.createTask({
+        run_id: selectedRunId,
+        title: draftTask.title.trim(),
+        description: draftTask.description.trim(),
+        task_type: draftTask.task_type,
+      })
+      setTasks(result.graph.nodes)
+      setGraph(result.graph)
+      setSelectedTask(result.task)
+      setDraftTask({ title: "", description: "", task_type: "literature_survey" })
+    } finally {
+      setCreatingTask(false)
+    }
+  }
 
   const counts = useMemo(() => {
     return boardTasks.reduce<Record<string, number>>((acc, task) => {
@@ -110,7 +147,17 @@ function TasksContent() {
                 </option>
               ))}
             </select>
-            <Button variant="outline" size="sm" onClick={() => selectedRunId && api.getTasks(selectedRunId).then(({ tasks }) => setTasks(tasks))}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                selectedRunId &&
+                Promise.all([api.getTasks(selectedRunId), api.getRunGraph(selectedRunId)]).then(([taskData, graphData]) => {
+                  setTasks(taskData.tasks)
+                  setGraph(graphData)
+                })
+              }
+            >
               <RotateCcw className="size-3.5" />
               刷新
             </Button>
@@ -138,7 +185,42 @@ function TasksContent() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+      <Card className="surface-card">
+        <CardHeader>
+          <CardTitle className="text-base">补充任务</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-[1.1fr_0.9fr_auto]">
+          <input
+            value={draftTask.title}
+            onChange={(event) => setDraftTask((current) => ({ ...current, title: event.target.value }))}
+            placeholder="任务标题"
+            className="control-input h-10 px-3 text-sm"
+          />
+          <select
+            value={draftTask.task_type}
+            onChange={(event) => setDraftTask((current) => ({ ...current, task_type: event.target.value }))}
+            className="control-input h-10 px-3 text-sm"
+          >
+            {Object.entries(TASK_TYPE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <Button onClick={handleCreateTask} disabled={!draftTask.title.trim() || creatingTask}>
+            <Plus className="size-4" />
+            新建
+          </Button>
+          <textarea
+            value={draftTask.description}
+            onChange={(event) => setDraftTask((current) => ({ ...current, description: event.target.value }))}
+            placeholder="补充说明"
+            className="control-input min-h-24 px-3 py-2 text-sm md:col-span-3"
+          />
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8">
         {ACTIVE_COLUMNS.map((status) => {
           const columnTasks = boardTasks.filter((task) => task.status === status)
           return (
@@ -184,7 +266,21 @@ function TasksContent() {
         </section>
       )}
 
-      {selectedTask && <TaskDetailCard task={selectedTask} agentMap={agentMap} onClose={() => setSelectedTask(null)} />}
+      {selectedTask && (
+        <TaskDetailCard
+          task={selectedTask}
+          tasks={tasks}
+          graph={graph}
+          agentMap={agentMap}
+          onClose={() => setSelectedTask(null)}
+          onGraphChange={(nextGraph) => {
+            setGraph(nextGraph)
+            setTasks(nextGraph.nodes)
+            setSelectedTask(nextGraph.nodes.find((item) => item.id === selectedTask.id) || null)
+          }}
+          onRefresh={refreshTasks}
+        />
+      )}
     </div>
   )
 }
@@ -212,13 +308,30 @@ function TaskCard({ task, agentMap, onClick, compact = false }: { task: Task; ag
             {SKILL_NAMES[task.assignment_info.primary_skill] || task.assignment_info.primary_skill}
           </Badge>
         )}
+        {task.revision_of_task_id && <Badge variant="outline" className="bg-white/50 px-1.5 py-0 text-[10px]">返工</Badge>}
         {task.subagent_triggered && <Badge variant="outline" className="border-fuchsia-300 bg-white/50 px-1.5 py-0 text-[10px] text-fuchsia-700">Sub</Badge>}
       </div>
     </button>
   )
 }
 
-function TaskDetailCard({ task, agentMap, onClose }: { task: Task; agentMap: Record<string, string>; onClose: () => void }) {
+function TaskDetailCard({
+  task,
+  tasks,
+  graph,
+  agentMap,
+  onClose,
+  onGraphChange,
+  onRefresh,
+}: {
+  task: Task
+  tasks: Task[]
+  graph: TaskGraph | null
+  agentMap: Record<string, string>
+  onClose: () => void
+  onGraphChange: (graph: TaskGraph) => void
+  onRefresh: () => Promise<void>
+}) {
   const info = task.assignment_info || {}
   const topSkills = Object.entries(task.required_skills || {})
     .sort(([, a], [, b]) => (b as number) - (a as number))
@@ -260,6 +373,21 @@ function TaskDetailCard({ task, agentMap, onClose }: { task: Task; agentMap: Rec
             </div>
           </div>
         </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-2 font-semibold text-[var(--rg-ink)]">依赖关系</div>
+            <DependencyEditor task={task} tasks={tasks} graph={graph} onGraphChange={onGraphChange} />
+          </div>
+          <div>
+            <div className="mb-2 font-semibold text-[var(--rg-ink)]">执行信息</div>
+            <div className="space-y-1 text-[var(--rg-body)]">
+              <div>是否关键路径：{task.is_critical_path ? "是" : "否"}</div>
+              <div>尝试次数：{task.attempt_count}</div>
+              <div>阻塞原因：{task.blocked_reason || "无"}</div>
+            </div>
+          </div>
+        </div>
+        <RecoveryActions task={task} onRefresh={onRefresh} />
         {task.outputs?.length > 0 && (
           <div>
             <div className="mb-2 font-semibold text-[var(--rg-ink)]">任务产出</div>
@@ -270,6 +398,69 @@ function TaskDetailCard({ task, agentMap, onClose }: { task: Task; agentMap: Rec
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function RecoveryActions({ task, onRefresh }: { task: Task; onRefresh: () => Promise<void> }) {
+  const canRecover = ["failed", "need_revision", "blocked"].includes(task.status)
+  if (!canRecover) return null
+
+  const runAction = async (action: "retry" | "resume" | "branch") => {
+    if (action === "retry") await api.retryTask(task.id)
+    if (action === "resume") await api.resumeTask(task.id)
+    if (action === "branch") await api.rerunTaskBranch(task.id)
+    await onRefresh()
+  }
+
+  return (
+    <div>
+      <div className="mb-2 font-semibold text-[var(--rg-ink)]">恢复动作</div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => runAction("retry")}>
+          重试当前任务
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => runAction("resume")}>
+          从检查点恢复
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => runAction("branch")}>
+          只重跑失败分支
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function DependencyEditor({
+  task,
+  tasks,
+  graph,
+  onGraphChange,
+}: {
+  task: Task
+  tasks: Task[]
+  graph: TaskGraph | null
+  onGraphChange: (graph: TaskGraph) => void
+}) {
+  const current = new Set((graph?.edges || []).filter((edge) => edge.task_id === task.id).map((edge) => edge.depends_on_task_id))
+  const toggle = async (id: string) => {
+    const next = new Set(current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    const updated = await api.updateTaskDependencies(task.id, Array.from(next))
+    onGraphChange(updated)
+  }
+
+  return (
+    <div className="space-y-2">
+      {tasks
+        .filter((item) => item.id !== task.id)
+        .map((item) => (
+          <label key={item.id} className="flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={current.has(item.id)} onChange={() => toggle(item.id)} className="mt-1" />
+            <span className="leading-5">{item.title}</span>
+          </label>
+        ))}
+    </div>
   )
 }
 

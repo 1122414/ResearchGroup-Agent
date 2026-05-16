@@ -1,4 +1,24 @@
-import type { AgentSkill, ExperimentPlan, GraduateAgent, LLMUsage, Output, Run, RunEvent, RunSummary, SkillOwner, Task } from "./types"
+import type {
+  AgentSkill,
+  ApprovalRequest,
+  DashboardOverview,
+  EvidenceClaim,
+  EvidenceSource,
+  ExperimentPlan,
+  GraduateAgent,
+  LLMUsage,
+  MemoryRecord,
+  Output,
+  ReviewDecision,
+  Run,
+  RunEvent,
+  RunSummary,
+  SkillOwner,
+  Task,
+  TaskAttempt,
+  TaskCreateInput,
+  TaskGraph,
+} from "./types"
 import { frontendLogger } from "./logger"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api"
@@ -92,7 +112,42 @@ export const api = {
 
   getTasks: (runId?: string) =>
     fetchApi<{ tasks: Task[] }>(`/tasks${runId ? `?run_id=${runId}` : ""}`),
+  createTask: (body: TaskCreateInput) =>
+    fetchApi<{ task: Task; graph: TaskGraph }>("/tasks", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getTask: (id: string) => fetchApi<{ task: Task }>(`/tasks/${id}`),
+  updateTaskDependencies: (id: string, dependsOnTaskIds: string[]) =>
+    fetchApi<TaskGraph>(`/tasks/${id}/dependencies`, {
+      method: "PATCH",
+      body: JSON.stringify({ depends_on_task_ids: dependsOnTaskIds }),
+    }),
+  retryTask: (id: string, reason = "") =>
+    fetchApi<{ task: Task }>(`/tasks/${id}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  resumeTask: (id: string, reason = "") =>
+    fetchApi<{ task: Task }>(`/tasks/${id}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  rerunTaskBranch: (id: string, reason = "") =>
+    fetchApi<{ task: Task }>(`/tasks/${id}/rerun-branch`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  approveTask: (id: string, reason = "") =>
+    fetchApi<{ task: Task }>(`/tasks/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  requestTaskRevision: (id: string, reason = "") =>
+    fetchApi<{ task: Task; revision_task: Task; approval_request: ApprovalRequest }>(`/tasks/${id}/request-revision`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
 
   createRun: (researchGoal: string, attachments: Record<string, unknown>[] = []) =>
     fetchApi<{ run_id: string; status: string; display_name?: string; artifact_dir?: string }>("/runs", {
@@ -121,6 +176,22 @@ export const api = {
     fetchApi<{ events: RunEvent[]; next_after_id?: string }>(`/runs/${id}/events?limit=${limit}`),
   getRunUsage: (id: string) =>
     fetchApi<{ summary: RunSummary["usage"]; items: LLMUsage[] }>(`/runs/${id}/usage`),
+  getRunGraph: (id: string) => fetchApi<TaskGraph>(`/runs/${id}/graph`),
+  getRunMemory: (id: string) => fetchApi<{ items: MemoryRecord[] }>(`/runs/${id}/memory`),
+  getRunEvidence: (id: string) => fetchApi<{ sources: EvidenceSource[]; claims: EvidenceClaim[] }>(`/runs/${id}/evidence`),
+  createRunEvidenceSource: (id: string, body: Partial<EvidenceSource>) =>
+    fetchApi<{ source: EvidenceSource }>(`/runs/${id}/evidence/sources`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getRunReviews: (id: string) => fetchApi<{ items: ReviewDecision[] }>(`/runs/${id}/reviews`),
+  getRunAttempts: (id: string) => fetchApi<{ items: TaskAttempt[] }>(`/runs/${id}/attempts`),
+  getRunApprovals: (id: string) => fetchApi<{ items: ApprovalRequest[] }>(`/runs/${id}/approvals`),
+  resolveApproval: (id: string, approved: boolean) =>
+    fetchApi<{ request: ApprovalRequest }>(`/runs/approvals/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ approved }),
+    }),
 
   getOutputs: (runId?: string) =>
     fetchApi<{ outputs: Output[] }>(`/outputs${runId ? `?run_id=${runId}` : ""}`),
@@ -135,4 +206,7 @@ export const api = {
 
   getOfficeState: (runId: string) =>
     fetchApi<import("./types").OfficeState>(`/monitor/office-state?run_id=${runId}`),
+
+  getDashboardOverview: (runId?: string) =>
+    fetchApi<DashboardOverview>(`/dashboard/overview${runId ? `?run_id=${runId}` : ""}`),
 }

@@ -1,22 +1,28 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
-import { frontendLogger } from "@/lib/logger"
 import { runDisplayName } from "@/lib/run-display"
 import {
   AGENT_STATUS_LABELS,
   RUN_STATUS_LABELS,
   TASK_STATUS_LABELS,
   TASK_TYPE_LABELS,
+  type ApprovalRequest,
+  type EvidenceClaim,
+  type EvidenceSource,
   type LLMUsage,
+  type MemoryRecord,
+  type ReviewDecision,
   type RunEvent,
   type RunSummary,
+  type TaskAttempt,
+  type TaskGraph,
 } from "@/lib/types"
 
 const FINAL_STATUSES = new Set(["completed", "failed", "cancelled"])
@@ -25,69 +31,77 @@ export default function RunDetailPage() {
   const params = useParams<{ run_id: string }>()
   const router = useRouter()
   const runId = params.run_id
+  const startedRef = useRef(false)
   const [summary, setSummary] = useState<RunSummary | null>(null)
   const [events, setEvents] = useState<RunEvent[]>([])
   const [usageItems, setUsageItems] = useState<LLMUsage[]>([])
+  const [graph, setGraph] = useState<TaskGraph | null>(null)
+  const [memory, setMemory] = useState<MemoryRecord[]>([])
+  const [sources, setSources] = useState<EvidenceSource[]>([])
+  const [claims, setClaims] = useState<EvidenceClaim[]>([])
+  const [reviews, setReviews] = useState<ReviewDecision[]>([])
+  const [attempts, setAttempts] = useState<TaskAttempt[]>([])
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
+  const [view, setView] = useState<"manage" | "research" | "audit">("manage")
+  const [selectedEventIndex, setSelectedEventIndex] = useState(0)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState(false)
-  const [selectedEventIndex, setSelectedEventIndex] = useState(0)
-  const startedRef = useRef(false)
+
+  const refresh = useCallback(async () => {
+    const [summaryData, eventsData, usageData, graphData, memoryData, evidenceData, reviewData, attemptData, approvalData] = await Promise.all([
+      api.getRunSummary(runId),
+      api.getRunEvents(runId, 200),
+      api.getRunUsage(runId),
+      api.getRunGraph(runId),
+      api.getRunMemory(runId),
+      api.getRunEvidence(runId),
+      api.getRunReviews(runId),
+      api.getRunAttempts(runId),
+      api.getRunApprovals(runId),
+    ])
+    setSummary(summaryData)
+    setEvents(eventsData.events)
+    setUsageItems(usageData.items)
+    setGraph(graphData)
+    setMemory(memoryData.items)
+    setSources(evidenceData.sources)
+    setClaims(evidenceData.claims)
+    setReviews(reviewData.items)
+    setAttempts(attemptData.items)
+    setApprovals(approvalData.items)
+    setSelectedEventIndex((index) => Math.min(index, Math.max(eventsData.events.length - 1, 0)))
+  }, [runId])
 
   useEffect(() => {
-    frontendLogger.info(`RunDetailPage mounted | run_id=${runId}`)
-    frontendLogger.setRunId(runId)
     let cancelled = false
-
-    const fetchData = async () => {
+    const load = async () => {
       try {
-        const [summaryData, eventsData, usageData] = await Promise.all([
-          api.getRunSummary(runId),
-          api.getRunEvents(runId, 200),
-          api.getRunUsage(runId),
-        ])
+        await refresh()
         if (cancelled) return
-        setSummary(summaryData)
-        setEvents(eventsData.events)
-        setSelectedEventIndex((index) => Math.min(index, Math.max(eventsData.events.length - 1, 0)))
-        setUsageItems(usageData.items)
-        setError("")
-        frontendLogger.debug(`RunDetailPage data refreshed | run_id=${runId} | status=${summaryData.run.status}`)
-
-        if (summaryData.run.status === "created" && !startedRef.current) {
+        const current = await api.getRun(runId)
+        if (current.run.status === "created" && !startedRef.current) {
           startedRef.current = true
-          frontendLogger.info(`RunDetailPage auto-starting run | run_id=${runId}`)
-          api.startRun(runId).catch((err) => {
-            const msg = err instanceof Error ? err.message : "启动运行失败"
-            frontendLogger.error(`RunDetailPage auto-start failed | run_id=${runId} | error=${msg}`)
-            setError(msg)
-          })
+          await api.startRun(runId)
         }
+        setError("")
       } catch (err) {
-        if (cancelled) return
-        const msg = err instanceof Error ? err.message : "加载运行详情失败"
-        frontendLogger.error(`RunDetailPage fetch failed | run_id=${runId} | error=${msg}`)
-        setError(msg)
+        if (!cancelled) setError(err instanceof Error ? err.message : "加载失败")
       }
     }
-
-    fetchData()
+    load()
     const timer = window.setInterval(() => {
-      setSummary((prev) => {
-        if (!prev || FINAL_STATUSES.has(prev.run.status)) {
-          return prev
-        }
-        fetchData()
-        return prev
+      setSummary((current) => {
+        if (!current || FINAL_STATUSES.has(current.run.status)) return current
+        refresh().catch(() => undefined)
+        return current
       })
     }, 1500)
     return () => {
       cancelled = true
       window.clearInterval(timer)
-      frontendLogger.info(`RunDetailPage unmounted | run_id=${runId}`)
     }
-  }, [runId])
+  }, [refresh, runId])
 
-  const canCancel = summary && !FINAL_STATUSES.has(summary.run.status) && summary.run.status !== "cancelling"
   const agentMap = useMemo(
     () => Object.fromEntries((summary?.agents || []).map((agent) => [agent.id, agent.name])),
     [summary],
@@ -99,38 +113,23 @@ export default function RunDetailPage() {
 
   const handleCancel = async () => {
     if (!summary) return
-    const confirmed = window.confirm("确定要停止这个运行吗？已生成的任务、事件和产出会保留。")
-    if (!confirmed) return
-    frontendLogger.info(`RunDetailPage cancel requested | run_id=${summary.run.id}`)
     setCanceling(true)
     try {
       await api.cancelRun(summary.run.id)
-      frontendLogger.info(`RunDetailPage cancel success | run_id=${summary.run.id}`)
-      const [summaryData, eventsData, usageData] = await Promise.all([
-        api.getRunSummary(runId),
-        api.getRunEvents(runId, 200),
-        api.getRunUsage(runId),
-      ])
-      setSummary(summaryData)
-      setEvents(eventsData.events)
-      setUsageItems(usageData.items)
+      await refresh()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "停止运行失败"
-      frontendLogger.error(`RunDetailPage cancel failed | run_id=${summary.run.id} | error=${msg}`)
-      setError(msg)
+      setError(err instanceof Error ? err.message : "取消失败")
     } finally {
       setCanceling(false)
     }
   }
 
-  if (!summary) {
-    return (
-      <div className="page-stack">
-        <div className="text-sm text-[var(--rg-muted)]">正在加载运行详情...</div>
-        {error && <div className="error-banner p-3 text-sm">{error}</div>}
-      </div>
-    )
+  const handleApproval = async (request: ApprovalRequest, approved: boolean) => {
+    await api.resolveApproval(request.id, approved)
+    await refresh()
   }
+
+  if (!summary) return <div className="page-stack text-sm text-[var(--rg-muted)]">正在加载运行详情...</div>
 
   return (
     <div className="page-stack">
@@ -149,135 +148,347 @@ export default function RunDetailPage() {
               <CardDescription className="max-w-4xl leading-6">{summary.run.research_goal}</CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/tasks?run_id=${summary.run.id}`)}
-              >
+              <Button variant="outline" onClick={() => router.push(`/tasks?run_id=${summary.run.id}`)}>
                 查看任务板
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleCancel}
-                disabled={!canCancel || canceling}
-              >
-                {canceling || summary.run.status === "cancelling" ? "正在停止" : "停止运行"}
+              <Button variant="destructive" onClick={handleCancel} disabled={FINAL_STATUSES.has(summary.run.status) || canceling}>
+                {canceling ? "取消中..." : "停止运行"}
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
-          <Metric label="当前阶段" value={summary.run.current_step || "等待更新"} />
+        <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-5">
+          <Metric label="当前阶段" value={summary.run.current_step || "等待开始"} />
           <Metric label="任务总数" value={String(summary.counts.tasks_total)} />
+          <Metric label="待确认" value={String(summary.counts.pending_approvals || 0)} />
           <Metric label="累计 Token" value={String(summary.usage.total_tokens || 0)} />
           <Metric label="累计成本 USD" value={(summary.usage.total_cost_usd || 0).toFixed(6)} />
         </CardContent>
       </Card>
 
       {error && <div className="error-banner p-3 text-sm">{error}</div>}
+      <ApprovalPanel items={approvals} onResolve={handleApproval} />
 
-      <EventFlowGraph
-        events={events}
-        selectedIndex={selectedEventIndex}
-        onSelect={setSelectedEventIndex}
-        agentMap={agentMap}
-        agentRoleMap={agentRoleMap}
-      />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="surface-card lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">事件时间线</CardTitle>
-            <CardDescription>系统每个阶段发生了什么，会持续写入这里。</CardDescription>
-          </CardHeader>
-          <CardContent className="max-h-[520px] space-y-3 overflow-auto">
-            {events.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无事件。</div>}
-            {events.slice().reverse().map((event) => (
-              <div key={event.id} className="data-row p-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-medium">{event.title}</div>
-                  <Badge variant="secondary">{event.phase}</Badge>
-                </div>
-                <div className="mt-1 text-[var(--rg-body)]">{event.message}</div>
-                <div className="mt-2 text-xs text-[var(--rg-muted)]">
-                  {event.created_at}
-                  {event.agent_id ? ` | ${agentMap[event.agent_id] || event.agent_id}` : ""}
-                  {event.task_id ? ` | ${event.task_id}` : ""}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-base">成本监测</CardTitle>
-            <CardDescription>Mock 模式成本为 0，但仍会记录 token 估算。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <Metric label="LLM 调用次数" value={String(summary.usage.total_llm_calls || 0)} />
-            <Metric label="失败调用" value={String(summary.usage.failed_llm_calls || 0)} />
-            <Metric label="累计 Token" value={String(summary.usage.total_tokens || 0)} />
-            <Metric label="累计成本" value={`$${(summary.usage.total_cost_usd || 0).toFixed(6)}`} />
-            <Separator />
-            <div className="max-h-[260px] space-y-2 overflow-auto">
-              {usageItems.map((item) => (
-                <div key={item.id} className="rounded-lg bg-[var(--rg-surface-soft)] p-2 text-xs">
-                  <div className="font-medium">{item.role} · {item.model}</div>
-                  <div className="text-[var(--rg-muted)]">
-                    {item.total_tokens} tokens · ${item.cost_usd.toFixed(6)} · {item.latency_ms}ms
-                  </div>
-                </div>
-              ))}
-              {usageItems.length === 0 && <div className="text-xs text-[var(--rg-muted)]">暂无调用记录。</div>}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="inline-flex w-fit rounded-xl border border-[var(--rg-hairline)] bg-white p-1">
+        {[
+          { key: "manage", label: "管理视图" },
+          { key: "research", label: "研究视图" },
+          { key: "audit", label: "审计视图" },
+        ].map((item) => (
+          <button
+            key={item.key}
+            onClick={() => setView(item.key as typeof view)}
+            className={`rounded-lg px-3 py-1.5 text-sm transition ${
+              view === item.key ? "bg-[var(--rg-linear)] text-white" : "text-[var(--rg-body)] hover:bg-[var(--rg-surface-soft)]"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-base">任务执行表</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {summary.tasks.map((task) => (
-              <div key={task.id} className="data-row p-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-medium">{task.title}</div>
-                  <Badge variant="secondary">{TASK_STATUS_LABELS[task.status] || task.status}</Badge>
+      {view === "manage" && (
+        <>
+          <TaskGraphPanel graph={graph} />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TaskStatusPanel summary={summary} agentMap={agentMap} />
+            <AttemptPanel attempts={attempts} />
+          </div>
+        </>
+      )}
+
+      {view === "research" && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <EvidencePanel sources={sources} claims={claims} />
+          <MemoryPanel items={memory} />
+          <ReviewPanel items={reviews} />
+        </div>
+      )}
+
+      {view === "audit" && (
+        <>
+          <EventFlowGraph
+            events={events}
+            selectedIndex={selectedEventIndex}
+            onSelect={setSelectedEventIndex}
+            agentMap={agentMap}
+            agentRoleMap={agentRoleMap}
+          />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <TimelinePanel events={events} agentMap={agentMap} selectedIndex={selectedEventIndex} onSelect={setSelectedEventIndex} />
+            <UsagePanel summary={summary} items={usageItems} />
+          </div>
+        </>
+      )}
+
+      <Card className="surface-card">
+        <CardHeader>
+          <CardTitle className="text-base">Agent 状态</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 md:grid-cols-2">
+          {summary.agents
+            .filter((agent) => ["researcher", "engineer", "experimenter", "analyst", "writer"].includes(agent.type))
+            .map((agent) => (
+              <div key={agent.id} className="data-row p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{agent.name}</div>
+                  <Badge variant="secondary">{AGENT_STATUS_LABELS[agent.status] || agent.status}</Badge>
                 </div>
                 <div className="mt-1 text-xs text-[var(--rg-muted)]">
-                  {TASK_TYPE_LABELS[task.task_type] || task.task_type} · 负责人：
-                  {task.owner_agent ? agentMap[task.owner_agent] || task.owner_agent : "未分配"} · P{task.priority} C{task.complexity}
+                  当前负载 {Math.round(agent.current_load * 100)}% · 当前任务 {agent.current_tasks?.length ? agent.current_tasks.join("、") : "暂无"}
                 </div>
               </div>
             ))}
-          </CardContent>
-        </Card>
-
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-base">Agent 活动</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {summary.agents
-              .filter((agent) => ["researcher", "engineer", "experimenter", "analyst", "writer"].includes(agent.type))
-              .map((agent) => (
-                <div key={agent.id} className="data-row p-3 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-medium">{agent.name}</div>
-                    <Badge variant="secondary">{AGENT_STATUS_LABELS[agent.status] || agent.status}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--rg-muted)]">
-                    负载 {Math.round(agent.current_load * 100)}% · 当前任务：
-                    {agent.current_tasks?.length ? agent.current_tasks.join("、") : "暂无"}
-                  </div>
-                </div>
-              ))}
-          </CardContent>
-        </Card>
-      </div>
+        </CardContent>
+      </Card>
     </div>
+  )
+}
+
+function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResolve: (item: ApprovalRequest, approved: boolean) => void }) {
+  const pending = items.filter((item) => item.status === "pending")
+  if (!pending.length) return null
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">待确认事项</CardTitle>
+        <CardDescription>关键节点会在这里暂停，确认后继续执行。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {pending.map((item) => (
+          <div key={item.id} className="data-row flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
+            <div>
+              <div className="font-medium">{item.title}</div>
+              <div className="mt-1 text-[var(--rg-muted)]">{item.message}</div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => onResolve(item, false)}>
+                拒绝
+              </Button>
+              <Button size="sm" onClick={() => onResolve(item, true)}>
+                确认
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TaskGraphPanel({ graph }: { graph: TaskGraph | null }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">任务依赖图</CardTitle>
+        <CardDescription>展示 DAG、关键路径和当前可执行任务。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!graph && <div className="text-sm text-[var(--rg-muted)]">暂无任务图。</div>}
+        {graph?.nodes.map((task) => {
+          const deps = graph.edges.filter((edge) => edge.task_id === task.id)
+          return (
+            <div key={task.id} className="data-row p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium">{task.title}</div>
+                <div className="flex gap-2">
+                  {task.is_critical_path && <Badge variant="secondary">关键路径</Badge>}
+                  <Badge variant="secondary">{TASK_STATUS_LABELS[task.status] || task.status}</Badge>
+                </div>
+              </div>
+              <div className="mt-1 text-xs text-[var(--rg-muted)]">
+                前置依赖：{deps.length ? deps.map((item) => item.depends_on_task_id).join("、") : "无"} · {graph.ready_task_ids.includes(task.id) ? "可执行" : "等待"}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TaskStatusPanel({ summary, agentMap }: { summary: RunSummary; agentMap: Record<string, string> }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">任务管理</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {summary.tasks.map((task) => (
+          <div key={task.id} className="data-row p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">{task.title}</div>
+              <Badge variant="secondary">{TASK_STATUS_LABELS[task.status] || task.status}</Badge>
+            </div>
+            <div className="mt-1 text-xs text-[var(--rg-muted)]">
+              {TASK_TYPE_LABELS[task.task_type] || task.task_type} · 负责人 {task.owner_agent ? agentMap[task.owner_agent] || task.owner_agent : "未分配"} · 尝试 {task.attempt_count}
+            </div>
+            {task.blocked_reason && <div className="mt-2 text-xs text-[#964b36]">{task.blocked_reason}</div>}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AttemptPanel({ attempts }: { attempts: TaskAttempt[] }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">失败恢复</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {attempts.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无尝试记录。</div>}
+        {attempts.map((item) => (
+          <div key={item.id} className="data-row p-3 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-medium">{item.task_id} · 第 {item.attempt_number} 次</div>
+              <Badge variant="secondary">{item.status}</Badge>
+            </div>
+            <div className="mt-1 text-xs text-[var(--rg-muted)]">{item.failure_message || item.checkpoint || "执行完成"}</div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function EvidencePanel({ sources, claims }: { sources: EvidenceSource[]; claims: EvidenceClaim[] }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">证据链</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {sources.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无证据来源。</div>}
+        {sources.map((source) => (
+          <div key={source.id} className="data-row p-3 text-sm">
+            <div className="font-medium">{source.title}</div>
+            <div className="mt-1 text-xs text-[var(--rg-muted)]">
+              {source.authors} {source.year ? `(${source.year})` : ""} · {claims.filter((item) => item.source_id === source.id).length} 条关联
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function MemoryPanel({ items }: { items: MemoryRecord[] }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">研究记忆</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {items.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无结构化记忆。</div>}
+        {items.map((item) => (
+          <div key={item.id} className="data-row p-3 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-medium">{item.category}</div>
+              <Badge variant="secondary">{item.scope}</Badge>
+            </div>
+            <div className="mt-1 leading-6 text-[var(--rg-body)]">{item.summary}</div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ReviewPanel({ items }: { items: ReviewDecision[] }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">导师质量门禁</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {items.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无审核结果。</div>}
+        {items.map((item) => (
+          <div key={item.id} className="data-row p-3 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-medium">{item.task_id}</div>
+              <Badge variant="secondary">{item.approved ? "通过" : "返工"}</Badge>
+            </div>
+            <div className="mt-1 text-xs text-[var(--rg-muted)]">
+              {Object.entries(item.scores)
+                .map(([key, value]) => `${key} ${Math.round(value * 100)}%`)
+                .join(" · ")}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function TimelinePanel({
+  events,
+  agentMap,
+  selectedIndex,
+  onSelect,
+}: {
+  events: RunEvent[]
+  agentMap: Record<string, string>
+  selectedIndex: number
+  onSelect: (index: number) => void
+}) {
+  const orderedEvents = events.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+  return (
+    <Card className="surface-card lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="text-base">事件时间线</CardTitle>
+      </CardHeader>
+      <CardContent className="max-h-[520px] space-y-3 overflow-auto">
+        {orderedEvents
+          .slice()
+          .reverse()
+          .map((event, reverseIndex) => {
+            const index = orderedEvents.length - 1 - reverseIndex
+            return (
+            <button
+              key={event.id}
+              onClick={() => onSelect(index)}
+              className={`data-row w-full p-3 text-left text-sm transition ${
+                index === selectedIndex ? "border-[#cfd3ff] bg-[#eef0ff]" : ""
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium">{event.title}</div>
+                <Badge variant="secondary">{event.phase}</Badge>
+              </div>
+              <div className="mt-1 text-[var(--rg-body)]">{event.message}</div>
+              <div className="mt-2 text-xs text-[var(--rg-muted)]">
+                {event.created_at}
+                {event.agent_id ? ` · ${agentMap[event.agent_id] || event.agent_id}` : ""}
+              </div>
+            </button>
+          )})}
+      </CardContent>
+    </Card>
+  )
+}
+
+function UsagePanel({ summary, items }: { summary: RunSummary; items: LLMUsage[] }) {
+  return (
+    <Card className="surface-card">
+      <CardHeader>
+        <CardTitle className="text-base">成本监测</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <Metric label="LLM 调用次数" value={String(summary.usage.total_llm_calls || 0)} />
+        <Metric label="失败调用" value={String(summary.usage.failed_llm_calls || 0)} />
+        <Separator />
+        <div className="max-h-[260px] space-y-2 overflow-auto">
+          {items.map((item) => (
+            <div key={item.id} className="rounded-lg bg-[var(--rg-surface-soft)] p-2 text-xs">
+              <div className="font-medium">{item.role} · {item.model}</div>
+              <div className="text-[var(--rg-muted)]">{item.total_tokens} tokens · ${item.cost_usd.toFixed(6)} · {item.latency_ms}ms</div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -294,58 +505,37 @@ function EventFlowGraph({
   agentMap: Record<string, string>
   agentRoleMap: Record<string, string>
 }) {
-  const orderedEvents = useMemo(() => {
-    return events.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-  }, [events])
-  const selectedEvent = orderedEvents[selectedIndex] || orderedEvents[0] || null
-  const relation = selectedEvent ? inferEventRelation(selectedEvent, agentMap, agentRoleMap) : null
-
+  const orderedEvents = useMemo(() => events.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()), [events])
+  const selected = orderedEvents[selectedIndex] || orderedEvents[0]
+  const relation = selected ? inferRelation(selected, agentMap, agentRoleMap) : null
   return (
     <Card className="surface-card">
       <CardHeader>
         <CardTitle className="text-base">事件关系图</CardTitle>
-        <CardDescription>点击时间节点，查看导师、研究生 Agent、本科 SubAgent 和系统之间的协作关系。</CardDescription>
+        <CardDescription>点击节点查看不同时间点上的协作关系。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {orderedEvents.length === 0 || !relation || !selectedEvent ? (
-          <div className="soft-card p-6 text-center text-sm text-[var(--rg-muted)]">暂无事件关系。</div>
+        {!selected || !relation ? (
+          <div className="text-sm text-[var(--rg-muted)]">暂无事件。</div>
         ) : (
           <>
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex gap-2 overflow-x-auto">
               {orderedEvents.map((event, index) => (
                 <button
                   key={event.id}
                   onClick={() => onSelect(index)}
-                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition ${
-                    index === selectedIndex
-                      ? "border-[var(--rg-linear)] bg-[#eef0ff] text-[#3b4395]"
-                      : "border-[var(--rg-hairline)] bg-white text-[var(--rg-muted)] hover:text-[var(--rg-ink)]"
+                  className={`rounded-full border px-3 py-1.5 text-xs ${
+                    index === selectedIndex ? "border-[var(--rg-linear)] bg-[#eef0ff] text-[#3b4395]" : "border-[var(--rg-hairline)] bg-white"
                   }`}
                 >
                   {index + 1}. {event.phase}
                 </button>
               ))}
             </div>
-
             <div className="grid gap-3 lg:grid-cols-[1fr_auto_1fr] lg:items-center">
-              <ActorNode title={relation.sourceTitle} subtitle={relation.sourceSubtitle} tone={relation.sourceTone} />
-              <div className="flex flex-col items-center gap-2 text-center">
-                <div className="hidden h-px w-20 bg-[var(--rg-hairline)] lg:block" />
-                <div className="rounded-full border border-[var(--rg-hairline)] bg-white px-3 py-1 text-xs font-medium text-[var(--rg-body)]">
-                  {relation.action}
-                </div>
-                <div className="hidden h-px w-20 bg-[var(--rg-hairline)] lg:block" />
-              </div>
-              <ActorNode title={relation.targetTitle} subtitle={relation.targetSubtitle} tone={relation.targetTone} />
-            </div>
-
-            <div className="soft-card p-3 text-sm">
-              <div className="font-medium text-[var(--rg-ink)]">{selectedEvent.title}</div>
-              <div className="mt-1 leading-6 text-[var(--rg-body)]">{selectedEvent.message}</div>
-              <div className="mt-2 text-xs text-[var(--rg-muted)]">
-                {selectedEvent.created_at}
-                {selectedEvent.task_id ? ` · ${selectedEvent.task_id}` : ""}
-              </div>
+              <ActorNode title={relation.source} subtitle={relation.sourceRole} />
+              <div className="rounded-full border border-[var(--rg-hairline)] px-3 py-1 text-center text-xs">{relation.action}</div>
+              <ActorNode title={relation.target} subtitle={relation.targetRole} />
             </div>
           </>
         )}
@@ -354,101 +544,22 @@ function EventFlowGraph({
   )
 }
 
-function ActorNode({ title, subtitle, tone }: { title: string; subtitle: string; tone: "advisor" | "graduate" | "subagent" | "system" }) {
-  const toneClass = {
-    advisor: "border-[#ead1c6] bg-[#fff3ef] text-[#964b36]",
-    graduate: "border-[#cfd3ff] bg-[#eef0ff] text-[#3b4395]",
-    subagent: "border-[#d9dce3] bg-[#f4f5f7] text-[#4b5563]",
-    system: "border-[var(--rg-hairline)] bg-[var(--rg-surface-soft)] text-[var(--rg-body)]",
-  }[tone]
-
+function ActorNode({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className={`rounded-xl border p-4 ${toneClass}`}>
-      <div className="text-xs font-semibold uppercase tracking-wide opacity-70">{subtitle}</div>
+    <div className="rounded-xl border border-[var(--rg-hairline)] bg-[var(--rg-surface-soft)] p-4">
+      <div className="text-xs text-[var(--rg-muted)]">{subtitle}</div>
       <div className="mt-2 text-lg font-semibold">{title}</div>
     </div>
   )
 }
 
-function inferEventRelation(event: RunEvent, agentMap: Record<string, string>, agentRoleMap: Record<string, string>) {
-  const text = `${event.title} ${event.message} ${event.phase} ${event.event_type}`.toLowerCase()
-  const agentName = event.agent_id ? agentMap[event.agent_id] || event.agent_id : ""
-  const agentRole = event.agent_id ? agentRoleMap[event.agent_id] || "" : ""
-  const isAdvisor = event.agent_id === "advisor" || agentRole === "advisor" || text.includes("导师")
-  const isSubagent = Boolean(event.subagent_id) || text.includes("subagent") || text.includes("本科")
-  const isRevision = text.includes("返工") || text.includes("修改") || text.includes("revision") || text.includes("驳回")
-  const isReview = text.includes("审核") || text.includes("review")
-  const isSkill = text.includes("skill")
-
-  if (isSubagent) {
-    return {
-      sourceTitle: agentName || "研究生 Agent",
-      sourceSubtitle: "委派方",
-      sourceTone: "graduate" as const,
-      action: "委派/整合",
-      targetTitle: event.subagent_id || "本科 SubAgent",
-      targetSubtitle: "临时执行者",
-      targetTone: "subagent" as const,
-    }
-  }
-
-  if (isRevision) {
-    return {
-      sourceTitle: "导师 Agent",
-      sourceSubtitle: "审核方",
-      sourceTone: "advisor" as const,
-      action: "要求返工",
-      targetTitle: agentName || "研究生 Agent",
-      targetSubtitle: "执行方",
-      targetTone: "graduate" as const,
-    }
-  }
-
-  if (isReview && !isAdvisor) {
-    return {
-      sourceTitle: agentName || "研究生 Agent",
-      sourceSubtitle: "提交方",
-      sourceTone: "graduate" as const,
-      action: "提交审核",
-      targetTitle: "导师 Agent",
-      targetSubtitle: "审核方",
-      targetTone: "advisor" as const,
-    }
-  }
-
-  if (isAdvisor) {
-    return {
-      sourceTitle: "导师 Agent",
-      sourceSubtitle: "调度/审核",
-      sourceTone: "advisor" as const,
-      action: isSkill ? "沉淀经验" : "分派/确认",
-      targetTitle: agentName && agentName !== "advisor" ? agentName : "研究生团队",
-      targetSubtitle: "协作对象",
-      targetTone: "graduate" as const,
-    }
-  }
-
-  if (event.agent_id) {
-    return {
-      sourceTitle: agentName || event.agent_id,
-      sourceSubtitle: "研究生 Agent",
-      sourceTone: "graduate" as const,
-      action: isSkill ? "沉淀 Skill" : "执行任务",
-      targetTitle: isSkill ? "Skill Library" : "任务板",
-      targetSubtitle: isSkill ? "经验库" : "系统状态机",
-      targetTone: "system" as const,
-    }
-  }
-
-  return {
-    sourceTitle: "系统",
-    sourceSubtitle: "状态机",
-    sourceTone: "system" as const,
-    action: "推进流程",
-    targetTitle: isReview ? "导师 Agent" : "任务板",
-    targetSubtitle: isReview ? "审核方" : "协作面板",
-    targetTone: isReview ? ("advisor" as const) : ("system" as const),
-  }
+function inferRelation(event: RunEvent, agentMap: Record<string, string>, agentRoleMap: Record<string, string>) {
+  const actor = event.agent_id ? agentMap[event.agent_id] || event.agent_id : "系统"
+  const role = event.agent_id ? agentRoleMap[event.agent_id] || "agent" : "system"
+  if (event.subagent_id) return { source: actor, sourceRole: role, action: "委派", target: event.subagent_id, targetRole: "subagent" }
+  if (event.phase === "review") return { source: actor || "研究生", sourceRole: role, action: "提交审核", target: "导师 Agent", targetRole: "advisor" }
+  if (event.phase === "approval") return { source: "系统", sourceRole: "system", action: "等待确认", target: actor, targetRole: role }
+  return { source: actor, sourceRole: role, action: "推进任务", target: event.task_id || "任务板", targetRole: "task" }
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
