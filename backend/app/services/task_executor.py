@@ -6,6 +6,7 @@ from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
 from .agent_skill_service import agent_skill_service
+from .external_memory import external_memory
 from .literature_source_service import literature_source_service
 from .reproducible_experiment_service import reproducible_experiment_service
 
@@ -77,6 +78,7 @@ class TaskExecutor:
             agent_skill_service.record_usage(active_skills, success=True)
         logger.info("[TaskExecutor] LLM response parsed | task_id=%s | has_summary=%s", task.get("id"), "summary" in result)
         TaskRepository.update_status(task["id"], "running", outputs=task.get("outputs", []) + [result])
+        self._write_memory(task, owner_id, result)
 
         OutputRepository.insert(
             {
@@ -106,6 +108,30 @@ class TaskExecutor:
             return parsed if isinstance(parsed, dict) else {"items": parsed}
         except json.JSONDecodeError:
             return {"raw_output": text, "parsed": False}
+
+    def _write_memory(self, task: dict, owner_id: str, result: dict) -> None:
+        run_id = task.get("run_id")
+        if not run_id:
+            return
+        summary = str(result.get("summary") or result.get("conclusion") or task.get("title") or "")
+        if summary:
+            external_memory.write(
+                run_id,
+                "project",
+                task.get("task_type", "task"),
+                summary[:500],
+                source_task_id=task.get("id"),
+                payload={"task_title": task.get("title"), "task_type": task.get("task_type")},
+            )
+            external_memory.write(
+                run_id,
+                "agent",
+                "task_experience",
+                summary[:500],
+                agent_id=owner_id or None,
+                source_task_id=task.get("id"),
+                payload={"task_title": task.get("title"), "task_type": task.get("task_type")},
+            )
 
 
 task_executor = TaskExecutor()

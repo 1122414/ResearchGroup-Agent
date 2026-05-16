@@ -57,7 +57,9 @@ class ReproducibleExperimentService:
         summary_path = workspace / "summary.json"
         results_path = data_dir / "results.csv"
         metrics = self._read_metrics(summary_path)
-        artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path)]
+        chart_path = workspace / "chart_data.json"
+        chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
+        artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
         status = "completed" if proc.returncode == 0 else "failed"
         ExperimentPlanRepository.update(
             plan["id"],
@@ -80,6 +82,7 @@ class ReproducibleExperimentService:
                 "input_documents": str(input_path),
                 "results_csv": str(results_path),
                 "summary_json": str(summary_path),
+                "chart_data_json": str(chart_path),
             },
             "metrics": metrics,
             "artifacts": artifact_paths,

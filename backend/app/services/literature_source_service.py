@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from ..core.research_goal import primary_goal
-from ..storage.repositories import RunRepository
+from ..storage.repositories import EvidenceRepository, RunRepository
 from .run_artifact_service import run_artifact_service
 
 
@@ -93,6 +94,7 @@ class LiteratureSourceService:
         sources = self.select_sources(task)
         methods = self.methods_from_sources(sources)
         artifacts = self.write_artifacts(task, sources, methods)
+        self.persist_evidence(task, sources, methods)
         enriched = dict(result)
         enriched["source_mode"] = "curated_traceable_bibliography"
         enriched["papers_read"] = sources
@@ -131,6 +133,42 @@ class LiteratureSourceService:
                     }
                 )
         return methods
+
+    def persist_evidence(self, task: dict, sources: list[dict], methods: list[dict]) -> None:
+        run_id = task.get("run_id")
+        if not run_id:
+            return
+        now = datetime.now().isoformat()
+        for source in sources:
+            EvidenceRepository.upsert_source(
+                {
+                    "id": source["id"],
+                    "run_id": run_id,
+                    "task_id": task.get("id"),
+                    "title": source["title"],
+                    "authors": source.get("authors", ""),
+                    "year": source.get("year"),
+                    "venue": source.get("venue", ""),
+                    "doi": source.get("doi"),
+                    "url": source.get("url"),
+                    "source_type": "paper",
+                    "metadata": {"methods": source.get("methods", [])},
+                    "created_at": now,
+                }
+            )
+        for item in methods:
+            EvidenceRepository.insert_claim(
+                {
+                    "id": f"claim_{uuid.uuid4().hex[:10]}",
+                    "run_id": run_id,
+                    "task_id": task.get("id"),
+                    "source_id": item["source_id"],
+                    "claim": item["evidence"],
+                    "method": item["method"],
+                    "relation_type": "supports",
+                    "created_at": now,
+                }
+            )
 
     def write_artifacts(self, task: dict, sources: list[dict], methods: list[dict]) -> dict:
         run_id = task.get("run_id")

@@ -1,27 +1,24 @@
-"""
-预留接口：ToolProvider
-未来工具接入统一入口，MVP 阶段仅保留空实现。
-
-未来工具：
-- paper_search: 文献检索
-- web_search: 网络搜索
-- github_search: GitHub 项目搜索
-- code_runner: 代码执行沙箱
-- file_reader: 文件读取
-- chart_generator: 图表生成
-- zotero_connector: Zotero 连接器
-- overleaf_connector: Overleaf 连接器
-"""
-
-from typing import Optional
+from __future__ import annotations
 
 
 class ToolProvider:
     def run(self, tool_name: str, input: dict) -> dict:
-        raise NotImplementedError("ToolProvider 尚未实现，MVP 阶段仅保留接口。")
+        raise NotImplementedError(f"工具 {tool_name} 尚未接入")
 
     def list_available(self) -> list[str]:
         return []
+
+    def capabilities(self) -> list[dict]:
+        return [
+            {"name": "paper_search", "enabled": False},
+            {"name": "web_search", "enabled": False},
+            {"name": "github_search", "enabled": False},
+            {"name": "code_runner", "enabled": False},
+            {"name": "file_reader", "enabled": False},
+            {"name": "chart_generator", "enabled": False},
+            {"name": "zotero_connector", "enabled": False},
+            {"name": "overleaf_connector", "enabled": False},
+        ]
 
 
 tool_provider = ToolProvider()
