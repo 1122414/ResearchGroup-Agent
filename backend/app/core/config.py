@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     review_missing_score: float = 0.5
     review_report_evidence_score: float = 0.9
 
+    # Research loop orchestration
+    research_loop_auto_continue: bool = True
+    research_loop_max_auto_rounds: int = 1
+    research_loop_max_tasks_per_round: int = 3
+
     # Logging and artifacts
     log_level: str = "INFO"
     log_dir: str = "artifacts/logs"

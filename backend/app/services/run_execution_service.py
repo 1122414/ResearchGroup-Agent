@@ -15,6 +15,7 @@ from ..storage.repositories import (
 )
 from .approval_service import approval_service
 from .report_service import report_service
+from .research_loop_service import research_loop_service
 from .review_service import review_service
 from .run_event_service import run_event_service
 from .skill_reflection_service import skill_reflection_service
@@ -59,6 +60,29 @@ class RunExecutionService:
             if any(task.get("status") != "completed" for task in research_tasks):
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待研究任务完成或返工")
                 return self.get_summary(run_id)
+
+            while True:
+                loop_tasks = research_loop_service.expand_once(run_id)
+                if not loop_tasks:
+                    break
+                RunRepository.update_status(run_id, RunStatus.executing.value, current_step="根据研究缺口进入下一轮")
+                run_event_service.emit(
+                    run_id,
+                    "research_loop.expanded",
+                    "research_loop",
+                    "已生成下一轮研究任务",
+                    f"根据研究缺口新增 {len(loop_tasks)} 个任务",
+                    payload={"task_ids": [item["id"] for item in loop_tasks]},
+                )
+                self._ensure_scheduling(TaskRepository.get_all(run_id=run_id), run_id)
+                await self._execute_research_flow(run_id)
+                if self._has_pending_approval(run_id):
+                    return self._pause_for_confirmation(run_id)
+                tasks = TaskRepository.get_all(run_id=run_id)
+                research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
+                if any(task.get("status") != "completed" for task in research_tasks):
+                    RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待下一轮研究任务完成")
+                    return self.get_summary(run_id)
 
             await self._execute_writing_flow(run_id)
             if self._has_pending_approval(run_id):

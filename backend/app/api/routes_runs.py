@@ -23,6 +23,7 @@ from ..services.claim_evaluation_service import claim_evaluation_service
 from ..services.evidence_pipeline_service import evidence_pipeline_service
 from ..services.evidence_provider import evidence_provider
 from ..services.research_state_service import research_state_service
+from ..services.research_loop_service import research_loop_service
 from ..services.task_graph_service import task_graph_service
 from ..storage.repositories import (
     ApprovalRequestRepository,
@@ -408,6 +409,13 @@ async def get_run_research_state(run_id: str):
         raise HTTPException(status_code=404, detail="è¿è¡Œä¸å­˜åœ¨")
     research_state_service.ensure_initialized(run)
     return research_state_service.get_state(run_id)
+
+
+@router.get("/{run_id}/research-loop")
+async def get_run_research_loop(run_id: str):
+    if not RunRepository.get_by_id(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return research_loop_service.snapshot(run_id)
 
 
 @router.post("/{run_id}/evidence/sources")
