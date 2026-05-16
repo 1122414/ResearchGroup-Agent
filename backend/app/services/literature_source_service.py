@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from ..core.config import settings
 from ..core.research_goal import primary_goal
 from ..storage.repositories import EvidenceRepository, RunRepository
 from .run_artifact_service import run_artifact_service
@@ -116,8 +117,8 @@ class LiteratureSourceService:
             scored.append((score, source))
         selected = [source for score, source in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
         if not selected:
-            selected = TRACEABLE_LIBRARY[:4]
-        return [self._source_view(source) for source in selected[:5]]
+            selected = TRACEABLE_LIBRARY[: settings.literature_fallback_source_count]
+        return [self._source_view(source) for source in selected[: settings.literature_source_limit]]
 
     @staticmethod
     def methods_from_sources(sources: list[dict]) -> list[dict]:

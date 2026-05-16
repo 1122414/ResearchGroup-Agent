@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from ..core.config import settings
 from ..core.research_goal import primary_goal
 from ..storage.repositories import ExperimentPlanRepository, RunEventRepository, RunRepository
 from .run_artifact_service import run_artifact_service
@@ -37,7 +38,7 @@ class ReproducibleExperimentService:
             cwd=str(workspace),
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=settings.reproducible_experiment_timeout_seconds,
         )
         result = {
             "exit_code": proc.returncode,

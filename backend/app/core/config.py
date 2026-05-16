@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     attachment_max_file_size_mb: int = 25
     multimodal_enabled: bool = False
     vision_model_name: str = ""
+    literature_source_limit: int = 5
+    literature_fallback_source_count: int = 4
+    report_title_preview_chars: int = 50
+    report_output_point_max_chars: int = 500
+    report_output_point_limit: int = 5
+    report_evidence_paper_limit: int = 5
+    run_artifact_title_max_length: int = 28
+    run_artifact_dedupe_limit: int = 100
 
     # Agent skill evolution
     agent_skill_enabled: bool = True
@@ -84,6 +92,7 @@ class Settings(BaseSettings):
     experiment_workspace_dir: str = "artifacts/experiment_workspace"
     experiment_execution_backend: str = "local"
     experiment_command_timeout_seconds: int = 300
+    reproducible_experiment_timeout_seconds: int = 120
     experiment_max_output_chars: int = 20000
     experiment_allow_network: bool = False
     experiment_allow_package_install: bool = False
@@ -93,6 +102,14 @@ class Settings(BaseSettings):
     experiment_remote_port: int = 22
     experiment_docker_image: str = ""
     experiment_queue_backend: str = ""
+
+    # Review heuristics
+    review_pass_threshold: float = 0.75
+    review_default_approved_score: float = 0.8
+    review_default_rejected_score: float = 0.55
+    review_traceability_missing_score: float = 0.45
+    review_missing_score: float = 0.5
+    review_report_evidence_score: float = 0.9
 
     # Logging and artifacts
     log_level: str = "INFO"

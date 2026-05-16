@@ -305,13 +305,13 @@ class ReportService:
                 for key in ("summary", "conclusion", "final_conclusion", "raw_output"):
                     value = output.get(key)
                     if value:
-                        points.append(str(value)[:500])
+                        points.append(str(value)[: settings.report_output_point_max_chars])
                 for key in ("findings", "deliverables", "recommendations", "next_steps", "key_metrics", "sections", "metrics"):
                     value = output.get(key)
                     if value:
-                        points.append(f"{key}: {json.dumps(value, ensure_ascii=False)[:500]}")
+                        points.append(f"{key}: {json.dumps(value, ensure_ascii=False)[: settings.report_output_point_max_chars]}")
             elif output:
-                points.append(str(output)[:500])
+                points.append(str(output)[: settings.report_output_point_max_chars])
         return points or ["该任务已完成，但未留下结构化摘要。"]
 
     def _summarize_outputs(self, outputs: list) -> list[str]:
@@ -400,7 +400,7 @@ class ReportService:
                 if source_artifacts or papers:
                     found = True
                     lines.append(f"- 文献任务 `{task.get('title', '')}` 来源记录：`{source_artifacts.get('sources_json', '')}`")
-                    for paper in papers[:5]:
+                    for paper in papers[: settings.report_evidence_paper_limit]:
                         lines.append(f"  - {paper.get('authors')} ({paper.get('year')}). {paper.get('title')}. {paper.get('url')}")
         return "\n".join(lines) if found else ""
 

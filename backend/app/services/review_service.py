@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime
 
+from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
@@ -124,30 +125,30 @@ class ReviewService:
             "result_analysis": {"completeness": 0.3, "interpretation": 0.3, "evidence": 0.2, "clarity": 0.2},
             "report_writing": {"structure": 0.25, "evidence": 0.3, "completeness": 0.25, "clarity": 0.2},
         }.get(task_type, {"quality": 1.0})
-        return {"dimensions": dimensions, "threshold": 0.75}
+        return {"dimensions": dimensions, "threshold": settings.review_pass_threshold}
 
     def _score_task(self, task: dict, review: dict, rubric: dict) -> dict[str, float]:
         outputs = task.get("outputs", []) or []
         latest = outputs[-1] if outputs and isinstance(outputs[-1], dict) else {}
         scores: dict[str, float] = {}
         for dimension in rubric["dimensions"]:
-            score = 0.8 if review.get("approved", True) else 0.55
+            score = settings.review_default_approved_score if review.get("approved", True) else settings.review_default_rejected_score
             if dimension == "traceability":
-                score = 1.0 if latest.get("papers_read") else 0.45
+                score = 1.0 if latest.get("papers_read") else settings.review_traceability_missing_score
             elif dimension == "method_mapping":
-                score = 1.0 if latest.get("methods_found") else 0.5
+                score = 1.0 if latest.get("methods_found") else settings.review_missing_score
             elif dimension == "reproducibility":
                 score = 1.0 if latest.get("reproducible_experiment", {}).get("experiment_ran") else 0.4
             elif dimension == "baseline":
                 metrics = latest.get("reproducible_experiment", {}).get("metrics", {})
-                score = 1.0 if metrics.get("rows") else 0.5
+                score = 1.0 if metrics.get("rows") else settings.review_missing_score
             elif dimension == "metrics":
-                score = 1.0 if latest.get("reproducible_experiment", {}).get("metrics") else 0.5
+                score = 1.0 if latest.get("reproducible_experiment", {}).get("metrics") else settings.review_missing_score
             elif dimension == "evidence":
                 if task.get("task_type") == "report_writing":
-                    score = 0.9 if latest else 0.55
+                    score = settings.review_report_evidence_score if latest else settings.review_default_rejected_score
                 else:
-                    score = 1.0 if latest.get("papers_read") or latest.get("reproducible_experiment") else 0.55
+                    score = 1.0 if latest.get("papers_read") or latest.get("reproducible_experiment") else settings.review_default_rejected_score
             scores[dimension] = round(score, 4)
         return scores
 

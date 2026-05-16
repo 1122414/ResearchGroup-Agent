@@ -44,8 +44,8 @@ class RunArtifactService:
         text = text.strip(" -_，,")
         if not text:
             text = "未命名课题"
-        if len(text) > 28:
-            text = text[:28].rstrip()
+        if len(text) > settings.run_artifact_title_max_length:
+            text = text[: settings.run_artifact_title_max_length].rstrip()
         if not any(word in text for word in ("调研", "研究", "实验", "分析", "报告")):
             text = f"{text}的调研"
         return text
@@ -56,7 +56,7 @@ class RunArtifactService:
             return path
         parent = path.parent
         stem = path.name
-        for index in range(2, 100):
+        for index in range(2, settings.run_artifact_dedupe_limit):
             candidate = parent / f"{stem}-{index}"
             if not candidate.exists():
                 return candidate
