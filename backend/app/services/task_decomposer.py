@@ -90,6 +90,11 @@ class TaskDecomposer:
                 "review_result": None,
                 "review_feedback": None,
                 "run_id": run_id,
+                "blocked_reason": None,
+                "parallelizable": item.get("task_type") not in {"report_writing"},
+                "is_critical_path": False,
+                "attempt_count": 0,
+                "last_checkpoint": None,
                 "created_at": now,
                 "updated_at": now,
             }

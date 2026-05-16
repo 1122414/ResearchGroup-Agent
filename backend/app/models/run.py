@@ -11,6 +11,7 @@ class RunStatus(str, Enum):
     scheduling = "scheduling"
     executing = "executing"
     reviewing = "reviewing"
+    waiting_confirmation = "waiting_confirmation"
     reporting = "reporting"
     cancelling = "cancelling"
     cancelled = "cancelled"

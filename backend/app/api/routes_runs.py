@@ -18,7 +18,19 @@ from ..models.run import RunStatus
 from ..services.run_artifact_service import run_artifact_service
 from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
-from ..storage.repositories import LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository
+from ..services.approval_service import approval_service
+from ..services.task_graph_service import task_graph_service
+from ..storage.repositories import (
+    ApprovalRequestRepository,
+    EvidenceRepository,
+    LLMUsageRepository,
+    MemoryRecordRepository,
+    ReviewDecisionRepository,
+    RunEventRepository,
+    RunRepository,
+    TaskAttemptRepository,
+    TaskRepository,
+)
 
 
 async def _safe_execute_run(run_id: str) -> None:
@@ -36,6 +48,22 @@ class RunCreateRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: str | None = None
+
+
+class ApprovalResolutionRequest(BaseModel):
+    approved: bool = True
+    resolved_by: str = "user"
+
+
+class EvidenceSourceCreateRequest(BaseModel):
+    task_id: str | None = None
+    title: str
+    authors: str = ""
+    year: int | None = None
+    venue: str = ""
+    doi: str | None = None
+    url: str | None = None
+    source_type: str = "paper"
 
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -293,3 +321,82 @@ async def get_run_usage(run_id: str):
         logger.warning("[API] get_run_usage | run_id=%s not found", run_id)
         raise HTTPException(status_code=404, detail="运行不存在")
     return {"summary": LLMUsageRepository.get_summary(run_id), "items": LLMUsageRepository.get_by_run(run_id)}
+
+
+@router.get("/{run_id}/graph")
+async def get_run_graph(run_id: str):
+    return task_graph_service.get_graph(run_id)
+
+
+@router.get("/{run_id}/memory")
+async def get_run_memory(run_id: str):
+    return {"items": MemoryRecordRepository.get_by_run(run_id)}
+
+
+@router.get("/{run_id}/evidence")
+async def get_run_evidence(run_id: str):
+    return EvidenceRepository.get_by_run(run_id)
+
+
+@router.post("/{run_id}/evidence/sources")
+async def create_run_evidence_source(run_id: str, body: EvidenceSourceCreateRequest):
+    if not RunRepository.get_by_id(run_id):
+        raise HTTPException(status_code=404, detail="运行不存在")
+    source_id = f"manual_source_{uuid.uuid4().hex[:10]}"
+    EvidenceRepository.upsert_source(
+        {
+            "id": source_id,
+            "run_id": run_id,
+            "task_id": body.task_id,
+            "title": body.title,
+            "authors": body.authors,
+            "year": body.year,
+            "venue": body.venue,
+            "doi": body.doi,
+            "url": body.url,
+            "source_type": body.source_type,
+            "metadata": {"origin": "manual"},
+            "created_at": datetime.now().isoformat(),
+        }
+    )
+    return {"source": next(item for item in EvidenceRepository.get_by_run(run_id)["sources"] if item["id"] == source_id)}
+
+
+@router.get("/{run_id}/reviews")
+async def get_run_reviews(run_id: str):
+    return {"items": ReviewDecisionRepository.get_by_run(run_id)}
+
+
+@router.get("/{run_id}/attempts")
+async def get_run_attempts(run_id: str):
+    return {"items": TaskAttemptRepository.get_by_run(run_id)}
+
+
+@router.get("/{run_id}/approvals")
+async def get_run_approvals(run_id: str):
+    return {"items": ApprovalRequestRepository.get_by_run(run_id)}
+
+
+@router.post("/approvals/{request_id}/resolve")
+async def resolve_approval(request_id: str, body: ApprovalResolutionRequest, background_tasks: BackgroundTasks):
+    request = approval_service.resolve(request_id, body.approved, body.resolved_by)
+    if body.approved:
+        if request["request_type"] == "revision_required" and request.get("task_id"):
+            revision_task_id = request.get("payload", {}).get("revision_task_id")
+            if revision_task_id:
+                revision_task = TaskRepository.get_by_id(revision_task_id)
+                if revision_task and revision_task.get("status") == "blocked":
+                    TaskRepository.update_status(revision_task_id, "pending", blocked_reason=None)
+            else:
+                TaskRepository.update_status(
+                    request["task_id"],
+                    "pending",
+                    review_result=None,
+                    review_feedback=None,
+                    blocked_reason=None,
+                )
+        run = RunRepository.get_by_id(request["run_id"])
+        if run and run.get("status") == RunStatus.waiting_confirmation.value:
+            RunRepository.update_status(run["id"], RunStatus.executing.value, current_step="已确认，继续执行")
+            background_tasks.add_task(_safe_execute_run, run["id"])
+    return {"request": request}

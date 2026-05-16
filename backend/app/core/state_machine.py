@@ -15,8 +15,9 @@ RUN_TRANSITIONS: dict[str, set[str]] = {
     RunStatus.queued.value: {RunStatus.decomposing.value, RunStatus.cancelled.value, RunStatus.failed.value},
     RunStatus.decomposing.value: {RunStatus.scheduling.value, RunStatus.cancelling.value, RunStatus.failed.value},
     RunStatus.scheduling.value: {RunStatus.executing.value, RunStatus.cancelling.value, RunStatus.failed.value},
-    RunStatus.executing.value: {RunStatus.reviewing.value, RunStatus.reporting.value, RunStatus.cancelling.value, RunStatus.failed.value},
-    RunStatus.reviewing.value: {RunStatus.executing.value, RunStatus.reporting.value, RunStatus.cancelling.value, RunStatus.failed.value},
+    RunStatus.executing.value: {RunStatus.reviewing.value, RunStatus.waiting_confirmation.value, RunStatus.reporting.value, RunStatus.cancelling.value, RunStatus.failed.value},
+    RunStatus.reviewing.value: {RunStatus.executing.value, RunStatus.waiting_confirmation.value, RunStatus.reporting.value, RunStatus.cancelling.value, RunStatus.failed.value},
+    RunStatus.waiting_confirmation.value: {RunStatus.executing.value, RunStatus.reporting.value, RunStatus.cancelling.value, RunStatus.failed.value},
     RunStatus.reporting.value: {RunStatus.completed.value, RunStatus.cancelling.value, RunStatus.failed.value},
     RunStatus.cancelling.value: {RunStatus.cancelled.value, RunStatus.failed.value},
     RunStatus.cancelled.value: set(),
@@ -25,9 +26,10 @@ RUN_TRANSITIONS: dict[str, set[str]] = {
 }
 
 TASK_TRANSITIONS: dict[str, set[str]] = {
-    TaskStatus.pending.value: {TaskStatus.assigned.value, TaskStatus.running.value, TaskStatus.archived.value, TaskStatus.failed.value},
-    TaskStatus.assigned.value: {TaskStatus.running.value, TaskStatus.waiting_collab.value, TaskStatus.waiting_subagent.value, TaskStatus.archived.value, TaskStatus.failed.value},
-    TaskStatus.running.value: {TaskStatus.waiting_collab.value, TaskStatus.waiting_subagent.value, TaskStatus.waiting_review.value, TaskStatus.completed.value, TaskStatus.need_revision.value, TaskStatus.failed.value},
+    TaskStatus.pending.value: {TaskStatus.assigned.value, TaskStatus.running.value, TaskStatus.blocked.value, TaskStatus.archived.value, TaskStatus.failed.value},
+    TaskStatus.assigned.value: {TaskStatus.running.value, TaskStatus.blocked.value, TaskStatus.waiting_collab.value, TaskStatus.waiting_subagent.value, TaskStatus.archived.value, TaskStatus.failed.value},
+    TaskStatus.running.value: {TaskStatus.blocked.value, TaskStatus.waiting_collab.value, TaskStatus.waiting_subagent.value, TaskStatus.waiting_review.value, TaskStatus.completed.value, TaskStatus.need_revision.value, TaskStatus.failed.value},
+    TaskStatus.blocked.value: {TaskStatus.pending.value, TaskStatus.running.value, TaskStatus.failed.value},
     TaskStatus.waiting_collab.value: {TaskStatus.running.value, TaskStatus.waiting_review.value, TaskStatus.failed.value},
     TaskStatus.waiting_subagent.value: {TaskStatus.running.value, TaskStatus.waiting_review.value, TaskStatus.failed.value},
     TaskStatus.waiting_review.value: {TaskStatus.completed.value, TaskStatus.need_revision.value, TaskStatus.failed.value},

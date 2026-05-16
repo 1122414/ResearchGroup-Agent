@@ -57,6 +57,12 @@ def init_db():
             review_feedback TEXT,
             run_id TEXT,
             assignment_info TEXT DEFAULT '{}',
+            blocked_reason TEXT,
+            parallelizable INTEGER DEFAULT 1,
+            is_critical_path INTEGER DEFAULT 0,
+            attempt_count INTEGER DEFAULT 0,
+            last_checkpoint TEXT,
+            revision_of_task_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -179,16 +185,125 @@ def init_db():
             approved_by TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            task_id TEXT NOT NULL,
+            depends_on_task_id TEXT NOT NULL,
+            dependency_type TEXT DEFAULT 'hard',
+            PRIMARY KEY (task_id, depends_on_task_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS task_attempts (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            attempt_number INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'running',
+            failure_type TEXT,
+            failure_message TEXT,
+            checkpoint TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS recovery_actions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            status TEXT DEFAULT 'requested',
+            reason TEXT DEFAULT '',
+            payload TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_records (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            agent_id TEXT,
+            scope TEXT NOT NULL,
+            category TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            payload TEXT DEFAULT '{}',
+            source_task_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS evidence_sources (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            title TEXT NOT NULL,
+            authors TEXT DEFAULT '',
+            year INTEGER,
+            venue TEXT DEFAULT '',
+            doi TEXT,
+            url TEXT,
+            source_type TEXT DEFAULT 'paper',
+            metadata TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS evidence_claims (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            source_id TEXT NOT NULL,
+            claim TEXT NOT NULL,
+            method TEXT DEFAULT '',
+            relation_type TEXT DEFAULT 'supports',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS review_decisions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            rubric TEXT DEFAULT '{}',
+            scores TEXT DEFAULT '{}',
+            approved INTEGER DEFAULT 1,
+            feedback TEXT DEFAULT '',
+            requires_revision INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS approval_requests (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            request_type TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            title TEXT NOT NULL,
+            message TEXT DEFAULT '',
+            payload TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolved_by TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
         CREATE INDEX IF NOT EXISTS idx_experiment_plans_run_task ON experiment_plans(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_task_dependencies_task ON task_dependencies(task_id);
+        CREATE INDEX IF NOT EXISTS idx_task_attempts_run_task ON task_attempts(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_records_run_scope ON memory_records(run_id, scope);
+        CREATE INDEX IF NOT EXISTS idx_evidence_sources_run_task ON evidence_sources(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_claims_run_task ON evidence_claims(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_review_decisions_run_task ON review_decisions(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_run_status ON approval_requests(run_id, status);
         """
     )
 
     _ensure_columns(conn, "tasks", {
         "assignment_info": "TEXT DEFAULT '{}'",
         "subagent_triggered": "INTEGER DEFAULT 0",
+        "blocked_reason": "TEXT",
+        "parallelizable": "INTEGER DEFAULT 1",
+        "is_critical_path": "INTEGER DEFAULT 0",
+        "attempt_count": "INTEGER DEFAULT 0",
+        "last_checkpoint": "TEXT",
+        "revision_of_task_id": "TEXT",
     })
 
     _ensure_columns(conn, "runs", {

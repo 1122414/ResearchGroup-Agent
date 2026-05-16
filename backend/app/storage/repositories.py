@@ -95,9 +95,11 @@ class TaskRepository:
             INSERT INTO tasks (
                 id, title, description, task_type, required_skills, priority, complexity,
                 decomposability, status, owner_agent, collaborator_agents, subtasks, outputs,
-                review_result, review_feedback, run_id, assignment_info, subagent_triggered, created_at, updated_at
+                review_result, review_feedback, run_id, assignment_info, subagent_triggered,
+                blocked_reason, parallelizable, is_critical_path, attempt_count, last_checkpoint,
+                revision_of_task_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task["id"],
@@ -118,6 +120,12 @@ class TaskRepository:
                 task.get("run_id"),
                 json.dumps(task.get("assignment_info", {}), ensure_ascii=False),
                 int(task.get("subagent_triggered", False)),
+                task.get("blocked_reason"),
+                int(task.get("parallelizable", True)),
+                int(task.get("is_critical_path", False)),
+                task.get("attempt_count", 0),
+                task.get("last_checkpoint"),
+                task.get("revision_of_task_id"),
                 task["created_at"],
                 task["updated_at"],
             ),
@@ -134,13 +142,16 @@ class TaskRepository:
             if key in ("outputs", "collaborator_agents", "subtasks", "assignment_info"):
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False))
-            elif key == "subagent_triggered":
+            elif key in ("subagent_triggered", "parallelizable", "is_critical_path"):
                 updates.append(f"{key} = ?")
                 params.append(int(value))
             elif key == "review_result":
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False) if value else None)
-            elif key in ("owner_agent", "review_feedback", "run_id"):
+            elif key in ("owner_agent", "review_feedback", "run_id", "blocked_reason", "last_checkpoint", "revision_of_task_id"):
+                updates.append(f"{key} = ?")
+                params.append(value)
+            elif key == "attempt_count":
                 updates.append(f"{key} = ?")
                 params.append(value)
         params.append(task_id)
@@ -355,9 +366,17 @@ class RunRepository:
         task_ids = [row["id"] for row in task_rows]
         for task_id in task_ids:
             conn.execute("DELETE FROM subagents WHERE task_id = ?", (task_id,))
+            conn.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (task_id, task_id))
+            conn.execute("DELETE FROM task_attempts WHERE task_id = ?", (task_id,))
+            conn.execute("DELETE FROM recovery_actions WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM outputs WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM run_events WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM llm_usage WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM memory_records WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM evidence_claims WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM evidence_sources WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM review_decisions WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM approval_requests WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM tasks WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         conn.commit()
@@ -682,6 +701,382 @@ class ExperimentPlanRepository:
         conn.close()
 
 
+class TaskDependencyRepository:
+    @staticmethod
+    def replace_for_task(task_id: str, dependencies: list[str]):
+        conn = get_connection()
+        conn.execute("DELETE FROM task_dependencies WHERE task_id = ?", (task_id,))
+        for dependency in dependencies:
+            conn.execute(
+                "INSERT INTO task_dependencies (task_id, depends_on_task_id, dependency_type) VALUES (?, ?, 'hard')",
+                (task_id, dependency),
+            )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute(
+            """
+            SELECT d.* FROM task_dependencies d
+            JOIN tasks t ON t.id = d.task_id
+            WHERE t.run_id = ?
+            ORDER BY d.task_id, d.depends_on_task_id
+            """,
+            (run_id,),
+        ).fetchall()
+        conn.close()
+        return [
+            {
+                "task_id": row["task_id"],
+                "depends_on_task_id": row["depends_on_task_id"],
+                "dependency_type": row["dependency_type"],
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def get_for_task(task_id: str) -> list[str]:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ? ORDER BY depends_on_task_id",
+            (task_id,),
+        ).fetchall()
+        conn.close()
+        return [row["depends_on_task_id"] for row in rows]
+
+
+class TaskAttemptRepository:
+    @staticmethod
+    def insert(attempt: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO task_attempts (
+                id, run_id, task_id, attempt_number, status, failure_type,
+                failure_message, checkpoint, started_at, completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attempt["id"],
+                attempt["run_id"],
+                attempt["task_id"],
+                attempt.get("attempt_number", 1),
+                attempt.get("status", "running"),
+                attempt.get("failure_type"),
+                attempt.get("failure_message"),
+                attempt.get("checkpoint"),
+                attempt["started_at"],
+                attempt.get("completed_at"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update(attempt_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("status", "failure_type", "failure_message", "checkpoint", "completed_at"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        if assignments:
+            params.append(attempt_id)
+            conn.execute(f"UPDATE task_attempts SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM task_attempts WHERE run_id = ? ORDER BY started_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_task_attempt(row) for row in rows]
+
+    @staticmethod
+    def get_for_task(task_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY started_at", (task_id,)).fetchall()
+        conn.close()
+        return [_deserialize_task_attempt(row) for row in rows]
+
+
+class RecoveryActionRepository:
+    @staticmethod
+    def insert(action: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO recovery_actions (id, run_id, task_id, action_type, status, reason, payload, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                action["id"],
+                action["run_id"],
+                action["task_id"],
+                action["action_type"],
+                action.get("status", "requested"),
+                action.get("reason", ""),
+                json.dumps(action.get("payload", {}), ensure_ascii=False),
+                action["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM recovery_actions WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_recovery_action(row) for row in rows]
+
+
+class MemoryRecordRepository:
+    @staticmethod
+    def insert(record: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO memory_records (
+                id, run_id, agent_id, scope, category, summary, payload,
+                source_task_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["id"],
+                record["run_id"],
+                record.get("agent_id"),
+                record["scope"],
+                record["category"],
+                record["summary"],
+                json.dumps(record.get("payload", {}), ensure_ascii=False),
+                record.get("source_task_id"),
+                record["created_at"],
+                record["updated_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM memory_records WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_memory_record(row) for row in rows]
+
+    @staticmethod
+    def search(run_id: str, query: str, agent_id: str | None = None) -> list[dict]:
+        conn = get_connection()
+        clauses = ["run_id = ?", "(summary LIKE ? OR payload LIKE ?)"]
+        params: list = [run_id, f"%{query}%", f"%{query}%"]
+        if agent_id:
+            clauses.append("(agent_id = ? OR scope = 'project')")
+            params.append(agent_id)
+        rows = conn.execute(
+            f"SELECT * FROM memory_records WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC",
+            params,
+        ).fetchall()
+        conn.close()
+        return [_deserialize_memory_record(row) for row in rows]
+
+
+class EvidenceRepository:
+    @staticmethod
+    def upsert_source(source: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO evidence_sources (
+                id, run_id, task_id, title, authors, year, venue, doi,
+                url, source_type, metadata, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source["id"],
+                source["run_id"],
+                source.get("task_id"),
+                source["title"],
+                source.get("authors", ""),
+                source.get("year"),
+                source.get("venue", ""),
+                source.get("doi"),
+                source.get("url"),
+                source.get("source_type", "paper"),
+                json.dumps(source.get("metadata", {}), ensure_ascii=False),
+                source["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_claim(claim: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO evidence_claims (
+                id, run_id, task_id, source_id, claim, method, relation_type, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                claim["id"],
+                claim["run_id"],
+                claim.get("task_id"),
+                claim["source_id"],
+                claim["claim"],
+                claim.get("method", ""),
+                claim.get("relation_type", "supports"),
+                claim["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> dict:
+        conn = get_connection()
+        sources = conn.execute("SELECT * FROM evidence_sources WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        claims = conn.execute("SELECT * FROM evidence_claims WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return {
+            "sources": [_deserialize_evidence_source(row) for row in sources],
+            "claims": [_deserialize_evidence_claim(row) for row in claims],
+        }
+
+
+class ReviewDecisionRepository:
+    @staticmethod
+    def insert(decision: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO review_decisions (
+                id, run_id, task_id, rubric, scores, approved, feedback,
+                requires_revision, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision["id"],
+                decision["run_id"],
+                decision["task_id"],
+                json.dumps(decision.get("rubric", {}), ensure_ascii=False),
+                json.dumps(decision.get("scores", {}), ensure_ascii=False),
+                int(decision.get("approved", True)),
+                decision.get("feedback", ""),
+                int(decision.get("requires_revision", False)),
+                decision["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute("SELECT * FROM review_decisions WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_review_decision(row) for row in rows]
+
+
+class ApprovalRequestRepository:
+    @staticmethod
+    def insert(request: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO approval_requests (
+                id, run_id, task_id, request_type, status, title, message,
+                payload, created_at, resolved_at, resolved_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request["id"],
+                request["run_id"],
+                request.get("task_id"),
+                request["request_type"],
+                request.get("status", "pending"),
+                request["title"],
+                request.get("message", ""),
+                json.dumps(request.get("payload", {}), ensure_ascii=False),
+                request["created_at"],
+                request.get("resolved_at"),
+                request.get("resolved_by"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update(request_id: str, **updates):
+        conn = get_connection()
+        assignments: list[str] = []
+        params: list = []
+        for key in ("status", "resolved_at", "resolved_by"):
+            if key in updates:
+                assignments.append(f"{key} = ?")
+                params.append(updates[key])
+        if assignments:
+            params.append(request_id)
+            conn.execute(f"UPDATE approval_requests SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_id(request_id: str) -> dict | None:
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM approval_requests WHERE id = ?", (request_id,)).fetchone()
+        conn.close()
+        return _deserialize_approval_request(row) if row else None
+
+    @staticmethod
+    def get_by_run(run_id: str, status: str | None = None) -> list[dict]:
+        conn = get_connection()
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM approval_requests WHERE run_id = ? AND status = ? ORDER BY created_at",
+                (run_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM approval_requests WHERE run_id = ? ORDER BY created_at", (run_id,)).fetchall()
+        conn.close()
+        return [_deserialize_approval_request(row) for row in rows]
+
+    @staticmethod
+    def find_pending(run_id: str, request_type: str, task_id: str | None = None) -> dict | None:
+        conn = get_connection()
+        if task_id:
+            row = conn.execute(
+                """
+                SELECT * FROM approval_requests
+                WHERE run_id = ? AND request_type = ? AND task_id = ? AND status = 'pending'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (run_id, request_type, task_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT * FROM approval_requests
+                WHERE run_id = ? AND request_type = ? AND task_id IS NULL AND status = 'pending'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (run_id, request_type),
+            ).fetchone()
+        conn.close()
+        return _deserialize_approval_request(row) if row else None
+
+
 def _json_loads(value, default):
     if value is None:
         return default
@@ -732,6 +1127,12 @@ def _deserialize_task(row) -> dict:
         "run_id": row["run_id"],
         "assignment_info": _json_loads(row["assignment_info"] if "assignment_info" in keys else None, {}),
         "subagent_triggered": bool(row["subagent_triggered"]) if "subagent_triggered" in keys else False,
+        "blocked_reason": row["blocked_reason"] if "blocked_reason" in keys else None,
+        "parallelizable": bool(row["parallelizable"]) if "parallelizable" in keys else True,
+        "is_critical_path": bool(row["is_critical_path"]) if "is_critical_path" in keys else False,
+        "attempt_count": row["attempt_count"] if "attempt_count" in keys else 0,
+        "last_checkpoint": row["last_checkpoint"] if "last_checkpoint" in keys else None,
+        "revision_of_task_id": row["revision_of_task_id"] if "revision_of_task_id" in keys else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -867,4 +1268,107 @@ def _deserialize_experiment_plan(row) -> dict:
         "updated_at": row["updated_at"],
         "approved_at": row["approved_at"],
         "approved_by": row["approved_by"],
+    }
+
+
+def _deserialize_task_attempt(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "attempt_number": row["attempt_number"],
+        "status": row["status"],
+        "failure_type": row["failure_type"],
+        "failure_message": row["failure_message"],
+        "checkpoint": row["checkpoint"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+def _deserialize_recovery_action(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "action_type": row["action_type"],
+        "status": row["status"],
+        "reason": row["reason"],
+        "payload": _json_loads(row["payload"], {}),
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_memory_record(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "agent_id": row["agent_id"],
+        "scope": row["scope"],
+        "category": row["category"],
+        "summary": row["summary"],
+        "payload": _json_loads(row["payload"], {}),
+        "source_task_id": row["source_task_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_evidence_source(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "title": row["title"],
+        "authors": row["authors"],
+        "year": row["year"],
+        "venue": row["venue"],
+        "doi": row["doi"],
+        "url": row["url"],
+        "source_type": row["source_type"],
+        "metadata": _json_loads(row["metadata"], {}),
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_evidence_claim(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "source_id": row["source_id"],
+        "claim": row["claim"],
+        "method": row["method"],
+        "relation_type": row["relation_type"],
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_review_decision(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "rubric": _json_loads(row["rubric"], {}),
+        "scores": _json_loads(row["scores"], {}),
+        "approved": bool(row["approved"]),
+        "feedback": row["feedback"],
+        "requires_revision": bool(row["requires_revision"]),
+        "created_at": row["created_at"],
+    }
+
+
+def _deserialize_approval_request(row) -> dict:
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "request_type": row["request_type"],
+        "status": row["status"],
+        "title": row["title"],
+        "message": row["message"],
+        "payload": _json_loads(row["payload"], {}),
+        "created_at": row["created_at"],
+        "resolved_at": row["resolved_at"],
+        "resolved_by": row["resolved_by"],
     }

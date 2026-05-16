@@ -11,6 +11,7 @@ class TaskStatus(str, Enum):
     running = "running"
     waiting_collab = "waiting_collab"
     waiting_subagent = "waiting_subagent"
+    blocked = "blocked"
     waiting_review = "waiting_review"
     need_revision = "need_revision"
     completed = "completed"
@@ -53,6 +54,12 @@ class Task(BaseModel):
     review_result: Optional[dict] = None
     review_feedback: Optional[str] = None
     run_id: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    parallelizable: bool = True
+    is_critical_path: bool = False
+    attempt_count: int = 0
+    last_checkpoint: Optional[str] = None
+    revision_of_task_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
