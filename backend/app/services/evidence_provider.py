@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 from ..core.config import settings
+from .browser_research_service import browser_research_service
 from .web_search_tool import web_search_tool
 
 
@@ -15,6 +16,7 @@ class EvidenceProvider:
             {"name": "local_attachment", "enabled": True},
             {"name": "manual_metadata", "enabled": True},
             *web_search_tool.list_capabilities(),
+            *browser_research_service.list_capabilities(),
             {"name": "crossref", "enabled": self._crossref_enabled()},
             {"name": "arxiv", "enabled": False},
             {"name": "semantic_scholar", "enabled": False},

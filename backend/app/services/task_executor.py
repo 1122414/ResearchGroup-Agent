@@ -21,7 +21,7 @@ class TaskExecutor:
         owner = AgentRepository.get_by_id(owner_id) if owner_id else None
         agent_type = owner.get("type", "researcher") if owner else "researcher"
         logger.info("[TaskExecutor] execute started | task_id=%s | type=%s | agent=%s", task.get("id"), task_type, agent_type)
-        evidence_bundle = evidence_pipeline_service.collect_for_task(task) if task_type == "literature_survey" else None
+        evidence_bundle = await evidence_pipeline_service.collect_for_task(task) if task_type == "literature_survey" else None
 
         prompt_map = {
             "researcher": "grad_researcher",

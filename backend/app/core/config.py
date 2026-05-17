@@ -98,8 +98,18 @@ class Settings(BaseSettings):
     crossref_enabled: bool = True
     crossref_base_url: str = "https://api.crossref.org"
     crossref_mailto: str = ""
+    browser_research_enabled: bool = False
+    browser_research_provider_mode: str = "browser_use"
+    browser_verification_enabled: bool = False
+    browser_verification_required: bool = True
+    browser_use_model_provider: str = "openai_compatible"
+    browser_use_model_name: str = ""
+    browser_use_config_dir: str = "artifacts/browser_use/config"
+    browser_use_headless: bool = True
+    browser_use_max_steps: int = 12
+    browser_use_max_candidates: int = 3
     literature_require_grounded_sources: bool = True
-    literature_min_grounded_sources: int = 1
+    literature_min_grounded_sources: int = 2
     citation_validation_enabled: bool = True
 
     # Agent skill evolution

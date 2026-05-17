@@ -8,25 +8,34 @@ from ..core.config import settings
 from ..core.research_goal import primary_goal
 from ..storage.repositories import EvidenceRepository
 from .evidence_provider import evidence_provider
+from .browser_research_service import browser_research_service
 from .literature_source_service import literature_source_service
 
 
 class EvidencePipelineService:
-    def collect_for_task(self, task: dict) -> dict:
+    async def collect_for_task(self, task: dict) -> dict:
         query = self._query_for_task(task)
         sources = evidence_provider.search(query)
+        sources.extend(await browser_research_service.discover(query))
         mode = "remote_provider" if sources else "curated_fallback"
         if not sources:
             sources = literature_source_service.select_sources(task)
         if not sources:
             mode = "no_grounded_source"
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in sources])
+        normalized = await browser_research_service.verify_candidates(query, normalized)
+        if sources and settings.browser_research_enabled:
+            mode = f"{mode}+browser_research"
+        if not normalized:
+            mode = "no_grounded_source+browser_research" if settings.browser_research_enabled else "no_grounded_source"
         persisted = self.persist_sources(task, normalized)
         return {"mode": mode, "query": query, **persisted}
 
-    def collect_for_query(self, run_id: str, query: str) -> dict:
+    async def collect_for_query(self, run_id: str, query: str) -> dict:
         raw_sources = evidence_provider.search(query)
+        raw_sources.extend(await browser_research_service.discover(query))
         normalized = self._deduplicate_sources([self._normalize_source(source, {"id": None}) for source in raw_sources])
+        normalized = await browser_research_service.verify_candidates(query, normalized)
         persisted = self.persist_sources({"run_id": run_id, "id": None}, normalized)
         return {"query": query, **persisted}
 

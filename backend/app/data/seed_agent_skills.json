@@ -18,6 +18,15 @@
     "tags": ["default", "literature", "research"]
   },
   {
+    "agent_id": "grad_researcher",
+    "title": "多源文献检索与网页核验",
+    "description": "文献调研必须先外部检索、再多源核验、最后归纳，严禁依据模型记忆补写论文。",
+    "content": "## 适用场景\n所有 literature_survey 任务默认适用，尤其是需要论文、综述、竞品依据和研究空白判断时。\n\n## 强制原则\n1. 不得依据模型记忆补充论文、作者、年份、DOI 或 URL。\n2. 必须先检索再归纳；优先使用学术元数据源，网页搜索只做补充发现。\n3. 至少形成多源核验：默认不少于 2 个可核验来源；不足时必须报告“证据不足”。\n4. 可以使用 browser-use 浏览能力做网页发现与页面核验，但浏览器只负责找证据，不负责替代证据裁决。\n5. 任何未通过白名单与核验规则的来源，不得写入 references_used。\n\n## 操作步骤\n1. 从研究题目提取关键词、英文表达、同义词和边界词。\n2. 先用学术检索源召回候选，再用网页搜索补充遗漏。\n3. 对候选来源逐条核验 title、authors、year、DOI、URL 与页面证据。\n4. 比较不同来源的一致结论、冲突结论和缺失证据。\n5. 只基于 accepted_sources 形成 summary、findings 和 next_steps。\n\n## 输出要求\n输出时必须能回答：搜了什么、接受了哪些来源、拒绝了哪些来源、为什么拒绝、当前证据是否足以支撑结论。",
+    "status": "active",
+    "confidence": 1,
+    "tags": ["default", "literature_survey", "browser_research", "integrity"]
+  },
+  {
     "agent_id": "grad_engineer",
     "title": "系统设计与工程实现方案",
     "description": "把研究需求转成模块边界、接口、数据结构和可落地的实现步骤。",

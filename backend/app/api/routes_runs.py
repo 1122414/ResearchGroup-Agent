@@ -387,7 +387,7 @@ async def search_run_evidence(run_id: str, body: EvidenceSearchRequest):
     run = RunRepository.get_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
-    return evidence_pipeline_service.collect_for_query(run_id, body.query)
+    return await evidence_pipeline_service.collect_for_query(run_id, body.query)
 
 
 @router.post("/{run_id}/claims")
