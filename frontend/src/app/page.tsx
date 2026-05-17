@@ -55,12 +55,13 @@ export default function HomePage() {
   const exampleGoal = "调研 ima 和 Obsidian 的区别、作用和适用场景，并输出一份可直接阅读的最终研究报告。"
 
   const refreshRuns = () => api.getRuns().then(({ runs }) => setRuns(runs)).catch(() => setRuns([]))
+  const refreshOverview = () => api.getDashboardOverview().then(setOverview).catch(() => setOverview(null))
 
   useEffect(() => {
     frontendLogger.info("HomePage mounted")
     api.health().then((data) => setMockMode(data.mock_mode)).catch(() => setMockMode(null))
     refreshRuns()
-    api.getDashboardOverview().then(setOverview).catch(() => setOverview(null))
+    refreshOverview()
   }, [])
 
   const handleFiles = async (files: FileList | null) => {
@@ -119,6 +120,7 @@ export default function HomePage() {
     try {
       await api.deleteRun(run.id)
       setRuns((current) => current.filter((item) => item.id !== run.id))
+      await refreshOverview()
     } catch (e) {
       setError(e instanceof Error ? e.message : "删除运行失败")
     }
@@ -126,6 +128,15 @@ export default function HomePage() {
 
   const latestRun = runs[0]
   const activeRuns = runs.filter((run) => !["completed", "failed", "cancelled"].includes(run.status)).length
+  const getDeleteState = (run: Run) => {
+    if (["created", "waiting_confirmation", "completed", "failed", "cancelled"].includes(run.status)) {
+      return { allowed: true, reason: "删除这条运行记录" }
+    }
+    if (run.status === "cancelling") {
+      return { allowed: false, reason: "正在停止，完成后可删除" }
+    }
+    return { allowed: false, reason: "运行中不可删除，请先停止或等待完成" }
+  }
 
   return (
     <div className="page-stack">
@@ -298,9 +309,16 @@ export default function HomePage() {
                   <div className="mt-0.5 truncate text-[var(--rg-muted)]">{primaryGoal(run.research_goal)}</div>
                 </button>
                 <Badge variant="secondary">{RUN_STATUS_LABELS[run.status] || run.status}</Badge>
-                <Button variant="ghost" size="icon-sm" disabled={!["created", "completed", "failed", "cancelled"].includes(run.status)} onClick={() => handleDelete(run)}>
-                  <Trash2 className="size-3.5" />
-                </Button>
+                {(() => {
+                  const deleteState = getDeleteState(run)
+                  return (
+                    <span title={deleteState.reason}>
+                      <Button variant="ghost" size="icon-sm" disabled={!deleteState.allowed} onClick={() => handleDelete(run)} aria-label={deleteState.reason}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </span>
+                  )
+                })()}
               </div>
             ))}
           </CardContent>

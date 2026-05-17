@@ -68,4 +68,4 @@ def assert_task_transition(current: str, target: str) -> None:
 
 
 def can_delete_run(status: str) -> bool:
-    return status in {RunStatus.created.value, *FINAL_RUN_STATUSES}
+    return status in {RunStatus.created.value, RunStatus.waiting_confirmation.value, *FINAL_RUN_STATUSES}
