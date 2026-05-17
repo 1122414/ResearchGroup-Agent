@@ -260,6 +260,7 @@ export default function RunDetailPage() {
 
       {view === "evidence" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <ResearchTracePanel events={events} />
           <EvidenceWorkbenchPanel
             sources={sources}
             claims={claims}
@@ -596,6 +597,76 @@ function ReviewPanel({ items }: { items: ReviewDecision[] }) {
   )
 }
 
+function ResearchTracePanel({ events }: { events: RunEvent[] }) {
+  const traces = events
+    .filter((event) => event.event_type === "evidence.search.completed" || event.event_type === "evidence.verification.completed")
+    .slice()
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  return (
+    <Card className="surface-card lg:col-span-3">
+      <CardHeader>
+        <CardTitle className="text-base">调研轨迹</CardTitle>
+        <CardDescription>查看研究生围绕原始课题实际查了什么、哪些来源返回了结果、哪些候选在核验阶段被剔除。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {traces.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无可展示的调研轨迹。</div>}
+        {traces.map((event) => {
+          const query = typeof event.payload.query === "string" ? event.payload.query : ""
+          const attempts = Array.isArray(event.payload.attempts) ? event.payload.attempts : []
+          const candidateCount = typeof event.payload.candidate_count === "number" ? event.payload.candidate_count : null
+          const acceptedCount = typeof event.payload.accepted_count === "number" ? event.payload.accepted_count : null
+          const rejectedCount = typeof event.payload.rejected_count === "number" ? event.payload.rejected_count : null
+          const browserDiscovered = typeof event.payload.browser_discovered === "number" ? event.payload.browser_discovered : null
+
+          return (
+            <div key={event.id} className="data-row p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium">{event.title}</div>
+                <Badge variant="secondary">{event.created_at}</Badge>
+              </div>
+              {query && <div className="mt-2 rounded-lg bg-[var(--rg-surface-soft)] px-3 py-2 text-xs">检索式：{query}</div>}
+              {event.event_type === "evidence.search.completed" && (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-[var(--rg-muted)]">
+                    候选来源 {candidateCount ?? 0} 条{browserDiscovered !== null ? ` / 浏览器额外发现 ${browserDiscovered} 条` : ""}
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    {attempts.map((item, index) => {
+                      const attempt = item as Record<string, unknown>
+                      const provider = typeof attempt.provider === "string" ? attempt.provider : `provider-${index + 1}`
+                      const enabled = Boolean(attempt.enabled)
+                      const resultCount = typeof attempt.result_count === "number" ? attempt.result_count : 0
+                      const error = typeof attempt.error === "string" ? attempt.error : ""
+                      return (
+                        <div key={`${provider}-${index}`} className="rounded-lg border border-[var(--rg-hairline)] bg-white p-3 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium">{provider}</div>
+                            <Badge variant="secondary">{enabled ? "已启用" : "未启用"}</Badge>
+                          </div>
+                          <div className="mt-2 text-[var(--rg-muted)]">返回 {resultCount} 条</div>
+                          {error && <div className="mt-1 text-[#964b36]">{error}</div>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {event.event_type === "evidence.verification.completed" && (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <Badge variant="secondary">候选 {candidateCount ?? 0}</Badge>
+                  <Badge variant="secondary">保留 {acceptedCount ?? 0}</Badge>
+                  <Badge variant="secondary">剔除 {rejectedCount ?? 0}</Badge>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
 function TimelinePanel({
   events,
   agentMap,
@@ -778,10 +849,27 @@ function EvidenceWorkbenchPanel({
         {sources.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无证据来源。</div>}
         {sources.map((source) => (
           <div key={source.id} className="data-row p-3 text-sm">
-            <div className="font-medium">{source.title}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">{source.title}</div>
+              <div className="flex flex-wrap gap-2">
+                {typeof source.metadata.provider === "string" && <Badge variant="secondary">{source.metadata.provider}</Badge>}
+                {source.metadata.browser_verification &&
+                  typeof source.metadata.browser_verification === "object" &&
+                  !Array.isArray(source.metadata.browser_verification) && (
+                    <Badge variant="secondary">
+                      {(source.metadata.browser_verification as Record<string, unknown>).accepted ? "浏览器已核验" : "待进一步核验"}
+                    </Badge>
+                  )}
+              </div>
+            </div>
             <div className="mt-1 text-xs text-[var(--rg-muted)]">
               {source.authors} {source.year ? `(${source.year})` : ""} / {claims.filter((item) => item.source_id === source.id).length} 条抽取主张 / {excerpts.filter((item) => item.source_id === source.id).length} 条摘录
             </div>
+            {(source.doi || source.url) && (
+              <div className="mt-1 break-all text-xs text-[var(--rg-muted)]">
+                {source.doi ? `DOI ${source.doi}` : source.url}
+              </div>
+            )}
             {assessments
               .filter((item) => item.source_id === source.id)
               .slice(0, 1)
