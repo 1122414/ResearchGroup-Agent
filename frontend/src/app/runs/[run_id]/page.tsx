@@ -891,17 +891,22 @@ function EvidenceWorkbenchPanel({
           )
         })}
         {sources.length === 0 && <div className="text-sm text-[var(--rg-muted)]">暂无证据来源。</div>}
-        {sources.map((source) => (
+        {sources.map((source) => {
+          const verification =
+            source.metadata.browser_verification &&
+            typeof source.metadata.browser_verification === "object" &&
+            !Array.isArray(source.metadata.browser_verification)
+              ? (source.metadata.browser_verification as Record<string, unknown>)
+              : null
+          return (
           <div key={source.id} className="data-row p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-medium">{source.title}</div>
               <div className="flex flex-wrap gap-2">
                 {typeof source.metadata.provider === "string" && <Badge variant="secondary">{source.metadata.provider}</Badge>}
-                {source.metadata.browser_verification &&
-                  typeof source.metadata.browser_verification === "object" &&
-                  !Array.isArray(source.metadata.browser_verification) && (
+                {verification && (
                     <Badge variant="secondary">
-                      {(source.metadata.browser_verification as Record<string, unknown>).accepted ? "浏览器已核验" : "待进一步核验"}
+                      {verification.accepted ? "浏览器已核验" : "待进一步核验"}
                     </Badge>
                   )}
               </div>
@@ -923,7 +928,7 @@ function EvidenceWorkbenchPanel({
                 </div>
               ))}
           </div>
-        ))}
+        )})}
       </CardContent>
     </Card>
   )
