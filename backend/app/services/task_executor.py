@@ -9,6 +9,7 @@ from .agent_skill_service import agent_skill_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
 from .literature_source_service import literature_source_service
+from .research_integrity_service import research_integrity_service
 from .reproducible_experiment_service import reproducible_experiment_service
 
 
@@ -20,6 +21,7 @@ class TaskExecutor:
         owner = AgentRepository.get_by_id(owner_id) if owner_id else None
         agent_type = owner.get("type", "researcher") if owner else "researcher"
         logger.info("[TaskExecutor] execute started | task_id=%s | type=%s | agent=%s", task.get("id"), task_type, agent_type)
+        evidence_bundle = evidence_pipeline_service.collect_for_task(task) if task_type == "literature_survey" else None
 
         prompt_map = {
             "researcher": "grad_researcher",
@@ -31,6 +33,19 @@ class TaskExecutor:
         system_prompt = prompt_loader.load(prompt_map.get(agent_type, "grad_researcher"))
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
+        literature_grounding = ""
+        if evidence_bundle is not None:
+            literature_grounding = f"""
+
+【学术诚信与证据边界】
+1. 你只能基于下方 allowed_sources 归纳，不得补写、猜测或伪造任何论文、作者、年份、DOI、URL。
+2. 若来源不足以回答任务，请明确输出“证据不足”，不要为了完整性编造结论。
+3. 只允许通过 source_id 引用，格式为 [source_id]；不要自行生成参考文献列表。
+4. 输出 JSON 中必须包含 references_used，且每一项都只能来自 allowed_sources.source_id。
+5. 当前检索 query：{evidence_bundle["query"]}
+6. allowed_sources：
+{research_integrity_service.render_allowed_sources(evidence_bundle["sources"])}
+"""
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
 任务标题：{task_title}
@@ -38,6 +53,7 @@ class TaskExecutor:
 任务描述：{task.get("description", "")}
 
 {skill_prompt}
+{literature_grounding}
 
 输出要求：
 1. 给出 summary。
@@ -61,8 +77,13 @@ class TaskExecutor:
             agent_skill_service.record_usage(active_skills, success=False)
             raise
         result = self._parse_result(raw_response)
-        if task_type == "literature_survey":
-            evidence_bundle = evidence_pipeline_service.collect_for_task(task)
+        if task_type == "literature_survey" and evidence_bundle is not None:
+            result = research_integrity_service.apply_literature_policy(
+                result,
+                evidence_bundle["sources"],
+                evidence_bundle["query"],
+                evidence_bundle["mode"],
+            )
             methods = literature_source_service.methods_from_sources(evidence_bundle["sources"])
             artifacts = literature_source_service.write_artifacts(task, evidence_bundle["sources"], methods)
             result = {

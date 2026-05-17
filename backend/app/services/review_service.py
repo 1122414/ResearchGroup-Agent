@@ -134,9 +134,9 @@ class ReviewService:
         for dimension in rubric["dimensions"]:
             score = settings.review_default_approved_score if review.get("approved", True) else settings.review_default_rejected_score
             if dimension == "traceability":
-                score = 1.0 if latest.get("papers_read") else settings.review_traceability_missing_score
+                score = 1.0 if latest.get("papers_read") or latest.get("insufficient_evidence") else settings.review_traceability_missing_score
             elif dimension == "method_mapping":
-                score = 1.0 if latest.get("methods_found") else settings.review_missing_score
+                score = 1.0 if latest.get("methods_found") or latest.get("insufficient_evidence") else settings.review_missing_score
             elif dimension == "reproducibility":
                 score = 1.0 if latest.get("reproducible_experiment", {}).get("experiment_ran") else 0.4
             elif dimension == "baseline":

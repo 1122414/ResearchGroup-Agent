@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from ..core.config import settings
+from .web_search_tool import web_search_tool
 
 
 class EvidenceProvider:
@@ -13,7 +13,7 @@ class EvidenceProvider:
         return [
             {"name": "local_attachment", "enabled": True},
             {"name": "manual_metadata", "enabled": True},
-            {"name": "tavily", "enabled": self._tavily_enabled()},
+            *web_search_tool.list_capabilities(),
             {"name": "crossref", "enabled": self._crossref_enabled()},
             {"name": "arxiv", "enabled": False},
             {"name": "semantic_scholar", "enabled": False},
@@ -23,13 +23,12 @@ class EvidenceProvider:
     def search(self, query: str) -> list[dict]:
         mode = settings.evidence_provider_mode.lower()
         if mode == "tavily":
-            return self._search_tavily(query) if self._tavily_enabled() else []
+            return web_search_tool.search(query)
         if mode == "crossref":
             return self._search_crossref(query) if self._crossref_enabled() else []
         if mode == "auto":
             results: list[dict] = []
-            if self._tavily_enabled():
-                results.extend(self._search_tavily(query))
+            results.extend(web_search_tool.search(query))
             if self._crossref_enabled():
                 results.extend(self._search_crossref(query))
             return results
@@ -42,56 +41,8 @@ class EvidenceProvider:
         return None
 
     @staticmethod
-    def _tavily_enabled() -> bool:
-        return bool(settings.evidence_remote_search_enabled and settings.tavily_api_key)
-
-    @staticmethod
     def _crossref_enabled() -> bool:
         return bool(settings.evidence_remote_search_enabled and settings.crossref_enabled)
-
-    def _search_tavily(self, query: str) -> list[dict]:
-        payload = json.dumps(
-            {
-                "api_key": settings.tavily_api_key,
-                "query": query,
-                "search_depth": settings.tavily_search_depth,
-                "max_results": settings.evidence_search_max_results,
-                "include_answer": False,
-                "include_raw_content": False,
-            }
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            f"{settings.tavily_base_url.rstrip('/')}/search",
-            data=payload,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
-            return []
-
-        normalized: list[dict] = []
-        for item in body.get("results", [])[: settings.evidence_search_max_results]:
-            normalized.append(
-                {
-                    "id": "",
-                    "title": item.get("title") or item.get("url") or "untitled source",
-                    "authors": "",
-                    "year": None,
-                    "venue": "",
-                    "doi": None,
-                    "url": item.get("url"),
-                    "source_type": "web",
-                    "metadata": {
-                        "provider": "tavily",
-                        "score": item.get("score"),
-                        "content": item.get("content") or "",
-                    },
-                }
-            )
-        return normalized
 
     def _search_crossref(self, query: str) -> list[dict]:
         params = {

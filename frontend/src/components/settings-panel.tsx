@@ -73,6 +73,18 @@ const EXPERIMENT_NUMBER_FIELDS = [
   ["experiment_remote_port", "远程端口"],
 ] as const
 
+const EVIDENCE_TEXT_FIELDS = [
+  ["web_search_provider_mode", "\u7f51\u7edc\u641c\u7d22\u63d0\u4f9b\u65b9"],
+  ["evidence_provider_mode", "\u8bc1\u636e\u68c0\u7d22\u6a21\u5f0f"],
+  ["tavily_base_url", "Tavily Base URL"],
+  ["tavily_search_depth", "Tavily \u641c\u7d22\u6df1\u5ea6"],
+] as const
+
+const EVIDENCE_NUMBER_FIELDS = [
+  ["evidence_search_max_results", "\u5355\u6b21\u68c0\u7d22\u7ed3\u679c\u4e0a\u9650"],
+  ["literature_min_grounded_sources", "\u6700\u5c11\u53ef\u4fe1\u6765\u6e90\u6570"],
+] as const
+
 export function SettingsButton() {
   const [open, setOpen] = useState(false)
 
@@ -90,6 +102,8 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<SystemSettings | null>(null)
   const [apiKeyDraft, setApiKeyDraft] = useState("")
   const [clearApiKey, setClearApiKey] = useState(false)
+  const [tavilyKeyDraft, setTavilyKeyDraft] = useState("")
+  const [clearTavilyKey, setClearTavilyKey] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
@@ -113,14 +127,20 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
       delete payload.llm_api_key
       delete payload.llm_api_key_masked
       delete payload.has_llm_api_key
+      delete payload.tavily_api_key
+      delete payload.has_tavily_api_key
       if (apiKeyDraft.trim()) payload.llm_api_key = apiKeyDraft.trim()
       if (clearApiKey) payload.clear_llm_api_key = true
+      if (tavilyKeyDraft.trim()) payload.tavily_api_key = tavilyKeyDraft.trim()
+      if (clearTavilyKey) payload.clear_tavily_api_key = true
 
       const res = await api.updateSettings(payload)
       const updated = res.updated as SystemSettings
-      setDraft((current) => (current ? { ...current, ...updated, llm_api_key: "" } : current))
+      setDraft((current) => (current ? { ...current, ...updated, llm_api_key: "", tavily_api_key: "" } : current))
       setApiKeyDraft("")
       setClearApiKey(false)
+      setTavilyKeyDraft("")
+      setClearTavilyKey(false)
       setMessage(res.message || "配置已保存")
       setTimeout(() => setMessage(""), 3500)
     } catch (err) {
@@ -190,6 +210,35 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
             <Section title="调度、运行与成本">
               <FieldGrid fields={RUNTIME_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
               <FieldGrid fields={COST_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
+            </Section>
+
+            <Section title="\u8bc1\u636e\u4e0e\u7f51\u7edc\u68c0\u7d22">
+              <div className="grid gap-3 md:grid-cols-2">
+                <ToggleRow label="\u542f\u7528\u8fdc\u7a0b\u8bc1\u636e\u68c0\u7d22" description="\u5141\u8bb8\u8bc1\u636e\u6d41\u6c34\u7ebf\u4f7f\u7528\u5916\u90e8\u68c0\u7d22\u63d0\u4f9b\u65b9\uff0c\u800c\u4e0d\u662f\u53ea\u4f9d\u8d56\u672c\u5730\u6765\u6e90\u3002" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => setValue("evidence_remote_search_enabled", value)} />
+                <ToggleRow label="\u542f\u7528\u7f51\u7edc\u641c\u7d22\u5de5\u5177" description="\u5f53\u524d\u63a5\u5165 Tavily\uff1b\u5173\u95ed\u540e\u7814\u7a76\u751f Agent \u4e0d\u4f1a\u4f7f\u7528\u7f51\u7edc\u641c\u7d22\u7ed3\u679c\u3002" checked={Boolean(draft.web_search_enabled)} onChange={(value) => setValue("web_search_enabled", value)} />
+                <ToggleRow label="\u8981\u6c42\u53ef\u4fe1\u6765\u6e90" description="\u68c0\u7d22\u4e0d\u5230\u53ef\u6838\u9a8c\u6765\u6e90\u65f6\uff0c\u7cfb\u7edf\u53ea\u4f1a\u62a5\u544a\u8bc1\u636e\u4e0d\u8db3\uff0c\u4e0d\u4f1a\u8865\u7f16\u53c2\u8003\u6587\u732e\u3002" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => setValue("literature_require_grounded_sources", value)} />
+                <ToggleRow label="\u542f\u7528\u5f15\u7528\u6821\u9a8c" description="\u62e6\u622a\u4e0d\u5728\u6765\u6e90\u767d\u540d\u5355\u4e2d\u7684 source_id\u3001URL \u6216 DOI\u3002" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => setValue("citation_validation_enabled", value)} />
+              </div>
+              <div className="soft-card mt-3 p-3">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--rg-muted)]">
+                  <KeyRound className="size-4" />
+                  Tavily API Key
+                  {draft.has_tavily_api_key ? <span className="rounded-full bg-[#f0fbf2] px-2 py-0.5 text-[#2f7341]">\u5df2\u914d\u7f6e</span> : <span className="rounded-full bg-white px-2 py-0.5 text-[var(--rg-muted)]">\u672a\u914d\u7f6e</span>}
+                </div>
+                <input
+                  type="password"
+                  value={tavilyKeyDraft}
+                  placeholder="\u586b\u5199\u65b0\u7684 Tavily API Key"
+                  onChange={(event) => setTavilyKeyDraft(event.target.value)}
+                  className="control-input h-9 w-full px-3 text-sm"
+                />
+                <label className="mt-2 flex items-center gap-2 text-xs text-[var(--rg-muted)]">
+                  <input type="checkbox" checked={clearTavilyKey} onChange={(event) => setClearTavilyKey(event.target.checked)} />
+                  \u6e05\u7a7a\u5f53\u524d Tavily API Key
+                </label>
+              </div>
+              <FieldGrid fields={EVIDENCE_TEXT_FIELDS} draft={draft} setValue={setValue} />
+              <FieldGrid fields={EVIDENCE_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
             </Section>
 
             <Section title="Agent Skill">

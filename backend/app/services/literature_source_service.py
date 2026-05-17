@@ -117,6 +117,8 @@ class LiteratureSourceService:
             scored.append((score, source))
         selected = [source for score, source in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
         if not selected:
+            if settings.literature_require_grounded_sources:
+                return []
             selected = TRACEABLE_LIBRARY[: settings.literature_fallback_source_count]
         return [self._source_view(source) for source in selected[: settings.literature_source_limit]]
 

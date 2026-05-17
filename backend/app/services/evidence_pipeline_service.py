@@ -18,6 +18,8 @@ class EvidencePipelineService:
         mode = "remote_provider" if sources else "curated_fallback"
         if not sources:
             sources = literature_source_service.select_sources(task)
+        if not sources:
+            mode = "no_grounded_source"
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in sources])
         persisted = self.persist_sources(task, normalized)
         return {"mode": mode, "query": query, **persisted}

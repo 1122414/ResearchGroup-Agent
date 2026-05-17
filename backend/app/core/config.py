@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     run_artifact_dedupe_limit: int = 100
     evidence_provider_mode: str = "auto"
     evidence_remote_search_enabled: bool = False
+    web_search_enabled: bool = False
+    web_search_provider_mode: str = "tavily"
     evidence_search_max_results: int = 5
     evidence_excerpt_max_chars: int = 1200
     evidence_stale_after_years: int = 8
@@ -95,6 +97,9 @@ class Settings(BaseSettings):
     crossref_enabled: bool = True
     crossref_base_url: str = "https://api.crossref.org"
     crossref_mailto: str = ""
+    literature_require_grounded_sources: bool = True
+    literature_min_grounded_sources: int = 1
+    citation_validation_enabled: bool = True
 
     # Agent skill evolution
     agent_skill_enabled: bool = True
