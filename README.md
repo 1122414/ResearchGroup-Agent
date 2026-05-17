@@ -146,6 +146,41 @@ GET /api/experiments/findings?run_id={run_id}
 GET /api/runs/{run_id}/artifact-manifest
 ```
 
+### 可信文献与自动推进
+
+系统现在支持两层防线来避免“先编后补证据”：
+
+1. 文献任务执行前先检索证据，再把 `allowed_sources` 注入研究生 Agent。
+2. 研究生 Agent 只能引用白名单中的 `source_id`；若没有足够可信来源，会显式返回“证据不足”，而不是生成不可核验的参考文献。
+
+相关配置可在前端设置中调整，也可以直接写入 `.env`：
+
+```env
+WEB_SEARCH_ENABLED=false
+WEB_SEARCH_PROVIDER_MODE=tavily
+TAVILY_API_KEY=
+LITERATURE_REQUIRE_GROUNDED_SOURCES=true
+LITERATURE_MIN_GROUNDED_SOURCES=1
+CITATION_VALIDATION_ENABLED=true
+RUN_INTERACTION_MODE=hitl
+```
+
+- `WEB_SEARCH_ENABLED=true` 后，当前会启用 Tavily 网络搜索工具；后续可以在同一工具边界下扩展更多搜索提供方。
+- `RUN_INTERACTION_MODE=hitl` 表示需要人工确认实验、返工和最终报告；改成 `auto` 后，这些节点会自动放行，但仍保留审批审计记录。
+
+新增功能验收脚本：
+
+```bash
+python scripts/functional_research_integrity_and_modes.py
+```
+
+它会验证：
+
+- Tavily 工具能力已暴露；
+- `auto` 模式下运行不会被人工确认阻塞；
+- 没有可信来源时，文献任务返回“证据不足”而不是伪造引用；
+- `waiting_confirmation` 状态的最近运行可以被删除。
+
 ## 常用 API
 
 ```http

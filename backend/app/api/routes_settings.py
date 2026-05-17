@@ -323,4 +323,7 @@ def _mask_secret(value: str) -> str:
 
 
 def _safe_log_settings(values: dict) -> dict:
-    return {key: ("***" if key == "llm_api_key" and value else value) for key, value in values.items()}
+    return {
+        key: ("***" if key in {"llm_api_key", "tavily_api_key"} and value else value)
+        for key, value in values.items()
+    }
