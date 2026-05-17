@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     run_artifact_title_max_length: int = 28
     run_artifact_dedupe_limit: int = 100
     evidence_provider_mode: str = "auto"
-    evidence_remote_search_enabled: bool = False
+    evidence_remote_search_enabled: bool = True
     web_search_enabled: bool = False
     web_search_provider_mode: str = "tavily"
     evidence_search_max_results: int = 5
@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     crossref_enabled: bool = True
     crossref_base_url: str = "https://api.crossref.org"
     crossref_mailto: str = ""
+    openalex_enabled: bool = True
+    openalex_base_url: str = "https://api.openalex.org"
+    openalex_mailto: str = ""
+    arxiv_enabled: bool = True
+    arxiv_base_url: str = "https://export.arxiv.org/api"
+    semantic_scholar_enabled: bool = False
+    semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1"
+    semantic_scholar_api_key: str = ""
     browser_research_enabled: bool = False
     browser_research_provider_mode: str = "browser_use"
     browser_verification_enabled: bool = False
@@ -149,6 +157,7 @@ class Settings(BaseSettings):
     review_traceability_missing_score: float = 0.45
     review_missing_score: float = 0.5
     review_report_evidence_score: float = 0.9
+    task_max_revision_rounds: int = 2
 
     # Research loop orchestration
     research_loop_auto_continue: bool = True

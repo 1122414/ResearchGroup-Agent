@@ -24,18 +24,22 @@ class WebSearchTool:
         ]
 
     def search(self, query: str) -> list[dict]:
+        return self.search_with_trace(query)["results"]
+
+    def search_with_trace(self, query: str) -> dict:
         if not settings.web_search_enabled:
-            return []
+            return {"results": [], "attempts": [self._attempt("tavily", False, 0, "web_search_disabled")]}
         mode = settings.web_search_provider_mode.lower()
         if mode in {"auto", "tavily"} and self._tavily_enabled():
-            return self._search_tavily(query)
-        return []
+            results, error = self._search_tavily(query)
+            return {"results": results, "attempts": [self._attempt("tavily", True, len(results), error)]}
+        return {"results": [], "attempts": [self._attempt("tavily", False, 0, "provider_disabled_or_unconfigured")]}
 
     @staticmethod
     def _tavily_enabled() -> bool:
         return bool(settings.web_search_enabled and settings.tavily_api_key)
 
-    def _search_tavily(self, query: str) -> list[dict]:
+    def _search_tavily(self, query: str) -> tuple[list[dict], str | None]:
         payload = json.dumps(
             {
                 "api_key": settings.tavily_api_key,
@@ -55,8 +59,8 @@ class WebSearchTool:
         try:
             with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
-            return []
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+            return [], exc.__class__.__name__
 
         normalized: list[dict] = []
         for item in body.get("results", [])[: settings.evidence_search_max_results]:
@@ -77,7 +81,17 @@ class WebSearchTool:
                     },
                 }
             )
-        return normalized
+        return normalized, None
+
+    @staticmethod
+    def _attempt(provider: str, enabled: bool, result_count: int, error: str | None = None) -> dict:
+        return {
+            "provider": provider,
+            "kind": "web_search",
+            "enabled": enabled,
+            "result_count": result_count,
+            "error": error,
+        }
 
 
 web_search_tool = WebSearchTool()

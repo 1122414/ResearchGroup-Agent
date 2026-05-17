@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from ..core.config import settings
 from ..storage.repositories import RecoveryActionRepository, TaskAttemptRepository, TaskDependencyRepository, TaskRepository
 from .task_graph_service import task_graph_service
 
@@ -80,58 +81,89 @@ class TaskRecoveryService:
             )
         return action
 
-    def create_revision_task(self, task: dict, feedback: str) -> dict:
+    def create_revision_task(self, task: dict, feedback: str) -> dict | None:
+        root_task = self._root_task(task)
+        root_task_id = root_task["id"]
+        existing_revisions = [
+            item
+            for item in TaskRepository.get_all(run_id=task["run_id"])
+            if item.get("revision_of_task_id") == root_task_id
+        ]
         existing = next(
             (
                 item
                 for item in TaskRepository.get_all(run_id=task["run_id"])
-                if item.get("revision_of_task_id") == task["id"] and item.get("status") != "completed"
+                if item.get("revision_of_task_id") == root_task_id and item.get("status") != "completed"
             ),
             None,
         )
         if existing:
             return existing
+        if len(existing_revisions) >= settings.task_max_revision_rounds:
+            return None
 
         now = datetime.now().isoformat()
         revision_task = {
             "id": f"task_revision_{uuid.uuid4().hex[:8]}",
-            "title": f"返工：{task['title']}",
-            "description": feedback or task.get("review_feedback") or "根据导师反馈完成返工。",
-            "task_type": task["task_type"],
-            "required_skills": task.get("required_skills", {}),
-            "priority": min(int(task.get("priority", 5)) + 1, 10),
-            "complexity": max(int(task.get("complexity", 5)) - 1, 1),
-            "decomposability": task.get("decomposability", 5),
+            "title": f"返工：{root_task['title']}",
+            "description": self._revision_description(root_task, feedback or task.get("review_feedback")),
+            "task_type": root_task["task_type"],
+            "required_skills": root_task.get("required_skills", {}),
+            "priority": min(int(root_task.get("priority", 5)) + 1, 10),
+            "complexity": max(int(root_task.get("complexity", 5)) - 1, 1),
+            "decomposability": root_task.get("decomposability", 5),
             "status": "pending",
-            "owner_agent": task.get("owner_agent"),
-            "collaborator_agents": task.get("collaborator_agents", []),
+            "owner_agent": root_task.get("owner_agent"),
+            "collaborator_agents": root_task.get("collaborator_agents", []),
             "subtasks": [],
             "outputs": [],
             "review_result": None,
             "review_feedback": None,
             "run_id": task["run_id"],
-            "assignment_info": task.get("assignment_info", {}),
+            "assignment_info": root_task.get("assignment_info", {}),
             "subagent_triggered": False,
             "blocked_reason": None,
-            "parallelizable": task.get("parallelizable", True),
-            "is_critical_path": task.get("is_critical_path", False),
+            "parallelizable": root_task.get("parallelizable", True),
+            "is_critical_path": root_task.get("is_critical_path", False),
             "attempt_count": 0,
             "last_checkpoint": None,
-            "revision_of_task_id": task["id"],
+            "revision_of_task_id": root_task_id,
             "created_at": now,
             "updated_at": now,
         }
         TaskRepository.insert(revision_task)
-        TaskDependencyRepository.replace_for_task(revision_task["id"], TaskDependencyRepository.get_for_task(task["id"]))
-        subtasks = list(dict.fromkeys([*(task.get("subtasks") or []), revision_task["id"]]))
+        TaskDependencyRepository.replace_for_task(revision_task["id"], TaskDependencyRepository.get_for_task(root_task_id))
+        subtasks = list(dict.fromkeys([*(root_task.get("subtasks") or []), revision_task["id"]]))
         TaskRepository.update_status(
-            task["id"],
+            root_task_id,
             "blocked",
             blocked_reason=f"等待返工任务完成: {revision_task['id']}",
             subtasks=subtasks,
         )
         task_graph_service.recompute_critical_path(task["run_id"])
         return revision_task
+
+    @staticmethod
+    def _revision_description(root_task: dict, feedback: str | None) -> str:
+        original = str(root_task.get("description") or "").strip()
+        feedback_text = str(feedback or "").strip()
+        if not feedback_text:
+            return original or "根据导师反馈完成返工。"
+        if not original:
+            return f"原始任务：{root_task.get('title', '')}\n返工要求：{feedback_text}"
+        return f"原始任务：{original}\n返工要求：{feedback_text}"
+
+    @staticmethod
+    def _root_task(task: dict) -> dict:
+        current = task
+        visited: set[str] = set()
+        while current.get("revision_of_task_id") and current["id"] not in visited:
+            visited.add(current["id"])
+            parent = TaskRepository.get_by_id(current["revision_of_task_id"])
+            if not parent:
+                break
+            current = parent
+        return current
 
     def _reset_with_action(self, task: dict, action_type: str, reason: str, payload: dict) -> dict:
         action = {

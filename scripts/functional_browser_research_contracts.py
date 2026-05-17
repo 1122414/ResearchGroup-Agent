@@ -31,7 +31,9 @@ os.environ["BROWSER_VERIFICATION_REQUIRED"] = "true"
 from backend.app.core.config import settings  # noqa: E402
 from backend.app.services.browser_research_service import browser_research_service  # noqa: E402
 from backend.app.services.evidence_pipeline_service import evidence_pipeline_service  # noqa: E402
+from backend.app.services.evidence_provider import evidence_provider  # noqa: E402
 from backend.app.storage.db import init_db  # noqa: E402
+from backend.app.storage.repositories import RunEventRepository, RunRepository  # noqa: E402
 
 
 async def fake_discover(query: str) -> list[dict]:
@@ -86,8 +88,42 @@ async def main() -> int:
         DB_PATH.unlink()
     init_db()
 
+    RunRepository.insert(
+        {
+            "id": "run_browser_contract",
+            "research_goal": "controlled browser verification",
+            "status": "executing",
+            "current_step": "evidence",
+            "task_ids": [],
+            "agent_assignments": {},
+            "created_at": "2026-05-17T00:00:00",
+            "updated_at": "2026-05-17T00:00:00",
+            "started_at": None,
+            "completed_at": None,
+            "cancel_requested_at": None,
+            "cancel_reason": None,
+            "total_cost_usd": 0,
+            "total_tokens": 0,
+            "total_llm_calls": 0,
+            "last_event_id": None,
+        }
+    )
+
+    original_search = evidence_provider.search_with_trace
     original_discover = browser_research_service.discover
     original_verify = browser_research_service.verify_candidates
+    evidence_provider.search_with_trace = lambda query: {
+        "results": [],
+        "attempts": [
+            {
+                "provider": "openalex",
+                "kind": "evidence_provider",
+                "enabled": True,
+                "result_count": 0,
+                "error": None,
+            }
+        ],
+    }
     browser_research_service.discover = fake_discover
     browser_research_service.verify_candidates = fake_verify
     try:
@@ -99,7 +135,9 @@ async def main() -> int:
                 "description": "controlled browser verification",
             }
         )
+        events = RunEventRepository.get_by_run("run_browser_contract", limit=20)
     finally:
+        evidence_provider.search_with_trace = original_search
         browser_research_service.discover = original_discover
         browser_research_service.verify_candidates = original_verify
         if DB_PATH.exists():
@@ -112,6 +150,11 @@ async def main() -> int:
     verification = source["metadata"]["browser_verification"]
     assert verification["accepted"] is True
     assert verification["doi_match"] is True
+    search_event = next(item for item in events if item["event_type"] == "evidence.search.completed")
+    verify_event = next(item for item in events if item["event_type"] == "evidence.verification.completed")
+    assert search_event["payload"]["attempts"][0]["provider"] == "openalex"
+    assert search_event["payload"]["browser_discovered"] == 2
+    assert verify_event["payload"]["accepted_count"] == 1
     print("OK - browser research contract smoke passed")
     return 0
 

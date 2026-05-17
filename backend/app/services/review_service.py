@@ -12,6 +12,9 @@ from ..storage.repositories import OutputRepository, ReviewDecisionRepository, T
 class ReviewService:
     async def review(self, task: dict) -> dict:
         logger.info("[ReviewService] review started | task_id=%s | title=%s", task.get("id"), task.get("title", "")[:40])
+        latest = self._latest_output(task)
+        if task.get("task_type") == "literature_survey" and latest.get("insufficient_evidence"):
+            return self._review_insufficient_evidence(task, latest)
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请作为导师 Agent 审核以下任务产出。
 任务标题：{task.get('title', '')}
@@ -58,26 +61,56 @@ class ReviewService:
             approved,
             average_score,
         )
+        self._persist_review(task, review)
+        return review
+
+    def _review_insufficient_evidence(self, task: dict, latest: dict) -> dict:
+        rubric = self._rubric_for_task(task.get("task_type", ""))
+        feedback = (
+            "系统未检索到足够的可核验来源，当前输出已按学术诚信策略标记为证据不足。"
+            "请先扩大或修复检索链路，再继续文献综述；不得基于模型记忆、常识或不可核验来源补写参考文献。"
+        )
+        scores = self._score_task(task, {"approved": False}, rubric)
+        average_score = round(sum(scores.values()) / max(len(scores), 1), 4)
+        review = {
+            "approved": False,
+            "feedback": feedback,
+            "rubric": rubric,
+            "scores": scores,
+            "average_score": average_score,
+            "requires_revision": True,
+            "review_mode": "insufficient_evidence_guardrail",
+            "source_mode": latest.get("source_mode"),
+        }
+        logger.info(
+            "[ReviewService] insufficient evidence guardrail | task_id=%s | score=%.4f",
+            task.get("id"),
+            average_score,
+        )
+        self._persist_review(task, review)
+        return review
+
+    def _persist_review(self, task: dict, review: dict) -> None:
         ReviewDecisionRepository.insert(
             {
                 "id": f"review_decision_{uuid.uuid4().hex[:10]}",
                 "run_id": task.get("run_id"),
                 "task_id": task["id"],
-                "rubric": rubric,
-                "scores": scores,
-                "approved": approved,
+                "rubric": review["rubric"],
+                "scores": review["scores"],
+                "approved": review["approved"],
                 "feedback": review.get("feedback", ""),
-                "requires_revision": not approved,
+                "requires_revision": review["requires_revision"],
                 "created_at": datetime.now().isoformat(),
             }
         )
         TaskRepository.update_status(
             task["id"],
-            "completed" if approved else "need_revision",
+            "completed" if review["approved"] else "need_revision",
             review_result=review,
             review_feedback=review.get("feedback", ""),
         )
-        if approved and task.get("revision_of_task_id"):
+        if review["approved"] and task.get("revision_of_task_id"):
             parent = TaskRepository.get_by_id(task["revision_of_task_id"])
             if parent:
                 TaskRepository.update_status(
@@ -99,7 +132,11 @@ class ReviewService:
                 "created_at": datetime.now().isoformat(),
             }
         )
-        return review
+
+    @staticmethod
+    def _latest_output(task: dict) -> dict:
+        outputs = task.get("outputs", []) or []
+        return outputs[-1] if outputs and isinstance(outputs[-1], dict) else {}
 
     def _parse_review(self, raw: str) -> dict:
         text = raw.strip()

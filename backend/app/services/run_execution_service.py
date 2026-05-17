@@ -278,6 +278,27 @@ class RunExecutionService:
                     )
                 if review.get("requires_revision"):
                     revision_task = task_recovery_service.create_revision_task(latest_after_review, review.get("feedback", ""))
+                    if not revision_task:
+                        terminal_feedback = (
+                            f"已达到最大返工轮次 {settings.task_max_revision_rounds}，"
+                            "系统停止继续生成返工任务，请先补充检索能力或调整任务边界。"
+                        )
+                        TaskRepository.update_status(
+                            latest_after_review["id"],
+                            "failed",
+                            blocked_reason=terminal_feedback,
+                            review_feedback=terminal_feedback,
+                        )
+                        run_event_service.emit(
+                            run_id,
+                            "revision.exhausted",
+                            "review",
+                            "返工轮次已耗尽",
+                            terminal_feedback,
+                            task_id=task["id"],
+                            agent_id=latest_task.get("owner_agent"),
+                        )
+                        continue
                     request = approval_service.ensure_pending(
                         run_id,
                         "revision_required",

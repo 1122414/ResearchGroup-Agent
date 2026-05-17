@@ -76,6 +76,10 @@ const EXPERIMENT_NUMBER_FIELDS = [
 const EVIDENCE_TEXT_FIELDS = [
   ["web_search_provider_mode", "网络搜索提供方"],
   ["evidence_provider_mode", "证据检索模式"],
+  ["openalex_base_url", "OpenAlex Base URL"],
+  ["openalex_mailto", "OpenAlex Mailto"],
+  ["arxiv_base_url", "arXiv Base URL"],
+  ["semantic_scholar_base_url", "Semantic Scholar Base URL"],
   ["browser_research_provider_mode", "浏览器调研提供方"],
   ["browser_use_model_provider", "浏览器模型提供方"],
   ["browser_use_model_name", "浏览器模型名称"],
@@ -87,6 +91,7 @@ const EVIDENCE_TEXT_FIELDS = [
 const EVIDENCE_NUMBER_FIELDS = [
   ["evidence_search_max_results", "单次检索结果上限"],
   ["literature_min_grounded_sources", "最少可信来源数"],
+  ["task_max_revision_rounds", "最大返工轮次"],
   ["browser_use_max_steps", "浏览器最大步数"],
   ["browser_use_max_candidates", "浏览器候选上限"],
 ] as const
@@ -243,6 +248,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <div className="grid gap-3 md:grid-cols-2">
                 <ToggleRow label="启用远程证据检索" description="允许证据流水线使用外部检索提供方，而不是只依赖本地来源。" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => persistValue("evidence_remote_search_enabled", value)} />
                 <ToggleRow label="启用网络搜索工具" description="当前接入 Tavily；关闭后研究生 Agent 不会使用网络搜索结果。" checked={Boolean(draft.web_search_enabled)} onChange={(value) => persistValue("web_search_enabled", value)} />
+                <ToggleRow label="启用 Crossref" description="使用 DOI 与期刊元数据检索学术论文。" checked={Boolean(draft.crossref_enabled)} onChange={(value) => persistValue("crossref_enabled", value)} />
+                <ToggleRow label="启用 OpenAlex" description="使用开放学术索引补充论文召回与交叉核验。" checked={Boolean(draft.openalex_enabled)} onChange={(value) => persistValue("openalex_enabled", value)} />
+                <ToggleRow label="启用 arXiv" description="使用 arXiv 预印本检索补充新近研究。" checked={Boolean(draft.arxiv_enabled)} onChange={(value) => persistValue("arxiv_enabled", value)} />
+                <ToggleRow label="启用 Semantic Scholar" description="接入 Semantic Scholar 论文检索；可后续配置 API Key 提升额度。" checked={Boolean(draft.semantic_scholar_enabled)} onChange={(value) => persistValue("semantic_scholar_enabled", value)} />
                 <ToggleRow label="启用浏览器调研" description="让文献调研 Agent 使用 browser-use 做受控网页发现与页面核验；不替代学术元数据源。" checked={Boolean(draft.browser_research_enabled)} onChange={(value) => persistValue("browser_research_enabled", value)} />
                 <ToggleRow label="启用浏览器核验" description="对候选来源逐条打开页面，核对标题、DOI 与页面证据。" checked={Boolean(draft.browser_verification_enabled)} onChange={(value) => persistValue("browser_verification_enabled", value)} />
                 <ToggleRow label="浏览器核验必需" description="开启后，未被浏览器成功核验的候选来源会被剔除，而不是降级保留。" checked={Boolean(draft.browser_verification_required)} onChange={(value) => persistValue("browser_verification_required", value)} />
