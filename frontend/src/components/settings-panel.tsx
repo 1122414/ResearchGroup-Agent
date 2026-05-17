@@ -76,6 +76,10 @@ const EXPERIMENT_NUMBER_FIELDS = [
 const EVIDENCE_TEXT_FIELDS = [
   ["web_search_provider_mode", "网络搜索提供方"],
   ["evidence_provider_mode", "证据检索模式"],
+  ["browser_research_provider_mode", "浏览器调研提供方"],
+  ["browser_use_model_provider", "浏览器模型提供方"],
+  ["browser_use_model_name", "浏览器模型名称"],
+  ["browser_use_config_dir", "浏览器配置目录"],
   ["tavily_base_url", "Tavily Base URL"],
   ["tavily_search_depth", "Tavily 搜索深度"],
 ] as const
@@ -83,6 +87,8 @@ const EVIDENCE_TEXT_FIELDS = [
 const EVIDENCE_NUMBER_FIELDS = [
   ["evidence_search_max_results", "单次检索结果上限"],
   ["literature_min_grounded_sources", "最少可信来源数"],
+  ["browser_use_max_steps", "浏览器最大步数"],
+  ["browser_use_max_candidates", "浏览器候选上限"],
 ] as const
 
 export function SettingsButton() {
@@ -237,6 +243,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <div className="grid gap-3 md:grid-cols-2">
                 <ToggleRow label="启用远程证据检索" description="允许证据流水线使用外部检索提供方，而不是只依赖本地来源。" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => persistValue("evidence_remote_search_enabled", value)} />
                 <ToggleRow label="启用网络搜索工具" description="当前接入 Tavily；关闭后研究生 Agent 不会使用网络搜索结果。" checked={Boolean(draft.web_search_enabled)} onChange={(value) => persistValue("web_search_enabled", value)} />
+                <ToggleRow label="启用浏览器调研" description="让文献调研 Agent 使用 browser-use 做受控网页发现与页面核验；不替代学术元数据源。" checked={Boolean(draft.browser_research_enabled)} onChange={(value) => persistValue("browser_research_enabled", value)} />
+                <ToggleRow label="启用浏览器核验" description="对候选来源逐条打开页面，核对标题、DOI 与页面证据。" checked={Boolean(draft.browser_verification_enabled)} onChange={(value) => persistValue("browser_verification_enabled", value)} />
+                <ToggleRow label="浏览器核验必需" description="开启后，未被浏览器成功核验的候选来源会被剔除，而不是降级保留。" checked={Boolean(draft.browser_verification_required)} onChange={(value) => persistValue("browser_verification_required", value)} />
+                <ToggleRow label="浏览器无头模式" description="默认后台运行浏览器；排查页面交互时可临时关闭，便于肉眼观察。" checked={Boolean(draft.browser_use_headless)} onChange={(value) => persistValue("browser_use_headless", value)} />
                 <ToggleRow label="要求可信来源" description="检索不到可核验来源时，系统只会报告证据不足，不会补编参考文献。" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => persistValue("literature_require_grounded_sources", value)} />
                 <ToggleRow label="启用引用校验" description="拦截不在来源白名单中的 source_id、URL 或 DOI。" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => persistValue("citation_validation_enabled", value)} />
               </div>
