@@ -524,13 +524,17 @@ async def get_run_approvals(run_id: str):
 async def resolve_approval(request_id: str, body: ApprovalResolutionRequest, background_tasks: BackgroundTasks):
     request = approval_service.resolve(request_id, body.approved, body.resolved_by)
     if body.approved:
-        if request["request_type"] == "revision_required" and request.get("task_id"):
-            revision_task_id = request.get("payload", {}).get("revision_task_id")
-            if revision_task_id:
-                revision_task = TaskRepository.get_by_id(revision_task_id)
-                if revision_task and revision_task.get("status") == "blocked":
-                    TaskRepository.update_status(revision_task_id, "pending", blocked_reason=None)
-            else:
+        if request["request_type"] == "revision_required":
+            payload = request.get("payload", {})
+            revision_task_ids = list(payload.get("revision_task_ids") or [])
+            if payload.get("revision_task_id"):
+                revision_task_ids.append(payload["revision_task_id"])
+            if revision_task_ids:
+                for revision_task_id in dict.fromkeys(revision_task_ids):
+                    revision_task = TaskRepository.get_by_id(revision_task_id)
+                    if revision_task and revision_task.get("status") in {"blocked", "need_revision"}:
+                        TaskRepository.update_status(revision_task_id, "pending", blocked_reason=None)
+            elif request.get("task_id"):
                 TaskRepository.update_status(
                     request["task_id"],
                     "pending",

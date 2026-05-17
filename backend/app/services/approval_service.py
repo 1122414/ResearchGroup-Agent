@@ -40,6 +40,49 @@ class ApprovalService:
         )
         return request
 
+    def ensure_grouped_pending(
+        self,
+        run_id: str,
+        request_type: str,
+        dedupe_key: str,
+        title: str,
+        message: str,
+        task_id: str,
+        revision_task_id: str,
+        task_title: str,
+    ) -> dict:
+        existing = ApprovalRequestRepository.find_pending_by_dedupe_key(run_id, request_type, dedupe_key)
+        if existing:
+            payload = dict(existing.get("payload") or {})
+            task_ids = list(dict.fromkeys([*(payload.get("task_ids") or []), task_id]))
+            revision_task_ids = list(dict.fromkeys([*(payload.get("revision_task_ids") or []), revision_task_id]))
+            task_titles = list(dict.fromkeys([*(payload.get("task_titles") or []), task_title]))
+            payload.update(
+                {
+                    "dedupe_key": dedupe_key,
+                    "task_ids": task_ids,
+                    "revision_task_ids": revision_task_ids,
+                    "task_titles": task_titles,
+                }
+            )
+            grouped_title = f"{title}（{len(task_ids)} 项）" if len(task_ids) > 1 else title
+            ApprovalRequestRepository.update(existing["id"], title=grouped_title, message=message, payload=payload)
+            return ApprovalRequestRepository.get_by_id(existing["id"]) or existing
+
+        return self.ensure_pending(
+            run_id,
+            request_type,
+            title,
+            message,
+            task_id=None,
+            payload={
+                "dedupe_key": dedupe_key,
+                "task_ids": [task_id],
+                "revision_task_ids": [revision_task_id],
+                "task_titles": [task_title],
+            },
+        )
+
     def resolve(self, request_id: str, approved: bool, resolved_by: str = "user") -> dict:
         request = ApprovalRequestRepository.get_by_id(request_id)
         if not request:

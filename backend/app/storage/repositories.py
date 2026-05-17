@@ -1373,6 +1373,15 @@ class ApprovalRequestRepository:
             if key in updates:
                 assignments.append(f"{key} = ?")
                 params.append(updates[key])
+        if "title" in updates:
+            assignments.append("title = ?")
+            params.append(updates["title"])
+        if "message" in updates:
+            assignments.append("message = ?")
+            params.append(updates["message"])
+        if "payload" in updates:
+            assignments.append("payload = ?")
+            params.append(json.dumps(updates["payload"], ensure_ascii=False))
         if assignments:
             params.append(request_id)
             conn.execute(f"UPDATE approval_requests SET {', '.join(assignments)} WHERE id = ?", params)
@@ -1422,6 +1431,13 @@ class ApprovalRequestRepository:
             ).fetchone()
         conn.close()
         return _deserialize_approval_request(row) if row else None
+
+    @staticmethod
+    def find_pending_by_dedupe_key(run_id: str, request_type: str, dedupe_key: str) -> dict | None:
+        for item in ApprovalRequestRepository.get_by_run(run_id, status="pending"):
+            if item["request_type"] == request_type and item.get("payload", {}).get("dedupe_key") == dedupe_key:
+                return item
+        return None
 
 
 class ResearchBriefRepository:

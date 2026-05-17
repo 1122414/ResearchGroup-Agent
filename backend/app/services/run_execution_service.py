@@ -299,14 +299,26 @@ class RunExecutionService:
                             agent_id=latest_task.get("owner_agent"),
                         )
                         continue
-                    request = approval_service.ensure_pending(
-                        run_id,
-                        "revision_required",
-                        "导师要求返工",
-                        review.get("feedback", "导师要求补充修改后重做"),
-                        task_id=task["id"],
-                        payload={"revision_task_id": revision_task["id"]},
-                    )
+                    if review.get("review_mode") == "insufficient_evidence_guardrail":
+                        request = approval_service.ensure_grouped_pending(
+                            run_id,
+                            "revision_required",
+                            "revision_required:insufficient_evidence_guardrail",
+                            "导师要求返工",
+                            review.get("feedback", "导师要求补充修改后重做"),
+                            task_id=task["id"],
+                            revision_task_id=revision_task["id"],
+                            task_title=latest_after_review.get("title", task["id"]),
+                        )
+                    else:
+                        request = approval_service.ensure_pending(
+                            run_id,
+                            "revision_required",
+                            "导师要求返工",
+                            review.get("feedback", "导师要求补充修改后重做"),
+                            task_id=task["id"],
+                            payload={"revision_task_id": revision_task["id"]},
+                        )
                     if self._auto_mode_enabled():
                         approval_service.resolve(request["id"], True, resolved_by="system:auto")
                         TaskRepository.update_status(revision_task["id"], "pending", blocked_reason=None)

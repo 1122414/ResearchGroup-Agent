@@ -374,6 +374,15 @@ function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResol
             <div>
               <div className="font-medium">{item.title}</div>
               <div className="mt-1 text-[var(--rg-muted)]">{item.message}</div>
+              {Array.isArray(item.payload.task_titles) && item.payload.task_titles.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  {(item.payload.task_titles as string[]).map((title) => (
+                    <Badge key={title} variant="secondary">
+                      {title}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => onResolve(item, false)}>
