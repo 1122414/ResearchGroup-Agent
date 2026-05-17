@@ -19,7 +19,7 @@ class TaskRecoveryService:
             "started_at": datetime.now().isoformat(),
         }
         TaskAttemptRepository.insert(attempt)
-        TaskRepository.update_status(task["id"], task.get("status", "running"), attempt_count=attempt_number)
+        TaskRepository.update_status(task["id"], "running", attempt_count=attempt_number)
         return attempt
 
     def complete_attempt(self, task_id: str, attempt_id: str, checkpoint: str | None = None):

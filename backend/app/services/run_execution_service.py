@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -33,7 +34,11 @@ class RunCancelled(Exception):
 
 
 class RunExecutionService:
+    def __init__(self) -> None:
+        self._active_tasks: dict[str, asyncio.Task] = {}
+
     async def execute(self, run_id: str) -> dict:
+        self._register_active_task(run_id)
         logger.info("[RunExecution] execute started | run_id=%s", run_id)
         run = RunRepository.get_by_id(run_id)
         if not run:
@@ -115,7 +120,7 @@ class RunExecutionService:
             self._reset_agents(run_id)
             run_event_service.emit(run_id, "run.completed", "run", "运行完成", "全部任务已归档，Agent 已回到空闲状态")
             return self.get_summary(run_id)
-        except RunCancelled:
+        except (RunCancelled, asyncio.CancelledError):
             return self._cancel_now(run_id)
         except Exception as exc:
             RunRepository.update_status(run_id, RunStatus.failed.value, current_step=f"执行失败: {exc}", completed_at=datetime.now().isoformat())
@@ -123,6 +128,8 @@ class RunExecutionService:
             run_event_service.emit(run_id, "run.failed", "error", "运行失败", str(exc))
             logger.error("[RunExecution] execute failed | run_id=%s | error=%s", run_id, exc, exc_info=True)
             raise
+        finally:
+            self._unregister_active_task(run_id)
 
     async def _initialize_run(self, run: dict) -> list[dict]:
         run_id = run["id"]
@@ -306,6 +313,9 @@ class RunExecutionService:
             cancel_reason=reason,
         )
         run_event_service.emit(run_id, "run.cancel_requested", "cancel", "请求取消运行", reason)
+        if self._cancel_active_task(run_id):
+            return RunRepository.get_by_id(run_id)
+        self._cancel_now(run_id)
         return RunRepository.get_by_id(run_id)
 
     def get_summary(self, run_id: str) -> dict:
@@ -372,6 +382,7 @@ class RunExecutionService:
 
     def _cancel_now(self, run_id: str) -> dict:
         RunRepository.update_status(run_id, RunStatus.cancelled.value, current_step="运行已取消", completed_at=datetime.now().isoformat())
+        self._cancel_inflight_tasks(run_id)
         self._reset_agents(run_id)
         run_event_service.emit(run_id, "run.cancelled", "cancel", "运行已取消", "运行被用户取消")
         return self.get_summary(run_id)
@@ -382,6 +393,29 @@ class RunExecutionService:
         agent_ids = {task.get("owner_agent") for task in tasks if task.get("owner_agent")}
         for agent_id in agent_ids:
             AgentRepository.update_status(agent_id, status, 0.0, current_tasks=[])
+
+    def _register_active_task(self, run_id: str) -> None:
+        task = asyncio.current_task()
+        if task:
+            self._active_tasks[run_id] = task
+
+    def _unregister_active_task(self, run_id: str) -> None:
+        task = asyncio.current_task()
+        if task and self._active_tasks.get(run_id) is task:
+            self._active_tasks.pop(run_id, None)
+
+    def _cancel_active_task(self, run_id: str) -> bool:
+        task = self._active_tasks.get(run_id)
+        if not task or task.done():
+            return False
+        task.cancel()
+        return True
+
+    def _cancel_inflight_tasks(self, run_id: str) -> None:
+        terminal_statuses = {"completed", "failed", "archived"}
+        for task in TaskRepository.get_all(run_id=run_id):
+            if task.get("status") not in terminal_statuses:
+                TaskRepository.update_status(task["id"], "blocked", blocked_reason="运行已取消")
 
 
 run_execution_service = RunExecutionService()

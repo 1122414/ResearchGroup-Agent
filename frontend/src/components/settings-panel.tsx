@@ -74,15 +74,15 @@ const EXPERIMENT_NUMBER_FIELDS = [
 ] as const
 
 const EVIDENCE_TEXT_FIELDS = [
-  ["web_search_provider_mode", "\u7f51\u7edc\u641c\u7d22\u63d0\u4f9b\u65b9"],
-  ["evidence_provider_mode", "\u8bc1\u636e\u68c0\u7d22\u6a21\u5f0f"],
+  ["web_search_provider_mode", "网络搜索提供方"],
+  ["evidence_provider_mode", "证据检索模式"],
   ["tavily_base_url", "Tavily Base URL"],
-  ["tavily_search_depth", "Tavily \u641c\u7d22\u6df1\u5ea6"],
+  ["tavily_search_depth", "Tavily 搜索深度"],
 ] as const
 
 const EVIDENCE_NUMBER_FIELDS = [
-  ["evidence_search_max_results", "\u5355\u6b21\u68c0\u7d22\u7ed3\u679c\u4e0a\u9650"],
-  ["literature_min_grounded_sources", "\u6700\u5c11\u53ef\u4fe1\u6765\u6e90\u6570"],
+  ["evidence_search_max_results", "单次检索结果上限"],
+  ["literature_min_grounded_sources", "最少可信来源数"],
 ] as const
 
 export function SettingsButton() {
@@ -173,7 +173,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <div className="grid gap-3 md:grid-cols-2">
                 <ToggleRow label="Mock 模式" description="开启后使用本地模拟结果，不调用真实 LLM。" checked={Boolean(draft.mock_mode)} onChange={(value) => setValue("mock_mode", value)} />
                 <ToggleRow label="运行取消检查" description="开启后执行链路会在阶段边界响应取消。" checked={Boolean(draft.run_cancel_check_enabled)} onChange={(value) => setValue("run_cancel_check_enabled", value)} />
-                <ToggleRow label="?????" description="????????????????????????????" checked={String(draft.run_interaction_mode ?? "hitl") === "auto"} onChange={(value) => setValue("run_interaction_mode", value ? "auto" : "hitl")} />
+                <ToggleRow label="全自动推进" description="开启后自动放行实验、返工和报告发布；关闭时保留人工确认。" checked={String(draft.run_interaction_mode ?? "hitl") === "auto"} onChange={(value) => setValue("run_interaction_mode", value ? "auto" : "hitl")} />
                 <ToggleRow label="多模态输入" description="开启后允许图片进入可用性检查，需配置视觉模型。" checked={Boolean(draft.multimodal_enabled)} onChange={(value) => setValue("multimodal_enabled", value)} />
                 <ToggleRow label="Agent Skill 系统" description="开启后允许维护和使用 Agent 专属 skill。" checked={Boolean(draft.agent_skill_enabled)} onChange={(value) => setValue("agent_skill_enabled", value)} />
                 <ToggleRow label="自动沉淀 Skill" description="开启后任务完成时会生成并评估 skill 候选。" checked={Boolean(draft.skill_auto_capture_enabled)} onChange={(value) => setValue("skill_auto_capture_enabled", value)} />
@@ -213,29 +213,29 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <FieldGrid fields={COST_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
             </Section>
 
-            <Section title="\u8bc1\u636e\u4e0e\u7f51\u7edc\u68c0\u7d22">
+            <Section title="证据与网络检索">
               <div className="grid gap-3 md:grid-cols-2">
-                <ToggleRow label="\u542f\u7528\u8fdc\u7a0b\u8bc1\u636e\u68c0\u7d22" description="\u5141\u8bb8\u8bc1\u636e\u6d41\u6c34\u7ebf\u4f7f\u7528\u5916\u90e8\u68c0\u7d22\u63d0\u4f9b\u65b9\uff0c\u800c\u4e0d\u662f\u53ea\u4f9d\u8d56\u672c\u5730\u6765\u6e90\u3002" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => setValue("evidence_remote_search_enabled", value)} />
-                <ToggleRow label="\u542f\u7528\u7f51\u7edc\u641c\u7d22\u5de5\u5177" description="\u5f53\u524d\u63a5\u5165 Tavily\uff1b\u5173\u95ed\u540e\u7814\u7a76\u751f Agent \u4e0d\u4f1a\u4f7f\u7528\u7f51\u7edc\u641c\u7d22\u7ed3\u679c\u3002" checked={Boolean(draft.web_search_enabled)} onChange={(value) => setValue("web_search_enabled", value)} />
-                <ToggleRow label="\u8981\u6c42\u53ef\u4fe1\u6765\u6e90" description="\u68c0\u7d22\u4e0d\u5230\u53ef\u6838\u9a8c\u6765\u6e90\u65f6\uff0c\u7cfb\u7edf\u53ea\u4f1a\u62a5\u544a\u8bc1\u636e\u4e0d\u8db3\uff0c\u4e0d\u4f1a\u8865\u7f16\u53c2\u8003\u6587\u732e\u3002" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => setValue("literature_require_grounded_sources", value)} />
-                <ToggleRow label="\u542f\u7528\u5f15\u7528\u6821\u9a8c" description="\u62e6\u622a\u4e0d\u5728\u6765\u6e90\u767d\u540d\u5355\u4e2d\u7684 source_id\u3001URL \u6216 DOI\u3002" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => setValue("citation_validation_enabled", value)} />
+                <ToggleRow label="启用远程证据检索" description="允许证据流水线使用外部检索提供方，而不是只依赖本地来源。" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => setValue("evidence_remote_search_enabled", value)} />
+                <ToggleRow label="启用网络搜索工具" description="当前接入 Tavily；关闭后研究生 Agent 不会使用网络搜索结果。" checked={Boolean(draft.web_search_enabled)} onChange={(value) => setValue("web_search_enabled", value)} />
+                <ToggleRow label="要求可信来源" description="检索不到可核验来源时，系统只会报告证据不足，不会补编参考文献。" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => setValue("literature_require_grounded_sources", value)} />
+                <ToggleRow label="启用引用校验" description="拦截不在来源白名单中的 source_id、URL 或 DOI。" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => setValue("citation_validation_enabled", value)} />
               </div>
               <div className="soft-card mt-3 p-3">
                 <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--rg-muted)]">
                   <KeyRound className="size-4" />
                   Tavily API Key
-                  {draft.has_tavily_api_key ? <span className="rounded-full bg-[#f0fbf2] px-2 py-0.5 text-[#2f7341]">\u5df2\u914d\u7f6e</span> : <span className="rounded-full bg-white px-2 py-0.5 text-[var(--rg-muted)]">\u672a\u914d\u7f6e</span>}
+                  {draft.has_tavily_api_key ? <span className="rounded-full bg-[#f0fbf2] px-2 py-0.5 text-[#2f7341]">已配置</span> : <span className="rounded-full bg-white px-2 py-0.5 text-[var(--rg-muted)]">未配置</span>}
                 </div>
                 <input
                   type="password"
                   value={tavilyKeyDraft}
-                  placeholder="\u586b\u5199\u65b0\u7684 Tavily API Key"
+                  placeholder="填写新的 Tavily API Key"
                   onChange={(event) => setTavilyKeyDraft(event.target.value)}
                   className="control-input h-9 w-full px-3 text-sm"
                 />
                 <label className="mt-2 flex items-center gap-2 text-xs text-[var(--rg-muted)]">
                   <input type="checkbox" checked={clearTavilyKey} onChange={(event) => setClearTavilyKey(event.target.checked)} />
-                  \u6e05\u7a7a\u5f53\u524d Tavily API Key
+                  清空当前 Tavily API Key
                 </label>
               </div>
               <FieldGrid fields={EVIDENCE_TEXT_FIELDS} draft={draft} setValue={setValue} />
