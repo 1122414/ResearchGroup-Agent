@@ -173,6 +173,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               <div className="grid gap-3 md:grid-cols-2">
                 <ToggleRow label="Mock 模式" description="开启后使用本地模拟结果，不调用真实 LLM。" checked={Boolean(draft.mock_mode)} onChange={(value) => setValue("mock_mode", value)} />
                 <ToggleRow label="运行取消检查" description="开启后执行链路会在阶段边界响应取消。" checked={Boolean(draft.run_cancel_check_enabled)} onChange={(value) => setValue("run_cancel_check_enabled", value)} />
+                <ToggleRow label="?????" description="????????????????????????????" checked={String(draft.run_interaction_mode ?? "hitl") === "auto"} onChange={(value) => setValue("run_interaction_mode", value ? "auto" : "hitl")} />
                 <ToggleRow label="多模态输入" description="开启后允许图片进入可用性检查，需配置视觉模型。" checked={Boolean(draft.multimodal_enabled)} onChange={(value) => setValue("multimodal_enabled", value)} />
                 <ToggleRow label="Agent Skill 系统" description="开启后允许维护和使用 Agent 专属 skill。" checked={Boolean(draft.agent_skill_enabled)} onChange={(value) => setValue("agent_skill_enabled", value)} />
                 <ToggleRow label="自动沉淀 Skill" description="开启后任务完成时会生成并评估 skill 候选。" checked={Boolean(draft.skill_auto_capture_enabled)} onChange={(value) => setValue("skill_auto_capture_enabled", value)} />

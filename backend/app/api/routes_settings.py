@@ -40,6 +40,7 @@ ALLOWED_FIELDS = {
     "run_poll_interval_ms",
     "frontend_log_flush_interval_ms",
     "run_cancel_check_enabled",
+    "run_interaction_mode",
     "run_event_default_limit",
     "run_event_max_limit",
     "attachment_extract_max_chars",
@@ -148,6 +149,7 @@ async def get_settings():
         "run_poll_interval_ms": settings.run_poll_interval_ms,
         "frontend_log_flush_interval_ms": settings.frontend_log_flush_interval_ms,
         "run_cancel_check_enabled": settings.run_cancel_check_enabled,
+        "run_interaction_mode": settings.run_interaction_mode,
         "run_event_default_limit": settings.run_event_default_limit,
         "run_event_max_limit": settings.run_event_max_limit,
         "attachment_extract_max_chars": settings.attachment_extract_max_chars,
@@ -261,6 +263,9 @@ async def update_settings(body: dict):
 
 
 def _coerce_value(key: str, value):
+    if key == "run_interaction_mode":
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in {"auto", "hitl"} else settings.run_interaction_mode
     current = getattr(settings, key, None)
     if isinstance(current, bool):
         if isinstance(value, str):

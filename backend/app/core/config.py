@@ -64,6 +64,7 @@ class Settings(BaseSettings):
 
     # Runtime behavior
     run_cancel_check_enabled: bool = True
+    run_interaction_mode: str = "hitl"
     run_event_default_limit: int = 100
     run_event_max_limit: int = 500
     attachment_extract_max_chars: int = 12000

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
+from ..core.config import settings
 from ..core.logger import logger
 from ..models.run import RunStatus
 from ..storage.repositories import (
@@ -94,13 +95,13 @@ class RunExecutionService:
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
                 return self.get_summary(run_id)
 
-            if not self._approved(run_id, "report_publish"):
-                approval_service.ensure_pending(
-                    run_id,
-                    "report_publish",
-                    "发布最终报告",
-                    "研究任务均已完成，请确认生成最终报告。",
-                )
+            if not self._ensure_approval(
+                run_id,
+                "report_publish",
+                None,
+                "生成最终报告",
+                "研究任务均已完成，请确认是否生成最终报告。",
+            ):
                 return self._pause_for_confirmation(run_id)
 
             self._assert_not_cancelled(run_id)
@@ -210,14 +211,13 @@ class RunExecutionService:
             ready_ids = {item["id"] for item in task_graph_service.ready_tasks(TaskRepository.get_all(run_id=run_id))}
             if latest.get("status") == "completed" or latest["id"] not in ready_ids:
                 continue
-            if latest.get("task_type") == "experiment_design" and not self._approved(run_id, "experiment_execute", latest["id"]):
-                approval_service.ensure_pending(
-                    run_id,
-                    "experiment_execute",
-                    "执行实验任务",
-                    f"请确认执行实验任务：{latest.get('title', '')}",
-                    task_id=latest["id"],
-                )
+            if latest.get("task_type") == "experiment_design" and not self._ensure_approval(
+                run_id,
+                "experiment_execute",
+                latest["id"],
+                "执行实验任务",
+                f"将开始执行高风险实验任务：{latest.get('title', '')}",
+            ):
                 continue
             await self._execute_one_task(run_id, latest)
 
@@ -269,14 +269,17 @@ class RunExecutionService:
                     )
                 if review.get("requires_revision"):
                     revision_task = task_recovery_service.create_revision_task(latest_after_review, review.get("feedback", ""))
-                    approval_service.ensure_pending(
+                    request = approval_service.ensure_pending(
                         run_id,
                         "revision_required",
                         "导师要求返工",
-                        review.get("feedback", "导师要求修改后重做"),
+                        review.get("feedback", "导师要求补充修改后重做"),
                         task_id=task["id"],
                         payload={"revision_task_id": revision_task["id"]},
                     )
+                    if self._auto_mode_enabled():
+                        approval_service.resolve(request["id"], True, resolved_by="system:auto")
+                        TaskRepository.update_status(revision_task["id"], "pending", blocked_reason=None)
 
     def request_cancel(self, run_id: str, reason: str = "用户取消运行") -> dict:
         run = RunRepository.get_by_id(run_id)
@@ -336,6 +339,19 @@ class RunExecutionService:
     def _pause_for_confirmation(self, run_id: str) -> dict:
         RunRepository.update_status(run_id, RunStatus.waiting_confirmation.value, current_step="等待人工确认")
         return self.get_summary(run_id)
+
+    @staticmethod
+    def _auto_mode_enabled() -> bool:
+        return settings.run_interaction_mode.strip().lower() == "auto"
+
+    def _ensure_approval(self, run_id: str, request_type: str, task_id: str | None, title: str, message: str) -> bool:
+        if self._approved(run_id, request_type, task_id):
+            return True
+        request = approval_service.ensure_pending(run_id, request_type, title, message, task_id=task_id)
+        if self._auto_mode_enabled():
+            approval_service.resolve(request["id"], True, resolved_by="system:auto")
+            return True
+        return False
 
     def _has_pending_approval(self, run_id: str) -> bool:
         return bool(ApprovalRequestRepository.get_by_run(run_id, status="pending"))
