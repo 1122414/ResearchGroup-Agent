@@ -34,6 +34,7 @@ import {
 } from "@/lib/types"
 
 const FINAL_STATUSES = new Set(["completed", "failed", "cancelled"])
+type RunView = "overview" | "workbench" | "evidence" | "audit"
 const RESEARCH_CLAIM_STATUS_LABELS: Record<string, string> = {
   draft: "待验证",
   supported: "已支持",
@@ -64,47 +65,64 @@ export default function RunDetailPage() {
   const [reviews, setReviews] = useState<ReviewDecision[]>([])
   const [attempts, setAttempts] = useState<TaskAttempt[]>([])
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
-  const [view, setView] = useState<"overview" | "workbench" | "evidence" | "audit">("overview")
+  const [view, setView] = useState<RunView>("overview")
+  const [loadedViews, setLoadedViews] = useState<Record<RunView, boolean>>({
+    overview: false,
+    workbench: false,
+    evidence: false,
+    audit: false,
+  })
   const [selectedEventIndex, setSelectedEventIndex] = useState(0)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState(false)
+  const runStatus = summary?.run.status
 
-  const refresh = useCallback(async () => {
-    const [
-      summaryData,
-      eventsData,
-      usageData,
-      graphData,
-      memoryData,
-      evidenceData,
-      researchStateData,
-      researchLoopData,
-      protocolData,
-      experimentResultData,
-      experimentFindingData,
-      reviewData,
-      attemptData,
-      approvalData,
-    ] = await Promise.all([
+  const refreshCore = useCallback(async () => {
+    const [summaryData, eventsData] = await Promise.all([
       api.getRunSummary(runId),
-      api.getRunEvents(runId, 200),
-      api.getRunUsage(runId),
-      api.getRunGraph(runId),
-      api.getRunMemory(runId),
-      api.getRunEvidence(runId),
-      api.getRunResearchState(runId),
-      api.getRunResearchLoop(runId),
-      api.getExperimentProtocols(runId),
-      api.getExperimentResults(runId),
-      api.getExperimentFindings(runId),
-      api.getRunReviews(runId),
-      api.getRunAttempts(runId),
-      api.getRunApprovals(runId),
+      api.getRunEvents(runId, 120),
     ])
     setSummary(summaryData)
     setEvents(eventsData.events)
-    setUsageItems(usageData.items)
+    setSelectedEventIndex((index) => Math.min(index, Math.max(eventsData.events.length - 1, 0)))
+    return summaryData
+  }, [runId])
+
+  const refreshOverview = useCallback(async () => {
+    const [researchStateData, researchLoopData, approvalData] = await Promise.all([
+      api.getRunResearchState(runId),
+      api.getRunResearchLoop(runId),
+      api.getRunApprovals(runId),
+    ])
+    setResearchClaims(researchStateData.claims)
+    setLoopSnapshot(researchLoopData)
+    setApprovals(approvalData.items)
+    setLoadedViews((current) => ({ ...current, overview: true }))
+  }, [runId])
+
+  const refreshWorkbench = useCallback(async () => {
+    const [graphData, attemptData, protocolData, experimentResultData] = await Promise.all([
+      api.getRunGraph(runId),
+      api.getRunAttempts(runId),
+      api.getExperimentProtocols(runId),
+      api.getExperimentResults(runId),
+    ])
     setGraph(graphData)
+    setAttempts(attemptData.items)
+    setProtocols(protocolData.protocols)
+    setExperimentResults(experimentResultData.results)
+    setLoadedViews((current) => ({ ...current, workbench: true }))
+  }, [runId])
+
+  const refreshEvidence = useCallback(async () => {
+    const [memoryData, evidenceData, researchStateData, experimentResultData, experimentFindingData, reviewData] = await Promise.all([
+      api.getRunMemory(runId),
+      api.getRunEvidence(runId),
+      api.getRunResearchState(runId),
+      api.getExperimentResults(runId),
+      api.getExperimentFindings(runId),
+      api.getRunReviews(runId),
+    ])
     setMemory(memoryData.items)
     setSources(evidenceData.sources)
     setClaims(evidenceData.claims)
@@ -112,26 +130,39 @@ export default function RunDetailPage() {
     setExcerpts(evidenceData.excerpts)
     setAssessments(evidenceData.assessments)
     setLinks(evidenceData.links)
-    setLoopSnapshot(researchLoopData)
-    setProtocols(protocolData.protocols)
     setExperimentResults(experimentResultData.results)
     setExperimentFindings(experimentFindingData.findings)
     setReviews(reviewData.items)
-    setAttempts(attemptData.items)
-    setApprovals(approvalData.items)
-    setSelectedEventIndex((index) => Math.min(index, Math.max(eventsData.events.length - 1, 0)))
+    setLoadedViews((current) => ({ ...current, evidence: true }))
   }, [runId])
+
+  const refreshAudit = useCallback(async () => {
+    const usageData = await api.getRunUsage(runId)
+    setUsageItems(usageData.items)
+    setLoadedViews((current) => ({ ...current, audit: true }))
+  }, [runId])
+
+  const refreshView = useCallback(
+    async (targetView: RunView) => {
+      if (targetView === "overview") await refreshOverview()
+      if (targetView === "workbench") await refreshWorkbench()
+      if (targetView === "evidence") await refreshEvidence()
+      if (targetView === "audit") await refreshAudit()
+    },
+    [refreshAudit, refreshEvidence, refreshOverview, refreshWorkbench],
+  )
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        await refresh()
+        const initialSummary = await refreshCore()
+        await refreshOverview()
         if (cancelled) return
-        const current = await api.getRun(runId)
-        if (current.run.status === "created" && !startedRef.current) {
+        if (initialSummary.run.status === "created" && !startedRef.current) {
           startedRef.current = true
           await api.startRun(runId)
+          await refreshCore()
         }
         setError("")
       } catch (err) {
@@ -139,18 +170,24 @@ export default function RunDetailPage() {
       }
     }
     load()
-    const timer = window.setInterval(() => {
-      setSummary((current) => {
-        if (!current || FINAL_STATUSES.has(current.run.status)) return current
-        refresh().catch(() => undefined)
-        return current
-      })
-    }, 1500)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
     }
-  }, [refresh, runId])
+  }, [refreshCore, refreshOverview, runId])
+
+  useEffect(() => {
+    if (!runStatus || FINAL_STATUSES.has(runStatus)) return
+    const coreTimer = window.setInterval(() => {
+      refreshCore().catch(() => undefined)
+    }, 2000)
+    const viewTimer = window.setInterval(() => {
+      refreshView(view).catch(() => undefined)
+    }, 8000)
+    return () => {
+      window.clearInterval(coreTimer)
+      window.clearInterval(viewTimer)
+    }
+  }, [refreshCore, refreshView, runStatus, view])
 
   const agentMap = useMemo(
     () => Object.fromEntries((summary?.agents || []).map((agent) => [agent.id, agent.name])),
@@ -166,7 +203,7 @@ export default function RunDetailPage() {
     setCanceling(true)
     try {
       await api.cancelRun(summary.run.id)
-      await refresh()
+      await Promise.all([refreshCore(), refreshOverview()])
     } catch (err) {
       setError(err instanceof Error ? err.message : "取消失败")
     } finally {
@@ -176,7 +213,14 @@ export default function RunDetailPage() {
 
   const handleApproval = async (request: ApprovalRequest, approved: boolean) => {
     await api.resolveApproval(request.id, approved)
-    await refresh()
+    await Promise.all([refreshCore(), refreshOverview()])
+  }
+
+  const handleViewChange = (nextView: RunView) => {
+    setView(nextView)
+    if (!loadedViews[nextView]) {
+      refreshView(nextView).catch(() => undefined)
+    }
   }
 
   if (!summary) return <div className="page-stack text-sm text-[var(--rg-muted)]">正在加载运行详情...</div>
@@ -228,7 +272,7 @@ export default function RunDetailPage() {
         ].map((item) => (
           <button
             key={item.key}
-            onClick={() => setView(item.key as typeof view)}
+            onClick={() => handleViewChange(item.key as RunView)}
             className={`rounded-lg px-3 py-1.5 text-sm transition ${
               view === item.key ? "bg-[var(--rg-linear)] text-white" : "text-[var(--rg-body)] hover:bg-[var(--rg-surface-soft)]"
             }`}
