@@ -343,8 +343,8 @@ function CockpitList({ title, items, empty }: { title: string; items: string[]; 
       <div className="text-sm font-semibold text-[var(--rg-ink)]">{title}</div>
       <div className="mt-2 space-y-1 text-sm text-[var(--rg-body)]">
         {items.length === 0 && <div className="text-[var(--rg-muted)]">{empty}</div>}
-        {items.slice(0, 4).map((item) => (
-          <div key={item} className="truncate">
+        {items.slice(0, 4).map((item, index) => (
+          <div key={`${item}-${index}`} className="truncate">
             {item}
           </div>
         ))}

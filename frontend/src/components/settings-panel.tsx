@@ -118,6 +118,26 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
     setDraft((current) => (current ? { ...current, [key]: value } : current))
   }
 
+  const persistValue = async (key: string, value: string | number | boolean) => {
+    if (!draft) return
+    const previous = draft[key]
+    setValue(key, value)
+    setSaving(true)
+    setMessage("")
+    try {
+      const res = await api.updateSettings({ [key]: value })
+      const updated = res.updated as SystemSettings
+      setDraft((current) => (current ? { ...current, ...updated } : current))
+      setMessage("配置已保存")
+      window.setTimeout(() => setMessage(""), 2200)
+    } catch (err) {
+      setValue(key, previous)
+      setMessage(err instanceof Error ? err.message : "保存配置失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const save = async () => {
     if (!draft) return
     setSaving(true)
@@ -171,17 +191,17 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
           <div className="space-y-4 text-sm">
             <Section title="运行开关">
               <div className="grid gap-3 md:grid-cols-2">
-                <ToggleRow label="Mock 模式" description="开启后使用本地模拟结果，不调用真实 LLM。" checked={Boolean(draft.mock_mode)} onChange={(value) => setValue("mock_mode", value)} />
-                <ToggleRow label="运行取消检查" description="开启后执行链路会在阶段边界响应取消。" checked={Boolean(draft.run_cancel_check_enabled)} onChange={(value) => setValue("run_cancel_check_enabled", value)} />
-                <ToggleRow label="全自动推进" description="开启后自动放行实验、返工和报告发布；关闭时保留人工确认。" checked={String(draft.run_interaction_mode ?? "hitl") === "auto"} onChange={(value) => setValue("run_interaction_mode", value ? "auto" : "hitl")} />
-                <ToggleRow label="多模态输入" description="开启后允许图片进入可用性检查，需配置视觉模型。" checked={Boolean(draft.multimodal_enabled)} onChange={(value) => setValue("multimodal_enabled", value)} />
-                <ToggleRow label="Agent Skill 系统" description="开启后允许维护和使用 Agent 专属 skill。" checked={Boolean(draft.agent_skill_enabled)} onChange={(value) => setValue("agent_skill_enabled", value)} />
-                <ToggleRow label="自动沉淀 Skill" description="开启后任务完成时会生成并评估 skill 候选。" checked={Boolean(draft.skill_auto_capture_enabled)} onChange={(value) => setValue("skill_auto_capture_enabled", value)} />
-                <ToggleRow label="Skill 敏感信息扫描" description="开启后写入 skill 前会过滤密钥、环境变量和隐私内容。" checked={Boolean(draft.skill_sensitive_scan_enabled)} onChange={(value) => setValue("skill_sensitive_scan_enabled", value)} />
-                <ToggleRow label="实验执行器" description="开启后实验 Agent 可以提交待审查实验计划。" checked={Boolean(draft.experiment_execution_enabled)} onChange={(value) => setValue("experiment_execution_enabled", value)} />
-                <ToggleRow label="实验强制审查" description="开启后所有实验计划都必须用户确认后执行。" checked={Boolean(draft.experiment_require_review)} onChange={(value) => setValue("experiment_require_review", value)} />
-                <ToggleRow label="允许实验联网" description="仅影响风险扫描，危险命令仍会要求确认。" checked={Boolean(draft.experiment_allow_network)} onChange={(value) => setValue("experiment_allow_network", value)} />
-                <ToggleRow label="允许安装依赖" description="允许 pip/npm/conda 安装类命令进入可审查流程。" checked={Boolean(draft.experiment_allow_package_install)} onChange={(value) => setValue("experiment_allow_package_install", value)} />
+                <ToggleRow label="Mock 模式" description="开启后使用本地模拟结果，不调用真实 LLM。" checked={Boolean(draft.mock_mode)} onChange={(value) => persistValue("mock_mode", value)} />
+                <ToggleRow label="运行取消检查" description="开启后执行链路会在阶段边界响应取消。" checked={Boolean(draft.run_cancel_check_enabled)} onChange={(value) => persistValue("run_cancel_check_enabled", value)} />
+                <ToggleRow label="全自动推进" description="开启后自动放行实验、返工和报告发布；关闭时保留人工确认。" checked={String(draft.run_interaction_mode ?? "hitl") === "auto"} onChange={(value) => persistValue("run_interaction_mode", value ? "auto" : "hitl")} />
+                <ToggleRow label="多模态输入" description="开启后允许图片进入可用性检查，需配置视觉模型。" checked={Boolean(draft.multimodal_enabled)} onChange={(value) => persistValue("multimodal_enabled", value)} />
+                <ToggleRow label="Agent Skill 系统" description="开启后允许维护和使用 Agent 专属 skill。" checked={Boolean(draft.agent_skill_enabled)} onChange={(value) => persistValue("agent_skill_enabled", value)} />
+                <ToggleRow label="自动沉淀 Skill" description="开启后任务完成时会生成并评估 skill 候选。" checked={Boolean(draft.skill_auto_capture_enabled)} onChange={(value) => persistValue("skill_auto_capture_enabled", value)} />
+                <ToggleRow label="Skill 敏感信息扫描" description="开启后写入 skill 前会过滤密钥、环境变量和隐私内容。" checked={Boolean(draft.skill_sensitive_scan_enabled)} onChange={(value) => persistValue("skill_sensitive_scan_enabled", value)} />
+                <ToggleRow label="实验执行器" description="开启后实验 Agent 可以提交待审查实验计划。" checked={Boolean(draft.experiment_execution_enabled)} onChange={(value) => persistValue("experiment_execution_enabled", value)} />
+                <ToggleRow label="实验强制审查" description="开启后所有实验计划都必须用户确认后执行。" checked={Boolean(draft.experiment_require_review)} onChange={(value) => persistValue("experiment_require_review", value)} />
+                <ToggleRow label="允许实验联网" description="仅影响风险扫描，危险命令仍会要求确认。" checked={Boolean(draft.experiment_allow_network)} onChange={(value) => persistValue("experiment_allow_network", value)} />
+                <ToggleRow label="允许安装依赖" description="允许 pip/npm/conda 安装类命令进入可审查流程。" checked={Boolean(draft.experiment_allow_package_install)} onChange={(value) => persistValue("experiment_allow_package_install", value)} />
               </div>
             </Section>
 
@@ -215,10 +235,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
 
             <Section title="证据与网络检索">
               <div className="grid gap-3 md:grid-cols-2">
-                <ToggleRow label="启用远程证据检索" description="允许证据流水线使用外部检索提供方，而不是只依赖本地来源。" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => setValue("evidence_remote_search_enabled", value)} />
-                <ToggleRow label="启用网络搜索工具" description="当前接入 Tavily；关闭后研究生 Agent 不会使用网络搜索结果。" checked={Boolean(draft.web_search_enabled)} onChange={(value) => setValue("web_search_enabled", value)} />
-                <ToggleRow label="要求可信来源" description="检索不到可核验来源时，系统只会报告证据不足，不会补编参考文献。" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => setValue("literature_require_grounded_sources", value)} />
-                <ToggleRow label="启用引用校验" description="拦截不在来源白名单中的 source_id、URL 或 DOI。" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => setValue("citation_validation_enabled", value)} />
+                <ToggleRow label="启用远程证据检索" description="允许证据流水线使用外部检索提供方，而不是只依赖本地来源。" checked={Boolean(draft.evidence_remote_search_enabled)} onChange={(value) => persistValue("evidence_remote_search_enabled", value)} />
+                <ToggleRow label="启用网络搜索工具" description="当前接入 Tavily；关闭后研究生 Agent 不会使用网络搜索结果。" checked={Boolean(draft.web_search_enabled)} onChange={(value) => persistValue("web_search_enabled", value)} />
+                <ToggleRow label="要求可信来源" description="检索不到可核验来源时，系统只会报告证据不足，不会补编参考文献。" checked={Boolean(draft.literature_require_grounded_sources)} onChange={(value) => persistValue("literature_require_grounded_sources", value)} />
+                <ToggleRow label="启用引用校验" description="拦截不在来源白名单中的 source_id、URL 或 DOI。" checked={Boolean(draft.citation_validation_enabled)} onChange={(value) => persistValue("citation_validation_enabled", value)} />
               </div>
               <div className="soft-card mt-3 p-3">
                 <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--rg-muted)]">

@@ -151,7 +151,7 @@ def check_cancel_during_execution():
         if status in ("decomposing", "scheduling", "executing"):
             cancel_resp = req("POST", f"/runs/{run_id}/cancel", {"reason": "测试中途中止"})
             cancel_status = cancel_resp.get("run", {}).get("status")
-            assert cancel_status == "cancelling", f"执行中取消应返回 cancelling, 实际是 {cancel_status}"
+            assert cancel_status == "cancelled", f"执行中取消应立即返回 cancelled, 实际是 {cancel_status}"
             cancelled = True
             break
         time.sleep(1)

@@ -268,6 +268,9 @@ async def preflight_run(req: RunCreateRequest):
 @router.get("")
 async def get_runs():
     logger.debug("[API] get_runs")
+    for run in RunRepository.get_all():
+        if run.get("status") == RunStatus.cancelling.value:
+            run_execution_service.get_summary(run["id"])
     return {"runs": RunRepository.get_all()}
 
 

@@ -224,7 +224,7 @@ export default function ExperimentsPage() {
           </CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-2">
             <Preview title="命令" value={selected.commands.map((item) => item.command).join("\n")} />
-            <Preview title="文件" value={JSON.stringify(selected.files, null, 2)} />
+            <FilePreview files={selected.files} />
             <Preview title="结果 stdout" value={selected.result?.stdout || "暂无输出"} />
             <Preview title="结果 stderr" value={selected.result?.stderr || "暂无错误输出"} />
           </CardContent>
@@ -268,4 +268,33 @@ function Preview({ title, value }: { title: string; value: string }) {
       <pre className="code-panel max-h-72 overflow-auto p-3 text-xs">{value}</pre>
     </div>
   )
+}
+
+function FilePreview({ files }: { files: ExperimentFile[] }) {
+  return (
+    <div className="space-y-3">
+      <div className="text-xs font-medium text-[var(--rg-muted)]">文件</div>
+      {files.length === 0 && <pre className="code-panel max-h-72 overflow-auto p-3 text-xs">暂无文件</pre>}
+      {files.map((file, index) => (
+        <div key={`${file.path}-${index}`} className="overflow-hidden rounded-xl border border-[var(--rg-hairline)] bg-[var(--rg-surface-soft)]">
+          <div className="border-b border-[var(--rg-hairline)] px-3 py-2 font-mono text-xs text-[var(--rg-muted)]">{file.path}</div>
+          <pre className="code-panel max-h-72 overflow-auto rounded-none border-0 p-3 text-xs">
+            <code>{formatExperimentFile(file)}</code>
+          </pre>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function formatExperimentFile(file: ExperimentFile) {
+  const content = String(file.content ?? "")
+  if (file.path.toLowerCase().endsWith(".json")) {
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2)
+    } catch {
+      return content
+    }
+  }
+  return content
 }

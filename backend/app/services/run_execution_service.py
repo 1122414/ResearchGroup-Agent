@@ -242,9 +242,11 @@ class RunExecutionService:
                 TaskRepository.update_status(task["id"], "running", subagent_triggered=True)
                 run_event_service.emit(run_id, "subagent.created", "subagent", "SubAgent 已创建", "任务复杂，研究生请求临时协作", task_id=task["id"], agent_id=owner)
                 await subagent_service.create_and_execute(owner, task)
+                self._assert_not_cancelled(run_id)
                 run_event_service.emit(run_id, "subagent.completed", "subagent", "SubAgent 已完成", "结果已返回给研究生 Agent", task_id=task["id"], agent_id=owner)
             latest_task = TaskRepository.get_by_id(task["id"]) or task
             await task_executor.execute(latest_task)
+            self._assert_not_cancelled(run_id)
             task_recovery_service.complete_attempt(task["id"], attempt["id"], checkpoint="task_output_created")
             run_event_service.emit(run_id, "task.output_created", "execute", "任务输出已生成", task.get("title", ""), task_id=task["id"], agent_id=owner)
         except Exception as exc:
@@ -313,15 +315,15 @@ class RunExecutionService:
             cancel_reason=reason,
         )
         run_event_service.emit(run_id, "run.cancel_requested", "cancel", "请求取消运行", reason)
-        if self._cancel_active_task(run_id):
-            return RunRepository.get_by_id(run_id)
-        self._cancel_now(run_id)
-        return RunRepository.get_by_id(run_id)
+        self._cancel_active_task(run_id)
+        return self._cancel_now(run_id)["run"]
 
     def get_summary(self, run_id: str) -> dict:
         run = RunRepository.get_by_id(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="运行不存在")
+        if run.get("status") == RunStatus.cancelling.value:
+            return self._cancel_now(run_id)
         tasks = TaskRepository.get_all(run_id=run_id)
         agents = AgentRepository.get_all()
         subagents = SubAgentRepository.get_by_run(run_id)
@@ -377,10 +379,13 @@ class RunExecutionService:
 
     def _assert_not_cancelled(self, run_id: str):
         run = RunRepository.get_by_id(run_id)
-        if run and run.get("status") == RunStatus.cancelling.value:
+        if run and run.get("status") in {RunStatus.cancelling.value, RunStatus.cancelled.value}:
             raise RunCancelled()
 
     def _cancel_now(self, run_id: str) -> dict:
+        current = RunRepository.get_by_id(run_id)
+        if current and current.get("status") == RunStatus.cancelled.value:
+            return self.get_summary(run_id)
         RunRepository.update_status(run_id, RunStatus.cancelled.value, current_step="运行已取消", completed_at=datetime.now().isoformat())
         self._cancel_inflight_tasks(run_id)
         self._reset_agents(run_id)
