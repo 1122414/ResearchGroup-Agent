@@ -93,7 +93,9 @@ class TaskRecoveryService:
             (
                 item
                 for item in TaskRepository.get_all(run_id=task["run_id"])
-                if item.get("revision_of_task_id") == root_task_id and item.get("status") != "completed"
+                if item.get("revision_of_task_id") == root_task_id
+                and item.get("id") != task.get("id")
+                and item.get("status") not in {"completed", "failed", "archived"}
             ),
             None,
         )

@@ -40,3 +40,8 @@ artifacts/runs/*
 
 # logs
 *.log
+
+# style
+design_style/
+
+artifacts/

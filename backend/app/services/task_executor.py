@@ -35,6 +35,7 @@ class TaskExecutor:
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
         literature_grounding = ""
         if evidence_bundle is not None:
+            required_source_count = research_integrity_service.required_grounded_source_count(task, evidence_bundle["query"])
             literature_grounding = f"""
 
 【学术诚信与证据边界】
@@ -44,6 +45,7 @@ class TaskExecutor:
 4. 输出 JSON 中必须包含 references_used，且每一项都只能来自 allowed_sources.source_id。
 5. 当前检索 query：{evidence_bundle["query"]}
 6. allowed_sources：
+当前任务所需最少可核验来源数：{required_source_count}
 {research_integrity_service.render_allowed_sources(evidence_bundle["sources"])}
 """
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
@@ -83,6 +85,7 @@ class TaskExecutor:
                 evidence_bundle["sources"],
                 evidence_bundle["query"],
                 evidence_bundle["mode"],
+                task,
             )
             methods = literature_source_service.methods_from_sources(evidence_bundle["sources"])
             artifacts = literature_source_service.write_artifacts(task, evidence_bundle["sources"], methods)

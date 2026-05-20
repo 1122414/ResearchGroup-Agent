@@ -75,15 +75,19 @@ export default function RunDetailPage() {
   const [selectedEventIndex, setSelectedEventIndex] = useState(0)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState(false)
+  const [pollMs, setPollMs] = useState(1500)
+  const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(new Set())
   const runStatus = summary?.run.status
 
   const refreshCore = useCallback(async () => {
-    const [summaryData, eventsData] = await Promise.all([
+    const [summaryData, eventsData, approvalData] = await Promise.all([
       api.getRunSummary(runId),
       api.getRunEvents(runId, 120),
+      api.getRunApprovals(runId),
     ])
     setSummary(summaryData)
     setEvents(eventsData.events)
+    setApprovals(approvalData.items)
     setSelectedEventIndex((index) => Math.min(index, Math.max(eventsData.events.length - 1, 0)))
     return summaryData
   }, [runId])
@@ -176,18 +180,29 @@ export default function RunDetailPage() {
   }, [refreshCore, refreshOverview, runId])
 
   useEffect(() => {
+    api.getSettings()
+      .then((settings) => {
+        const nextPollMs = Number(settings.run_poll_interval_ms)
+        if (Number.isFinite(nextPollMs) && nextPollMs >= 500) {
+          setPollMs(nextPollMs)
+        }
+      })
+      .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
     if (!runStatus || FINAL_STATUSES.has(runStatus)) return
     const coreTimer = window.setInterval(() => {
       refreshCore().catch(() => undefined)
-    }, 2000)
+    }, pollMs)
     const viewTimer = window.setInterval(() => {
       refreshView(view).catch(() => undefined)
-    }, 8000)
+    }, Math.max(pollMs * 2, 3000))
     return () => {
       window.clearInterval(coreTimer)
       window.clearInterval(viewTimer)
     }
-  }, [refreshCore, refreshView, runStatus, view])
+  }, [pollMs, refreshCore, refreshView, runStatus, view])
 
   const agentMap = useMemo(
     () => Object.fromEntries((summary?.agents || []).map((agent) => [agent.id, agent.name])),
@@ -212,8 +227,24 @@ export default function RunDetailPage() {
   }
 
   const handleApproval = async (request: ApprovalRequest, approved: boolean) => {
-    await api.resolveApproval(request.id, approved)
-    await Promise.all([refreshCore(), refreshOverview()])
+    setResolvingApprovalIds((current) => new Set(current).add(request.id))
+    setApprovals((current) =>
+      current.map((item) => (item.id === request.id ? { ...item, status: approved ? "approved" : "rejected" } : item)),
+    )
+    try {
+      await api.resolveApproval(request.id, approved)
+      await refreshCore()
+      refreshOverview().catch(() => undefined)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "确认处理失败")
+      await refreshCore().catch(() => undefined)
+    } finally {
+      setResolvingApprovalIds((current) => {
+        const next = new Set(current)
+        next.delete(request.id)
+        return next
+      })
+    }
   }
 
   const handleViewChange = (nextView: RunView) => {
@@ -261,7 +292,7 @@ export default function RunDetailPage() {
       </Card>
 
       {error && <div className="error-banner p-3 text-sm">{error}</div>}
-      <ApprovalPanel items={approvals} onResolve={handleApproval} />
+      <ApprovalPanel items={approvals} onResolve={handleApproval} resolvingIds={resolvingApprovalIds} />
 
       <div className="inline-flex w-fit rounded-xl border border-[var(--rg-hairline)] bg-white p-1">
         {[
@@ -359,7 +390,15 @@ export default function RunDetailPage() {
   )
 }
 
-function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResolve: (item: ApprovalRequest, approved: boolean) => void }) {
+function ApprovalPanel({
+  items,
+  onResolve,
+  resolvingIds,
+}: {
+  items: ApprovalRequest[]
+  onResolve: (item: ApprovalRequest, approved: boolean) => void
+  resolvingIds: Set<string>
+}) {
   const pending = items.filter((item) => item.status === "pending")
   if (!pending.length) return null
   return (
@@ -369,7 +408,9 @@ function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResol
         <CardDescription>关键节点会在这里暂停，确认后继续执行。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {pending.map((item) => (
+        {pending.map((item) => {
+          const resolving = resolvingIds.has(item.id)
+          return (
           <div key={item.id} className="data-row flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
             <div>
               <div className="font-medium">{item.title}</div>
@@ -385,15 +426,16 @@ function ApprovalPanel({ items, onResolve }: { items: ApprovalRequest[]; onResol
               )}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => onResolve(item, false)}>
+              <Button variant="outline" size="sm" disabled={resolving} onClick={() => onResolve(item, false)}>
                 拒绝
               </Button>
-              <Button size="sm" onClick={() => onResolve(item, true)}>
+              <Button size="sm" disabled={resolving} onClick={() => onResolve(item, true)}>
                 确认
               </Button>
             </div>
           </div>
-        ))}
+          )
+        })}
       </CardContent>
     </Card>
   )

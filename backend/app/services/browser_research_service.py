@@ -95,7 +95,10 @@ class BrowserResearchService:
     async def verify_candidates(self, query: str, sources: list[dict]) -> list[dict]:
         if not settings.browser_verification_enabled or not self.enabled() or not sources:
             return sources
-        limited = sources[: settings.browser_use_max_candidates]
+        limited = self._verification_candidates(sources)
+        if not limited:
+            return self._verification_error_fallback(sources, "no_verification_candidates")
+        limited_urls = {str(source.get("url") or "").strip() for source in limited if source.get("url")}
         try:
             history = await self._run_agent(
                 task=self._verification_task(query, limited),
@@ -104,9 +107,11 @@ class BrowserResearchService:
             parsed = self._structured_output(history, BrowserVerificationResult)
         except Exception as exc:
             logger.warning("[BrowserResearch] verify failed | error=%s", exc)
-            return [] if settings.browser_verification_required else sources
+            return self._verification_error_fallback(sources, str(exc))
 
         verdicts = parsed.verdicts if parsed else []
+        if settings.browser_verification_required and not verdicts:
+            return self._verification_error_fallback(sources, "missing_verdicts")
         by_url = {str(item.url or "").strip(): item for item in verdicts if item.url}
         verified: list[dict] = []
         for source in sources:
@@ -121,7 +126,101 @@ class BrowserResearchService:
                 verified.append(enriched)
             elif not settings.browser_verification_required:
                 verified.append(enriched)
+            elif self._can_keep_without_browser_acceptance(source, verdict, url in limited_urls):
+                metadata["browser_verification"] = self._fallback_verification_record(source, verdict, url in limited_urls)
+                verified.append({**source, "metadata": metadata})
         return verified
+
+    @staticmethod
+    def _verification_candidates(sources: list[dict]) -> list[dict]:
+        limit = max(int(settings.browser_use_max_candidates), 0)
+        if not limit:
+            return []
+
+        def priority(source: dict) -> tuple[int, str]:
+            metadata = source.get("metadata") or {}
+            provider = metadata.get("provider")
+            if provider == "browser_use":
+                return (0, str(source.get("title") or ""))
+            if BrowserResearchService._is_trusted_metadata_source(source):
+                return (1, str(source.get("title") or ""))
+            return (2, str(source.get("title") or ""))
+
+        return sorted(sources, key=priority)[:limit]
+
+    @staticmethod
+    def _can_keep_without_browser_acceptance(source: dict, verdict: BrowserVerificationRecord | None, was_verification_candidate: bool) -> bool:
+        if not BrowserResearchService._is_fallback_eligible_source(source):
+            return False
+        if not was_verification_candidate:
+            return True
+        if verdict is None:
+            return True
+        return not verdict.reject_reason and not verdict.evidence
+
+    @staticmethod
+    def _is_trusted_metadata_source(source: dict) -> bool:
+        metadata = source.get("metadata") or {}
+        provider = metadata.get("provider")
+        has_traceable_id = bool(source.get("doi") or source.get("url"))
+        return bool(
+            source.get("source_type") == "paper"
+            and provider in {"crossref", "openalex", "arxiv", "semantic_scholar"}
+            and has_traceable_id
+        )
+
+    @staticmethod
+    def _is_search_metadata_source(source: dict) -> bool:
+        metadata = source.get("metadata") or {}
+        provider = metadata.get("provider")
+        return bool(
+            source.get("url")
+            and source.get("title")
+            and (provider in {"tavily", "browser_use"} or source.get("source_type") in {"web", "webpage"})
+        )
+
+    @staticmethod
+    def _is_fallback_eligible_source(source: dict) -> bool:
+        return BrowserResearchService._is_trusted_metadata_source(source) or BrowserResearchService._is_search_metadata_source(source)
+
+    @staticmethod
+    def _fallback_verification_record(
+        source: dict,
+        verdict: BrowserVerificationRecord | None = None,
+        was_verification_candidate: bool = False,
+        error: str | None = None,
+    ) -> dict:
+        record = verdict.model_dump() if verdict else {}
+        record.update(
+            {
+                "accepted": True,
+                "fallback": (
+                    "trusted_scholarly_metadata"
+                    if BrowserResearchService._is_trusted_metadata_source(source)
+                    else "search_result_metadata"
+                ),
+                "verification_candidate": was_verification_candidate,
+            }
+        )
+        if error:
+            record["error"] = error[:300]
+        metadata = source.get("metadata") or {}
+        if metadata.get("provider"):
+            record["provider"] = metadata["provider"]
+        return record
+
+    @staticmethod
+    def _verification_error_fallback(sources: list[dict], error: str) -> list[dict]:
+        """Avoid throwing away strong scholarly metadata when the browser agent itself fails."""
+        if not settings.browser_verification_required:
+            return sources
+        fallback: list[dict] = []
+        for source in sources:
+            if BrowserResearchService._is_fallback_eligible_source(source):
+                metadata = dict(source.get("metadata") or {})
+                metadata["browser_verification"] = BrowserResearchService._fallback_verification_record(source, error=error)
+                fallback.append({**source, "metadata": metadata})
+        return fallback
 
     async def _run_agent(self, task: str, output_model: type[BaseModel]):
         Agent, Browser, llm = self._load_runtime()
@@ -178,14 +277,16 @@ class BrowserResearchService:
     @staticmethod
     def _discovery_task(query: str) -> str:
         return f"""
-你是文献调研网页发现器。只围绕研究课题检索，不得扩写结论。
+Find verifiable academic or authoritative web sources for this research query:
+{query}
 
-任务：
-1. 围绕 query 检索外部网页与论文落地页：{query}
-2. 优先返回论文页、DOI 页、出版社页、官方项目页。
-3. 最多返回 {settings.browser_use_max_candidates} 个候选来源。
-4. 每个来源必须给出真实 URL；找不到就不要返回。
-5. evidence 只写页面上可见的核验片段，不要根据记忆补充。
+Instructions:
+1. Use web search and open result pages when needed.
+2. Prefer academic metadata pages, publisher pages, DOI pages, arXiv, OpenAlex, Crossref, Semantic Scholar, official government or official venue pages.
+3. Return at most {settings.browser_use_max_candidates} sources.
+4. Each source must include a real URL that can be opened again.
+5. Do not invent authors, years, DOI values, or URLs.
+6. The evidence field must contain only short text that was visible on the page or in the search result.
 """
 
     @staticmethod
@@ -199,18 +300,19 @@ class BrowserResearchService:
             for item in sources
         ]
         return f"""
-你是文献来源网页核验器，只负责验证，不负责补写结论。
+Verify these candidate sources for the research query:
+{query}
 
-研究 query：{query}
-候选来源：
+Candidate sources:
 {json.dumps(compact, ensure_ascii=False, indent=2)}
 
-要求：
-1. 只打开候选来源给出的 URL，不要扩展到无关网页。
-2. 逐条核验页面标题与 DOI 是否匹配。
-3. accepted=true 只能用于页面可直接支持的候选来源。
-4. evidence 只记录页面可见证据；不确定时 accepted=false。
-5. verdicts 的 url 必须和候选来源 url 完全一致。
+Instructions:
+1. Open each URL.
+2. Accept a source only when the opened page confirms the title and, when provided, the DOI.
+3. Use accepted=true only if the page visibly supports the candidate metadata.
+4. evidence must contain the visible page text that supports the decision.
+5. If the page cannot be opened, the title does not match, or the evidence is unclear, set accepted=false and write a reject_reason.
+6. Return one verdict per candidate URL.
 """
 
 
