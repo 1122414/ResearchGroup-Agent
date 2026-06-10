@@ -22,6 +22,7 @@ from app.core.logger import logger, setup_logging
 from app.core.logging_middleware import LoggingMiddleware
 from app.services.agent_registry import agent_registry
 from app.services.agent_skill_service import agent_skill_service
+from app.services.provider_audit_service import provider_audit_service
 from app.storage import init_db
 
 setup_logging(settings.log_level)
@@ -33,7 +34,16 @@ async def lifespan(app: FastAPI):
     agent_registry.load_seed_agents()
     seeded_skills = agent_skill_service.seed_defaults()
     logger.info("Default agent skills seeded | created=%d", seeded_skills)
-    logger.info("Backend started | port=%s | mock_mode=%s", settings.backend_port, settings.mock_mode)
+    audit = provider_audit_service.audit()
+    logger.info(
+        "Backend started | port=%s | mock_mode=%s | ready_for_real_research=%s | live_evidence=%s",
+        settings.backend_port,
+        settings.mock_mode,
+        audit["ready_for_real_research"],
+        ",".join(audit["live_evidence_providers"]) or "none",
+    )
+    for warning in audit["warnings"]:
+        logger.warning("[ProviderAudit] %s", warning)
     yield
 
 
@@ -73,6 +83,11 @@ async def health_check():
         "mock_mode": settings.mock_mode,
         "model": settings.llm_model_name,
     }
+
+
+@app.get("/api/health/providers")
+async def provider_health():
+    return provider_audit_service.audit()
 
 
 if __name__ == "__main__":

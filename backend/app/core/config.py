@@ -120,6 +120,30 @@ class Settings(BaseSettings):
     literature_min_grounded_sources: int = 2
     citation_validation_enabled: bool = True
 
+    # Full-text ingestion: read real papers, not just bibliographic metadata.
+    fulltext_ingest_enabled: bool = False
+    fulltext_max_sources: int = 4
+    fulltext_max_chars: int = 12000
+    fulltext_fetch_timeout: int = 30
+
+    # Iterative tool-using research loop.
+    research_agent_loop_enabled: bool = False
+    research_agent_max_iterations: int = 3
+    research_agent_max_queries_per_iteration: int = 4
+    # Curated 7-paper fallback library. Off by default so off-topic seed papers
+    # are never mixed into real results; insufficient evidence is reported instead.
+    literature_curated_fallback_enabled: bool = False
+
+    # Verification / grounding hardening.
+    doi_verification_enabled: bool = False
+    grounding_audit_enabled: bool = False
+
+    # Goal-driven generated experiments.
+    experiment_generated_code_enabled: bool = False
+
+    # Paper / report assembly.
+    paper_revision_rounds: int = 1
+
     # Agent skill evolution
     agent_skill_enabled: bool = True
     skill_auto_capture_enabled: bool = True
