@@ -5,11 +5,19 @@ from datetime import datetime
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
+from ..core.research_goal import primary_goal
 from ..models.task import TaskStatus
-from ..storage.repositories import TaskRepository
+from ..storage.repositories import ResearchHypothesisRepository, TaskRepository
+from .run_event_service import run_event_service
+
+SURVEY_MARKERS = ("综述", "调研", "survey", "review", "github", "现状", "对比", "landscape", "梳理")
 
 
 class TaskDecomposer:
+    def detect_mode(self, research_goal: str) -> str:
+        goal = primary_goal(str(research_goal or "")).lower()
+        return "survey" if any(marker in goal for marker in SURVEY_MARKERS) else "paper"
+
     async def decompose(self, research_goal: str, run_id: str) -> list[dict]:
         logger.info("[TaskDecomposer] decompose started | run_id=%s | goal=%s", run_id, research_goal[:80])
         system_prompt = prompt_loader.load("advisor_agent")
@@ -67,7 +75,22 @@ class TaskDecomposer:
         )
 
         tasks_data = self._parse_response(raw_response)
-        logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | tasks=%d", run_id, len(tasks_data))
+        mode = self.detect_mode(research_goal)
+        if mode == "survey":
+            # Surveys/investigations should not fabricate experiments; drop experiment tasks.
+            filtered = [item for item in tasks_data if item.get("task_type") != "experiment_design"]
+            if filtered:
+                tasks_data = filtered
+        self._seed_hypotheses(research_goal, run_id, mode)
+        logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | mode=%s | tasks=%d", run_id, mode, len(tasks_data))
+        run_event_service.emit(
+            run_id,
+            "decompose.mode_detected",
+            "decompose",
+            "已判定研究模式",
+            f"模式：{'论文' if mode == 'paper' else '调研报告'}",
+            payload={"mode": mode},
+        )
         now = datetime.now().isoformat()
         tasks = []
 
@@ -105,6 +128,36 @@ class TaskDecomposer:
         logger.info("[TaskDecomposer] decompose completed | run_id=%s | total_tasks=%d | task_ids=%s",
                     run_id, len(tasks), [t["id"] for t in tasks])
         return tasks
+
+    def _seed_hypotheses(self, research_goal: str, run_id: str, mode: str) -> None:
+        """Persist goal-specific, testable hypotheses so the run is hypothesis-driven.
+
+        research_state_service already seeds one generic active hypothesis at run
+        creation; here we add a goal-specific one for the knowledge graph and the
+        paper's hypothesis section.
+        """
+        goal = primary_goal(str(research_goal or "")).strip()
+        if not goal:
+            return
+        now = datetime.now().isoformat()
+        if mode == "paper":
+            statement = f"针对“{goal}”，所提出的方法在关键评测指标上优于基线方法。"
+            rationale = "以可检验的方式约束研究流程，由实验结果支持或反驳。"
+        else:
+            statement = f"针对“{goal}”，现有方法在覆盖面与有效性上存在可识别的权衡与空白。"
+            rationale = "以可检验的方式约束综述，由证据来源支持或反驳。"
+        ResearchHypothesisRepository.insert(
+            {
+                "id": f"hypothesis_{uuid.uuid4().hex[:10]}",
+                "run_id": run_id,
+                "statement": statement,
+                "rationale": rationale,
+                "status": "proposed",
+                "confidence": 0.0,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
 
     def _parse_response(self, raw: str) -> list[dict]:
         text = raw.strip()
