@@ -11,7 +11,14 @@ from pathlib import Path
 
 from ..core.config import settings
 from ..core.research_goal import primary_goal
-from ..storage.repositories import ExperimentPlanRepository, ExperimentRunRepository, RunEventRepository, RunRepository
+from ..storage.repositories import (
+    ExperimentPlanRepository,
+    ExperimentRunRepository,
+    ResearchHypothesisRepository,
+    RunEventRepository,
+    RunRepository,
+)
+from .experiment_code_generator import experiment_code_generator
 from .experiment_protocol_service import experiment_protocol_service
 from .experiment_result_service import experiment_result_service
 from .artifact_manifest_service import artifact_manifest_service
@@ -19,7 +26,7 @@ from .run_artifact_service import run_artifact_service
 
 
 class ReproducibleExperimentService:
-    def run_for_task(self, task: dict, agent_id: str) -> dict:
+    async def run_for_task(self, task: dict, agent_id: str) -> dict:
         run_id = task.get("run_id")
         run = RunRepository.get_by_id(run_id) if run_id else None
         protocol = experiment_protocol_service.ensure_for_task(task)
@@ -30,7 +37,8 @@ class ReproducibleExperimentService:
         input_path = data_dir / "input_documents.jsonl"
         script_path = workspace / "run_experiment.py"
         self._write_input_documents(input_path, task, run)
-        script_path.write_text(self._script(), encoding="utf-8")
+        script_source, generated = await self._resolve_script(task, run, protocol)
+        script_path.write_text(script_source, encoding="utf-8")
 
         plan = self._create_plan(task, agent_id, workspace, input_path, script_path, protocol)
         experiment_run = self._create_run(task, protocol, plan, input_path)
@@ -67,6 +75,10 @@ class ReproducibleExperimentService:
         chart_path = workspace / "chart_data.json"
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
         artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
+        figure_path = workspace / "figure.png"
+        if figure_path.exists():
+            artifact_paths.append(str(figure_path))
+        artifact_paths = [path for path in artifact_paths if Path(path).exists()]
         for artifact_path in artifact_paths:
             artifact_manifest_service.register(
                 run_artifact_service.run_dir(run, run_id),
@@ -96,7 +108,9 @@ class ReproducibleExperimentService:
         self._emit(task, plan["id"], f"experiment.{status}", "实验脚本已执行" if status == "completed" else "实验脚本执行失败", {"artifacts": artifact_paths})
 
         return {
-            "summary": "实验研究生已创建专属 workspace，并实际运行了可复现实验脚本。",
+            "summary": "实验研究生已创建专属 workspace，并实际运行了可复现实验脚本。"
+            + ("（脚本由 LLM 针对假设生成）" if generated else "（使用内置可复现脚本）"),
+            "generated_code": generated,
             "experiment_ran": status == "completed",
             "protocol": protocol,
             "experiment_run": {**experiment_run, "status": status},
@@ -116,6 +130,16 @@ class ReproducibleExperimentService:
             "execution": result,
             "next_steps": ["如需扩大实验规模，可替换 data/input_documents.jsonl 并重新运行 run_experiment.py。"],
         }
+
+    async def _resolve_script(self, task: dict, run: dict | None, protocol: dict) -> tuple[str, bool]:
+        if not settings.experiment_generated_code_enabled:
+            return self._script(), False
+        hypothesis = ResearchHypothesisRepository.get_by_id(protocol["hypothesis_id"]) or {}
+        goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
+        generated = await experiment_code_generator.generate(goal=goal, protocol=protocol, hypothesis=hypothesis)
+        if generated:
+            return generated, True
+        return self._script(), False
 
     def _workspace(self, run: dict | None, task: dict, agent_id: str) -> Path:
         safe_title = re.sub(r'[\\/:*?"<>|#`]+', "", str(task.get("title") or task.get("id") or "experiment_task")).strip()

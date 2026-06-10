@@ -86,34 +86,72 @@ class ExperimentResultService:
     def _summary(status: str, metrics: dict, result: dict) -> str:
         if status != "completed":
             return f"实验失败，退出码={result.get('exit_code')}"
-        best = metrics.get("best_strategy") or {}
-        if not best:
-            return "实验完成，但未生成可解释指标"
-        return (
-            f"最佳策略={best.get('strategy')}，"
-            f"top3_accuracy={best.get('top3_accuracy')}，mrr={best.get('mrr')}"
-        )
+        if metrics.get("best_strategy"):
+            best = metrics.get("best_strategy") or {}
+            return (
+                f"最佳策略={best.get('strategy')}，"
+                f"top3_accuracy={best.get('top3_accuracy')}，mrr={best.get('mrr')}"
+            )
+        if "treatment_value" in metrics and "baseline_value" in metrics:
+            return (
+                f"{metrics.get('metric_name', 'metric')}: baseline={metrics.get('baseline_value')}, "
+                f"treatment={metrics.get('treatment_value')}（方向={metrics.get('direction', 'maximize')}）"
+            )
+        if "hypothesis_supported" in metrics:
+            return str(metrics.get("summary") or ("结果支持假设" if metrics.get("hypothesis_supported") else "结果不支持假设"))
+        return "实验完成，但未生成可解释指标"
 
     @staticmethod
     def _interpret(metrics: dict, status: str) -> tuple[str, float, str]:
         if status != "completed":
             return "inconclusive", settings.experiment_inconclusive_failure_confidence, "实验执行失败，当前结果不足以支持或否定假设"
-        best = metrics.get("best_strategy") or {}
-        if not best:
-            return "inconclusive", settings.experiment_inconclusive_missing_metric_confidence, "实验完成但缺少有效指标"
 
-        baseline = next((item for item in metrics.get("rows", []) if item.get("strategy") == "no_split"), {})
-        best_mrr = float(best.get("mrr") or 0)
-        baseline_mrr = float(baseline.get("mrr") or 0)
-        if best_mrr > baseline_mrr:
-            return (
-                "supports",
-                round(min(settings.experiment_support_base_confidence + (best_mrr - baseline_mrr), settings.experiment_support_max_confidence), 4),
-                "改进策略优于基线，实验结果支持当前假设",
-            )
-        if best_mrr == baseline_mrr:
-            return "weakens", settings.experiment_weaken_confidence, "改进策略未优于基线，实验结果削弱当前假设"
-        return "rejects", settings.experiment_reject_confidence, "改进策略劣于基线，实验结果反驳当前假设"
+        # Legacy retrieval-chunking contract (best_strategy + rows).
+        best = metrics.get("best_strategy") or {}
+        if best:
+            baseline = next((item for item in metrics.get("rows", []) if item.get("strategy") == "no_split"), {})
+            best_mrr = float(best.get("mrr") or 0)
+            baseline_mrr = float(baseline.get("mrr") or 0)
+            if best_mrr > baseline_mrr:
+                return (
+                    "supports",
+                    round(min(settings.experiment_support_base_confidence + (best_mrr - baseline_mrr), settings.experiment_support_max_confidence), 4),
+                    "改进策略优于基线，实验结果支持当前假设",
+                )
+            if best_mrr == baseline_mrr:
+                return "weakens", settings.experiment_weaken_confidence, "改进策略未优于基线，实验结果削弱当前假设"
+            return "rejects", settings.experiment_reject_confidence, "改进策略劣于基线，实验结果反驳当前假设"
+
+        # Generic goal-driven contract (baseline_value vs treatment_value).
+        if "treatment_value" in metrics and "baseline_value" in metrics:
+            return ExperimentResultService._interpret_generic(metrics)
+
+        # Explicit verdict contract.
+        if "hypothesis_supported" in metrics:
+            if metrics.get("hypothesis_supported"):
+                return "supports", settings.experiment_support_base_confidence, str(metrics.get("summary") or "实验结果支持当前假设")
+            return "rejects", settings.experiment_reject_confidence, str(metrics.get("summary") or "实验结果反驳当前假设")
+
+        return "inconclusive", settings.experiment_inconclusive_missing_metric_confidence, "实验完成但缺少有效指标"
+
+    @staticmethod
+    def _interpret_generic(metrics: dict) -> tuple[str, float, str]:
+        try:
+            baseline = float(metrics.get("baseline_value"))
+            treatment = float(metrics.get("treatment_value"))
+        except (TypeError, ValueError):
+            return "inconclusive", settings.experiment_inconclusive_missing_metric_confidence, "实验完成但指标无法解析"
+        direction = str(metrics.get("direction") or "maximize").lower()
+        improved = treatment > baseline if direction == "maximize" else treatment < baseline
+        equal = treatment == baseline
+        delta = abs(treatment - baseline) / (abs(baseline) + 1e-9)
+        metric_name = metrics.get("metric_name", "primary metric")
+        if equal:
+            return "weakens", settings.experiment_weaken_confidence, f"{metric_name} 与基线持平，未能支持假设"
+        if improved:
+            confidence = round(min(settings.experiment_support_base_confidence + delta, settings.experiment_support_max_confidence), 4)
+            return "supports", confidence, f"{metric_name} 相对基线改进，实验结果支持当前假设"
+        return "rejects", settings.experiment_reject_confidence, f"{metric_name} 相对基线变差，实验结果反驳当前假设"
 
 
 experiment_result_service = ExperimentResultService()
