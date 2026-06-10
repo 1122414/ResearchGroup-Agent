@@ -48,9 +48,20 @@ async def _safe_execute_run(run_id: str) -> None:
         traceback.print_exc()
 
 
+class SeedSource(BaseModel):
+    title: str
+    authors: str = ""
+    year: int | None = None
+    venue: str = ""
+    doi: str | None = None
+    url: str | None = None
+    source_type: str = "paper"
+
+
 class RunCreateRequest(BaseModel):
     research_goal: str
     attachments: list[dict] = Field(default_factory=list)
+    seed_sources: list[SeedSource] = Field(default_factory=list)
 
 
 class CancelRequest(BaseModel):
@@ -256,8 +267,36 @@ async def create_run(req: RunCreateRequest):
     }
     RunRepository.insert(run)
     research_state_service.ensure_initialized(run)
+    seeded = _persist_seed_sources(run_id, req.seed_sources)
     run_event_service.emit(run_id, "run.created", "run", "运行已创建", "已保存研究目标，等待启动")
-    return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "preflight": preflight}
+    if seeded:
+        run_event_service.emit(run_id, "run.seed_sources", "run", "已导入种子文献", f"用户提供 {seeded} 篇种子文献作为研究起点")
+    return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "seed_sources": seeded, "preflight": preflight}
+
+
+def _persist_seed_sources(run_id: str, seeds: list[SeedSource]) -> int:
+    count = 0
+    for seed in seeds:
+        if not seed.title.strip():
+            continue
+        EvidenceRepository.upsert_source(
+            {
+                "id": f"seed_source_{uuid.uuid4().hex[:10]}",
+                "run_id": run_id,
+                "task_id": None,
+                "title": seed.title,
+                "authors": seed.authors,
+                "year": seed.year,
+                "venue": seed.venue,
+                "doi": seed.doi,
+                "url": seed.url,
+                "source_type": seed.source_type,
+                "metadata": {"origin": "user_seed"},
+                "created_at": datetime.now().isoformat(),
+            }
+        )
+        count += 1
+    return count
 
 
 @router.post("/preflight")
