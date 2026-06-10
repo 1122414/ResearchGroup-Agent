@@ -189,6 +189,21 @@ class MockLLMProvider(LLMProvider):
                 "findings": ["当前系统需要优先提升可读性", "事件日志和成本记录是后续监控 UI 的基础"],
                 "recommendations": ["先修 P0 可观测链路", "再做像素办公室体验"],
             }
+        result.setdefault(
+            "claims",
+            [
+                {
+                    "statement": "该任务已得出结构化结论，可作为后续阶段的输入。",
+                    "evidence_source_ids": [],
+                    "relation": "supports",
+                    "confidence": 0.5,
+                }
+            ],
+        )
+        result.setdefault(
+            "uncertainties",
+            [{"description": "Mock 模式下结论未经真实证据核验。", "severity": "medium"}],
+        )
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     def _mock_subagent_result(self) -> str:

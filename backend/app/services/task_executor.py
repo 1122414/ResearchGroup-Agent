@@ -4,13 +4,15 @@ from datetime import datetime
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import AgentRepository, OutputRepository, TaskRepository
+from ..storage.repositories import AgentRepository, OutputRepository, SubAgentRepository, TaskRepository
 from .agent_skill_service import agent_skill_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
+from .knowledge_graph_service import knowledge_graph_service
 from .literature_source_service import literature_source_service
 from .research_integrity_service import research_integrity_service
 from .reproducible_experiment_service import reproducible_experiment_service
+from .run_event_service import run_event_service
 
 
 class TaskExecutor:
@@ -33,6 +35,7 @@ class TaskExecutor:
         system_prompt = prompt_loader.load(prompt_map.get(agent_type, "grad_researcher"))
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
+        collaboration_context = self._collaboration_context(task)
         literature_grounding = ""
         if evidence_bundle is not None:
             required_source_count = research_integrity_service.required_grounded_source_count(task, evidence_bundle["query"])
@@ -55,13 +58,17 @@ class TaskExecutor:
 任务描述：{task.get("description", "")}
 
 {skill_prompt}
+{collaboration_context}
 {literature_grounding}
 
 输出要求：
 1. 给出 summary。
 2. 给出 findings 或 deliverables。
 3. 给出 risks 或 next_steps。
-4. 不要输出 Markdown，只返回 JSON。
+4. 给出 claims：数组，每个元素 {{"statement": 该任务得出的、可单独核验的研究性结论, "evidence_source_ids": [只能来自上方 allowed_sources.source_id；无可核验证据时留空数组], "relation": "supports"|"opposes", "confidence": 0到1}}。不要把没有证据支撑的猜测写成 supports。
+5. 给出 hypotheses（可选）：数组，每个元素 {{"statement": 可检验的假设, "rationale": 依据}}。
+6. 给出 uncertainties（可选）：数组，每个元素 {{"description": 仍未解决的问题, "severity": "low"|"medium"|"high"}}。
+7. 不要输出 Markdown，只返回 JSON。
 """
 
         llm = create_llm_provider()
@@ -99,7 +106,7 @@ class TaskExecutor:
                 "source_artifacts": artifacts,
             }
         if task_type == "experiment_design":
-            experiment_result = reproducible_experiment_service.run_for_task(task, owner_id)
+            experiment_result = await reproducible_experiment_service.run_for_task(task, owner_id)
             result = {**result, "reproducible_experiment": experiment_result}
         if active_skills:
             result["used_skills"] = [
@@ -112,6 +119,31 @@ class TaskExecutor:
                 for skill in active_skills
             ]
             agent_skill_service.record_usage(active_skills, success=True)
+        graph = knowledge_graph_service.ingest_task_result(task, result)
+        if graph["claims"] or graph["hypotheses"] or graph["uncertainties"]:
+            result = {
+                **result,
+                "knowledge_graph": {
+                    "claim_ids": [item["id"] for item in graph["claims"] if item],
+                    "hypothesis_ids": [item["id"] for item in graph["hypotheses"]],
+                    "uncertainty_ids": [item["id"] for item in graph["uncertainties"]],
+                    "evidence_links": graph["evidence_links"],
+                },
+            }
+            run_event_service.emit(
+                task.get("run_id"),
+                "knowledge_graph.updated",
+                "execute",
+                "知识图谱已更新",
+                f"新增结论 {len(graph['claims'])} 条、假设 {len(graph['hypotheses'])} 条、证据关联 {len(graph['evidence_links'])} 条",
+                task_id=task.get("id"),
+                agent_id=owner_id,
+                payload={
+                    "claims": len(graph["claims"]),
+                    "hypotheses": len(graph["hypotheses"]),
+                    "evidence_links": len(graph["evidence_links"]),
+                },
+            )
         logger.info("[TaskExecutor] LLM response parsed | task_id=%s | has_summary=%s", task.get("id"), "summary" in result)
         TaskRepository.update_status(task["id"], "running", outputs=task.get("outputs", []) + [result])
         self._write_memory(task, owner_id, result)
@@ -130,6 +162,31 @@ class TaskExecutor:
         )
         logger.info("[TaskExecutor] execute completed | task_id=%s | output_saved=%s", task.get("id"), f"out_{task['id']}")
         return result
+
+    def _collaboration_context(self, task: dict) -> str:
+        """Surface SubAgent/collaborator results so the owner integrates them.
+
+        Previously a SubAgent ran and its result was stored, but the owner's LLM
+        call never consumed it, so collaboration was cosmetic. Here we inject any
+        SubAgent results and collaborator roster into the owner prompt and require
+        their integration before the task output is reviewed.
+        """
+        subagent_results = [
+            sub["result"]
+            for sub in SubAgentRepository.get_by_task(task["id"])
+            if isinstance(sub.get("result"), (dict, list)) and sub.get("result")
+        ]
+        collaborators = task.get("collaborator_agents", []) or []
+        if not subagent_results and not collaborators:
+            return ""
+        parts = ["【协作中间结果（必须整合，不得忽略）】"]
+        if collaborators:
+            parts.append(f"协作 Agent：{', '.join(str(item) for item in collaborators)}")
+        if subagent_results:
+            parts.append("SubAgent 返回的中间结果：")
+            parts.append(json.dumps(subagent_results, ensure_ascii=False, indent=2)[:4000])
+        parts.append("请在 summary 与 claims 中明确说明你如何整合上述协作结果，不要简单复制。")
+        return "\n".join(parts)
 
     def _parse_result(self, raw: str) -> dict:
         text = raw.strip()
