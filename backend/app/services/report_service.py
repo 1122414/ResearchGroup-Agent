@@ -19,6 +19,9 @@ from ..storage.repositories import (
 )
 from .run_artifact_service import run_artifact_service
 from .artifact_manifest_service import artifact_manifest_service
+from .grounding_audit_service import grounding_audit_service
+from .paper_assembly_service import paper_assembly_service
+from .run_event_service import run_event_service
 
 
 class ReportService:
@@ -56,11 +59,16 @@ class ReportService:
             }
         )
 
-        advisor_final = await self._generate_advisor_final(run, writer_draft, task_summaries, review_summary, agent_time)
-        if settings.mock_mode:
-            report = self._normalize_final_report(self._build_fallback_report(run, tasks, agents, agent_time), run, agent_time)
-        else:
-            report = self._format_final_report(advisor_final, run, tasks, agents, agent_time)
+        narrative = await self._writer_reviewer_loop(
+            run, writer_agent, writer_draft, task_summaries, review_summary, agent_time
+        )
+
+        # The final report is always assembled from the knowledge graph so that
+        # claims, tables and citations are grounded. The LLM narrative (real mode)
+        # is embedded as discussion prose; in mock mode the grounded skeleton stands
+        # on its own instead of falling back to a generic mock template.
+        mode = paper_assembly_service.detect_mode(run, tasks)
+        report = paper_assembly_service.assemble(run, mode=mode, narrative="" if settings.mock_mode else narrative)
 
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
@@ -73,8 +81,39 @@ class ReportService:
                 "created_at": datetime.now().isoformat(),
             }
         )
+        self._run_grounding_audit(run["id"], report)
         logger.info("[ReportService] generate completed | run_id=%s | report_length=%d", run["id"], len(report))
         return report
+
+    def _run_grounding_audit(self, run_id: str, report: str) -> None:
+        audit = grounding_audit_service.audit_report(report)
+        if not audit.get("checked"):
+            return
+        OutputRepository.insert(
+            {
+                "id": f"grounding_audit_{run_id}",
+                "output_type": "grounding_audit",
+                "title": "接地审计报告",
+                "content": json.dumps(audit, ensure_ascii=False, indent=2),
+                "run_id": run_id,
+                "created_at": datetime.now().isoformat(),
+            }
+        )
+        run_event_service.emit(
+            run_id,
+            "report.grounding_audit",
+            "report",
+            "接地审计完成",
+            f"通过={audit['passed']} 无效引用={len(audit['invalid_citations'])} 缺引用结论={audit['uncited_claim_count']}",
+            payload=audit,
+        )
+        if not audit["passed"]:
+            logger.warning(
+                "[ReportService] grounding audit issues | run_id=%s | invalid=%s | uncited=%d",
+                run_id,
+                audit["invalid_citations"],
+                audit["uncited_claim_count"],
+            )
 
     async def _generate_writer_draft(self, run: dict, writer_agent: dict | None, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)
@@ -105,6 +144,41 @@ class ReportService:
         if settings.mock_mode or not raw.strip().startswith("#"):
             return self._build_writer_draft(run, task_summaries, agent_time)
         return raw.strip()
+
+    async def _writer_reviewer_loop(
+        self,
+        run: dict,
+        writer_agent: dict | None,
+        writer_draft: str,
+        task_summaries: list[dict],
+        review_summary: str,
+        agent_time: str,
+    ) -> str:
+        """Bounded writer<->reviewer revision rounds on the narrative draft.
+
+        In mock mode there is no real reviewer, so the draft is returned as-is.
+        In real mode the advisor reviews and the writer revises up to
+        `paper_revision_rounds` times before the narrative is embedded into the
+        grounded paper.
+        """
+        if settings.mock_mode:
+            return writer_draft
+        narrative = writer_draft
+        rounds = max(1, settings.paper_revision_rounds)
+        for index in range(rounds):
+            narrative = await self._generate_advisor_final(run, narrative, task_summaries, review_summary, agent_time)
+            OutputRepository.insert(
+                {
+                    "id": f"report_revision_{run['id']}_{index + 1}",
+                    "output_type": "final_report_revision",
+                    "title": f"报告修订第 {index + 1} 轮",
+                    "content": narrative,
+                    "run_id": run["id"],
+                    "agent_id": writer_agent.get("id") if writer_agent else None,
+                    "created_at": datetime.now().isoformat(),
+                }
+            )
+        return narrative
 
     async def _generate_advisor_final(self, run: dict, writer_draft: str, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)
