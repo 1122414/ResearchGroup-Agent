@@ -9,39 +9,130 @@ from ..core.research_goal import primary_goal
 from ..storage.repositories import EvidenceRepository, TaskRepository
 from .evidence_provider import evidence_provider
 from .browser_research_service import browser_research_service
+from .fulltext_ingest_service import fulltext_ingest_service
 from .literature_source_service import literature_source_service
+from .query_rewriter import query_rewriter
 from .run_event_service import run_event_service
+from .source_verification_service import source_verification_service
+
+_STOPWORDS = {
+    "the", "a", "an", "of", "for", "and", "or", "to", "in", "on", "with",
+    "研究", "分析", "调研", "方法", "如何", "以及",
+}
 
 
 class EvidencePipelineService:
     async def collect_for_task(self, task: dict) -> dict:
         query = self._query_for_task(task)
-        search_result = evidence_provider.search_with_trace(query)
-        sources = list(search_result["results"])
-        browser_sources = await browser_research_service.discover(query)
-        sources.extend(browser_sources)
+        root_task = self._root_task(task)
+        feedback = self._revision_feedback(task)
+        if settings.research_agent_loop_enabled:
+            queries = await query_rewriter.rewrite(query, root_task, feedback)
+        else:
+            queries = [self._apply_feedback(query, feedback)] if query else []
+        if not queries:
+            queries = [query] if query else []
+
+        raw_sources, attempts, browser_count = await self._gather(queries)
         self._emit_search_trace(
             task,
             query,
-            search_result["attempts"],
-            browser_discovered=len(browser_sources),
-            candidate_count=len(sources),
+            attempts,
+            browser_discovered=browser_count,
+            candidate_count=len(raw_sources),
+            queries=queries,
         )
-        mode = "remote_provider" if sources else "curated_fallback"
-        if not sources:
-            sources = literature_source_service.select_sources(task)
-        if not sources:
+        normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in raw_sources])
+        normalized = self._rank_by_relevance(normalized, query)
+        mode = "remote_provider" if normalized else "curated_fallback"
+        if not normalized and settings.literature_curated_fallback_enabled:
+            normalized = self._deduplicate_sources(
+                [self._normalize_source(source, task) for source in literature_source_service.select_sources(task)]
+            )
+        if not normalized:
             mode = "no_grounded_source"
-        normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in sources])
+        normalized = normalized[: max(settings.evidence_search_max_results, settings.literature_source_limit)]
         before_verification = len(normalized)
         normalized = await browser_research_service.verify_candidates(query, normalized)
         self._emit_verification_trace(task, query, before_verification, normalized)
-        if sources and settings.browser_research_enabled:
+        if normalized and settings.browser_research_enabled:
             mode = f"{mode}+browser_research"
         if not normalized:
             mode = "no_grounded_source+browser_research" if settings.browser_research_enabled else "no_grounded_source"
+        normalized = source_verification_service.verify_sources(normalized)
         persisted = self.persist_sources(task, normalized)
-        return {"mode": mode, "query": query, "search_attempts": search_result["attempts"], **persisted}
+        fulltext_ingested = fulltext_ingest_service.ingest_sources(task.get("run_id"), normalized)
+        return {
+            "mode": mode,
+            "query": query,
+            "queries": queries,
+            "search_attempts": attempts,
+            "fulltext_ingested": fulltext_ingested,
+            **persisted,
+        }
+
+    async def _gather(self, queries: list[str]) -> tuple[list[dict], list[dict], int]:
+        sources: list[dict] = []
+        attempts: list[dict] = []
+        browser_count = 0
+        for query in queries:
+            if not query:
+                continue
+            search_result = evidence_provider.search_with_trace(query)
+            sources.extend(search_result["results"])
+            attempts.extend(search_result["attempts"])
+            browser_sources = await browser_research_service.discover(query)
+            sources.extend(browser_sources)
+            browser_count += len(browser_sources)
+        return sources, attempts, browser_count
+
+    @staticmethod
+    def _apply_feedback(query: str, feedback: str) -> str:
+        if not feedback:
+            return query
+        import re
+
+        tokens = [t for t in re.findall(r"[\w\u4e00-\u9fff]+", feedback) if t.lower() not in _STOPWORDS and len(t) > 1]
+        extra = " ".join(tokens[:4]).strip()
+        return f"{query} {extra}".strip() if extra else query
+
+    @staticmethod
+    def _revision_feedback(task: dict) -> str:
+        feedback = str(task.get("review_feedback") or task.get("blocked_reason") or "").strip()
+        if feedback:
+            return feedback
+        parent_id = task.get("revision_of_task_id")
+        if parent_id:
+            parent = TaskRepository.get_by_id(parent_id)
+            if parent:
+                return str(parent.get("review_feedback") or "").strip()
+        return ""
+
+    def _rank_by_relevance(self, sources: list[dict], query: str) -> list[dict]:
+        import re
+
+        query_tokens = {t.lower() for t in re.findall(r"[\w\u4e00-\u9fff]+", query) if t.lower() not in _STOPWORDS}
+        if not query_tokens:
+            return sources
+
+        def score(source: dict) -> float:
+            metadata = source.get("metadata", {}) or {}
+            text = " ".join(
+                str(part)
+                for part in [
+                    source.get("title"),
+                    source.get("venue"),
+                    metadata.get("summary"),
+                    metadata.get("content"),
+                ]
+                if part
+            ).lower()
+            source_tokens = {t for t in re.findall(r"[\w\u4e00-\u9fff]+", text)}
+            if not source_tokens:
+                return 0.0
+            return len(query_tokens & source_tokens) / (len(query_tokens) ** 0.5)
+
+        return [source for _, source in sorted(enumerate(sources), key=lambda pair: (-score(pair[1]), pair[0]))]
 
     async def collect_for_query(self, run_id: str, query: str) -> dict:
         search_result = evidence_provider.search_with_trace(query)
@@ -95,7 +186,7 @@ class EvidencePipelineService:
         return {"sources": sources, "excerpts": excerpts, "assessments": assessments}
 
     @staticmethod
-    def _query_for_task(task: dict) -> str:
+    def _root_task(task: dict) -> dict:
         root_task = task
         visited: set[str] = set()
         while root_task.get("revision_of_task_id") and root_task["id"] not in visited:
@@ -104,6 +195,10 @@ class EvidencePipelineService:
             if not parent:
                 break
             root_task = parent
+        return root_task
+
+    def _query_for_task(self, task: dict) -> str:
+        root_task = self._root_task(task)
         return " ".join(
             item
             for item in [
@@ -136,19 +231,28 @@ class EvidencePipelineService:
         }
 
     @staticmethod
-    def _emit_search_trace(task: dict, query: str, attempts: list[dict], browser_discovered: int, candidate_count: int) -> None:
+    def _emit_search_trace(
+        task: dict,
+        query: str,
+        attempts: list[dict],
+        browser_discovered: int,
+        candidate_count: int,
+        queries: list[str] | None = None,
+    ) -> None:
         run_id = task.get("run_id")
         if not run_id:
             return
+        query_list = queries or [query]
         run_event_service.emit(
             run_id,
             "evidence.search.completed",
             "evidence",
             "完成多源文献检索",
-            f"围绕原始课题完成检索，候选来源 {candidate_count} 条。",
+            f"围绕原始课题用 {len(query_list)} 条检索式完成检索，候选来源 {candidate_count} 条。",
             task_id=task.get("id"),
             payload={
                 "query": query,
+                "queries": query_list,
                 "attempts": attempts,
                 "browser_discovered": browser_discovered,
                 "candidate_count": candidate_count,
