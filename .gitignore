@@ -7,6 +7,9 @@ build/
 .venv/
 venv/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Node
 node_modules/
@@ -40,6 +43,7 @@ artifacts/runs/*
 
 # logs
 *.log
+backend/logs/
 
 # style
 design_style/
