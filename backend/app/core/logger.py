@@ -3,7 +3,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-BACKEND_LOG_DIR = Path(r"E:\GitHub\Repositories\ResearchGroup-Agent\backend\logs")
+BACKEND_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 FRONTEND_LOG_DIR = BACKEND_LOG_DIR
 
 
