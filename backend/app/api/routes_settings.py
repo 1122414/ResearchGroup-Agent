@@ -25,6 +25,7 @@ ALLOWED_FIELDS = {
     "llm_timeout",
     "llm_max_retries",
     "llm_max_tokens",
+    "llm_json_mode",
     "advisor_temperature",
     "graduate_temperature",
     "subagent_temperature",
@@ -148,6 +149,7 @@ async def get_settings():
         "llm_timeout": settings.llm_timeout,
         "llm_max_retries": settings.llm_max_retries,
         "llm_max_tokens": settings.llm_max_tokens,
+        "llm_json_mode": settings.llm_json_mode,
         "advisor_temperature": settings.advisor_temperature,
         "graduate_temperature": settings.graduate_temperature,
         "subagent_temperature": settings.subagent_temperature,
@@ -304,6 +306,9 @@ def _coerce_value(key: str, value):
     if key == "run_interaction_mode":
         normalized = str(value or "").strip().lower()
         return normalized if normalized in {"auto", "hitl"} else settings.run_interaction_mode
+    if key == "llm_json_mode":
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in {"auto", "json_schema", "json_object", "none"} else settings.llm_json_mode
     current = getattr(settings, key, None)
     if isinstance(current, bool):
         if isinstance(value, str):

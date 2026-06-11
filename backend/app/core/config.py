@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     llm_timeout: int = 120
     llm_max_retries: int = 3
     llm_max_tokens: int = 4096
+    # How to request structured JSON from the model. Different OpenAI-compatible
+    # providers support different response_format values:
+    #   - "auto": json_schema for OpenAI endpoints, json_object otherwise; on a
+    #     400 it automatically downgrades json_schema -> json_object -> none so any
+    #     compatible endpoint (DeepSeek, Moonshot, Qwen, local, ...) just works.
+    #   - "json_schema": strict schema (OpenAI only).
+    #   - "json_object": JSON object mode (widely supported).
+    #   - "none": never send response_format, rely on prompt instructions.
+    llm_json_mode: str = "auto"
     advisor_temperature: float = 0.3
     graduate_temperature: float = 0.7
     subagent_temperature: float = 0.7

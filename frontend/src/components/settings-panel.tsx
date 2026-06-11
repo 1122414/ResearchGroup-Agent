@@ -237,6 +237,20 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               </div>
               <FieldGrid fields={MODEL_TEXT_FIELDS} draft={draft} setValue={setValue} />
               <FieldGrid fields={MODEL_NUMBER_FIELDS} draft={draft} setValue={setValue} type="number" />
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <SelectRow
+                  label="JSON 输出模式"
+                  hint="不同厂商对 response_format 支持不同。auto 会自动适配并在 400 时降级，兼容 DeepSeek / Moonshot / Qwen 等。"
+                  value={String(draft.llm_json_mode ?? "auto")}
+                  options={[
+                    ["auto", "auto（推荐，自动适配）"],
+                    ["json_object", "json_object（通用 JSON）"],
+                    ["json_schema", "json_schema（仅 OpenAI）"],
+                    ["none", "none（仅靠提示词）"],
+                  ]}
+                  onChange={(value) => persistValue("llm_json_mode", value)}
+                />
+              </div>
             </Section>
 
             <Section title="调度、运行与成本">
@@ -342,6 +356,24 @@ function Field({ label, type, value, onChange }: { label: string; type: string; 
         onChange={(event) => onChange(event.target.value)}
         className="control-input h-9 w-full px-3 text-sm"
       />
+    </label>
+  )
+}
+
+function SelectRow({ label, hint, value, options, onChange }: { label: string; hint: string; value: string; options: readonly (readonly [string, string])[]; onChange: (value: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-[var(--rg-muted)]">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="control-input h-9 w-full px-3 text-sm"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>{optionLabel}</option>
+        ))}
+      </select>
+      <span className="mt-1 block text-[11px] leading-snug text-[var(--rg-muted)]">{hint}</span>
     </label>
   )
 }

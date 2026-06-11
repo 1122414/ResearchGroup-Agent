@@ -260,6 +260,61 @@ class MockLLMProvider(LLMProvider):
 
 
 class OpenAICompatibleProvider(LLMProvider):
+    """Universal entry for any OpenAI-compatible chat completions endpoint.
+
+    Users only need to provide a base URL, model name and API key. Because
+    providers disagree on the `response_format` field (OpenAI supports strict
+    `json_schema`, while DeepSeek/Moonshot/Qwen/local servers only support
+    `json_object` or nothing), the JSON mode is chosen by `settings.llm_json_mode`
+    and automatically downgrades on a 400 so the call succeeds across providers.
+    """
+
+    @staticmethod
+    def _endpoint() -> str:
+        base = (settings.llm_base_url or "").strip().rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        return f"{base}/chat/completions"
+
+    def _format_strategies(self, schema: Optional[dict]) -> list[str]:
+        """Ordered response_format strategies to attempt for this request."""
+        if not schema:
+            return ["none"]
+        mode = (settings.llm_json_mode or "auto").strip().lower()
+        if mode == "none":
+            return ["none"]
+        if mode == "json_object":
+            return ["json_object", "none"]
+        if mode == "json_schema":
+            return ["json_schema", "json_object", "none"]
+        # auto: OpenAI endpoints get strict schema first; everyone else starts at
+        # json_object. Both fall back to none so an unknown provider still works.
+        base = (settings.llm_base_url or "").lower()
+        if "openai.com" in base or "azure" in base:
+            return ["json_schema", "json_object", "none"]
+        return ["json_object", "none"]
+
+    def _build_body(self, prompt: str, schema: Optional[dict], model: str, role: str, rf_mode: str) -> dict:
+        messages = [{"role": "user", "content": prompt}]
+        # json_object mode on several providers requires the word "json" to appear
+        # in the messages; add a tiny system hint when it is missing.
+        if rf_mode in ("json_object", "json_schema") and "json" not in prompt.lower():
+            messages.insert(0, {"role": "system", "content": "You must respond with a single valid JSON value only."})
+        body: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": settings.get_temperature_for_role(role),
+            "max_tokens": settings.llm_max_tokens,
+        }
+        if rf_mode == "json_schema":
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "output", "schema": schema},
+            }
+        elif rf_mode == "json_object":
+            body["response_format"] = {"type": "json_object"}
+        return body
+
     async def generate(
         self,
         prompt: str,
@@ -270,65 +325,30 @@ class OpenAICompatibleProvider(LLMProvider):
         agent_id: str | None = None,
     ) -> str:
         model = settings.get_model_for_role(role)
-        logger.info("[LLM] OpenAI generate start | role=%s | model=%s | run_id=%s | task_id=%s | prompt_len=%d | has_schema=%s",
-                    role, model, run_id, task_id, len(prompt), bool(schema))
-        request_body = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": settings.get_temperature_for_role(role),
-            "max_tokens": settings.llm_max_tokens,
-        }
-
-        if schema:
-            request_body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "output", "schema": schema},
-            }
-
+        endpoint = self._endpoint()
+        strategies = self._format_strategies(schema)
+        logger.info("[LLM] OpenAI generate start | role=%s | model=%s | run_id=%s | task_id=%s | prompt_len=%d | has_schema=%s | json_modes=%s",
+                    role, model, run_id, task_id, len(prompt), bool(schema), ",".join(strategies))
         headers = {
             "Authorization": f"Bearer {settings.llm_api_key}",
             "Content-Type": "application/json",
         }
 
         started = time.perf_counter()
+        last_error: Exception | None = None
         async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
-            for attempt in range(settings.llm_max_retries):
-                try:
-                    response = await client.post(
-                        f"{settings.llm_base_url}/chat/completions",
-                        json=request_body,
-                        headers=headers,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    result = data["choices"][0]["message"]["content"]
-                    usage = data.get("usage", {})
-                    latency = int((time.perf_counter() - started) * 1000)
-                    result_len = len(result)
-                    logger.info("[LLM] OpenAI success | role=%s | model=%s | latency=%dms | prompt_tokens=%s | completion_tokens=%s | result_len=%d",
-                                role, model, latency, usage.get("prompt_tokens"), usage.get("completion_tokens"), result_len)
-                    from ..services.cost_tracker import cost_tracker
-
-                    cost_tracker.record(
-                        role=role,
-                        provider="openai_compatible",
-                        model=model,
-                        prompt=prompt,
-                        completion=result,
-                        run_id=run_id,
-                        task_id=task_id,
-                        agent_id=agent_id,
-                        latency_ms=latency,
-                        success=True,
-                        prompt_tokens=usage.get("prompt_tokens"),
-                        completion_tokens=usage.get("completion_tokens"),
-                    )
-                    return result
-                except (httpx.HTTPError, KeyError, IndexError) as exc:
-                    logger.warning("[LLM] OpenAI attempt %d failed | role=%s | error=%s", attempt + 1, role, exc)
-                    if attempt == settings.llm_max_retries - 1:
-                        latency_ms = int((time.perf_counter() - started) * 1000)
-                        logger.error("[LLM] OpenAI final failure | role=%s | latency=%dms | error=%s", role, latency_ms, exc)
+            for rf_mode in strategies:
+                request_body = self._build_body(prompt, schema, model, role, rf_mode)
+                for attempt in range(settings.llm_max_retries):
+                    try:
+                        response = await client.post(endpoint, json=request_body, headers=headers)
+                        response.raise_for_status()
+                        data = response.json()
+                        result = data["choices"][0]["message"]["content"]
+                        usage = data.get("usage", {})
+                        latency = int((time.perf_counter() - started) * 1000)
+                        logger.info("[LLM] OpenAI success | role=%s | model=%s | json_mode=%s | latency=%dms | prompt_tokens=%s | completion_tokens=%s | result_len=%d",
+                                    role, model, rf_mode, latency, usage.get("prompt_tokens"), usage.get("completion_tokens"), len(result))
                         from ..services.cost_tracker import cost_tracker
 
                         cost_tracker.record(
@@ -336,16 +356,64 @@ class OpenAICompatibleProvider(LLMProvider):
                             provider="openai_compatible",
                             model=model,
                             prompt=prompt,
-                            completion="",
+                            completion=result,
                             run_id=run_id,
                             task_id=task_id,
                             agent_id=agent_id,
-                            latency_ms=latency_ms,
-                            success=False,
-                            error=str(exc),
+                            latency_ms=latency,
+                            success=True,
+                            prompt_tokens=usage.get("prompt_tokens"),
+                            completion_tokens=usage.get("completion_tokens"),
                         )
-                        raise RuntimeError(f"LLM 调用失败，耗时 {latency_ms}ms: {exc}") from exc
-        return ""
+                        return result
+                    except httpx.HTTPStatusError as exc:
+                        detail = self._error_detail(exc)
+                        last_error = RuntimeError(detail)
+                        # A 400 usually means the endpoint rejected this request shape
+                        # (most often response_format). Stop retrying and downgrade the
+                        # JSON mode instead of hammering the same bad body.
+                        if exc.response.status_code == 400 and rf_mode != strategies[-1]:
+                            logger.warning("[LLM] 400 with json_mode=%s, downgrading | role=%s | detail=%s", rf_mode, role, detail)
+                            break
+                        logger.warning("[LLM] OpenAI attempt %d failed | role=%s | json_mode=%s | error=%s", attempt + 1, role, rf_mode, detail)
+                        if attempt == settings.llm_max_retries - 1:
+                            break
+                    except (httpx.HTTPError, KeyError, IndexError) as exc:
+                        last_error = exc
+                        logger.warning("[LLM] OpenAI attempt %d failed | role=%s | json_mode=%s | error=%s", attempt + 1, role, rf_mode, exc)
+                        if attempt == settings.llm_max_retries - 1:
+                            break
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        logger.error("[LLM] OpenAI final failure | role=%s | latency=%dms | error=%s", role, latency_ms, last_error)
+        from ..services.cost_tracker import cost_tracker
+
+        cost_tracker.record(
+            role=role,
+            provider="openai_compatible",
+            model=model,
+            prompt=prompt,
+            completion="",
+            run_id=run_id,
+            task_id=task_id,
+            agent_id=agent_id,
+            latency_ms=latency_ms,
+            success=False,
+            error=str(last_error),
+        )
+        raise RuntimeError(f"LLM 调用失败，耗时 {latency_ms}ms: {last_error}")
+
+    @staticmethod
+    def _error_detail(exc: httpx.HTTPStatusError) -> str:
+        status = exc.response.status_code
+        try:
+            body = exc.response.json()
+            message = body.get("error", {}).get("message") if isinstance(body, dict) else None
+        except (ValueError, AttributeError):
+            message = None
+        if not message:
+            message = (exc.response.text or "")[:300]
+        return f"HTTP {status} from {exc.request.url}: {message}".strip()
 
 
 def create_llm_provider() -> LLMProvider:
