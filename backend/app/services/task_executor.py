@@ -120,6 +120,10 @@ class TaskExecutor:
             ]
             agent_skill_service.record_usage(active_skills, success=True)
         graph = knowledge_graph_service.ingest_task_result(task, result)
+        # evidence_links is a count (int), not a collection — see knowledge_graph_service.
+        evidence_link_count = graph.get("evidence_links") or 0
+        if not isinstance(evidence_link_count, int):
+            evidence_link_count = len(evidence_link_count)
         if graph["claims"] or graph["hypotheses"] or graph["uncertainties"]:
             result = {
                 **result,
@@ -127,7 +131,7 @@ class TaskExecutor:
                     "claim_ids": [item["id"] for item in graph["claims"] if item],
                     "hypothesis_ids": [item["id"] for item in graph["hypotheses"]],
                     "uncertainty_ids": [item["id"] for item in graph["uncertainties"]],
-                    "evidence_links": graph["evidence_links"],
+                    "evidence_links": evidence_link_count,
                 },
             }
             run_event_service.emit(
@@ -135,13 +139,13 @@ class TaskExecutor:
                 "knowledge_graph.updated",
                 "execute",
                 "知识图谱已更新",
-                f"新增结论 {len(graph['claims'])} 条、假设 {len(graph['hypotheses'])} 条、证据关联 {len(graph['evidence_links'])} 条",
+                f"新增结论 {len(graph['claims'])} 条、假设 {len(graph['hypotheses'])} 条、证据关联 {evidence_link_count} 条",
                 task_id=task.get("id"),
                 agent_id=owner_id,
                 payload={
                     "claims": len(graph["claims"]),
                     "hypotheses": len(graph["hypotheses"]),
-                    "evidence_links": len(graph["evidence_links"]),
+                    "evidence_links": evidence_link_count,
                 },
             )
         logger.info("[TaskExecutor] LLM response parsed | task_id=%s | has_summary=%s", task.get("id"), "summary" in result)

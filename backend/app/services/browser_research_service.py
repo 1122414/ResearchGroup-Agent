@@ -296,6 +296,12 @@ class BrowserResearchService:
                 model=settings.browser_use_model_name or settings.graduate_model_name or settings.llm_model_name,
                 api_key=settings.llm_api_key,
                 base_url=settings.llm_base_url,
+                # Many OpenAI-compatible gateways reject the `response_format`
+                # parameter ("This response_format type is unavailable now").
+                # Tell browser-use to express the schema via the system prompt
+                # instead of forcing structured output through the API.
+                dont_force_structured_output=True,
+                add_schema_to_system_prompt=True,
             )
         return Agent, Browser, llm
 
