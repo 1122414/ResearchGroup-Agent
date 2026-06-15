@@ -22,8 +22,16 @@ python-dotenv>=1.0.0
 # Document parsing
 pypdf>=4.2.0
 
+# Experiment execution: numerical compute + plotting
+numpy>=1.26.0
+pandas>=2.2.0
+matplotlib>=3.8.0
+
 # Browser research
 browser-use>=0.12.6
+
+# MCP client (tool adapter layer; behavior gated by MCP_ENABLED, default off)
+mcp>=1.26.0
 
 # CORS
 # (fastapi includes starlette which handles CORS)

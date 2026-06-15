@@ -345,6 +345,8 @@ class OpenAICompatibleProvider(LLMProvider):
                         response.raise_for_status()
                         data = response.json()
                         result = data["choices"][0]["message"]["content"]
+                        if not isinstance(result, str):
+                            result = str(result) if result is not None else ""
                         usage = data.get("usage", {})
                         latency = int((time.perf_counter() - started) * 1000)
                         logger.info("[LLM] OpenAI success | role=%s | model=%s | json_mode=%s | latency=%dms | prompt_tokens=%s | completion_tokens=%s | result_len=%d",

@@ -9,6 +9,8 @@ from ..storage.repositories import LLMUsageRepository, RunRepository
 class CostTracker:
     def estimate_tokens(self, text: str) -> int:
         chars_per_token = max(settings.token_estimate_chars_per_token, 1)
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
         return max(1, int(len(text) / chars_per_token))
 
     def record(

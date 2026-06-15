@@ -250,6 +250,7 @@ class RunExecutionService:
             task_recovery_service.complete_attempt(task["id"], attempt["id"], checkpoint="task_output_created")
             run_event_service.emit(run_id, "task.output_created", "execute", "任务输出已生成", task.get("title", ""), task_id=task["id"], agent_id=owner)
         except Exception as exc:
+            logger.error("[RunExecution] task failed | task_id=%s | error=%s", task["id"], exc, exc_info=True)
             task_recovery_service.fail_attempt(attempt["id"], type(exc).__name__, str(exc))
             TaskRepository.update_status(task["id"], "failed", blocked_reason=str(exc))
             run_event_service.emit(run_id, "task.failed", "execute", "任务执行失败", str(exc), task_id=task["id"], agent_id=owner)

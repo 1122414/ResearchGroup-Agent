@@ -224,8 +224,14 @@ class BrowserResearchService:
 
     async def _run_agent(self, task: str, output_model: type[BaseModel]):
         Agent, Browser, llm = self._load_runtime()
+        schema_text = json.dumps(output_model.model_json_schema(), ensure_ascii=False, indent=2)
+        task_with_schema = (
+            f"{task}\n\n"
+            f"You MUST return your final answer as a JSON object matching this schema:\n"
+            f"{schema_text}\n"
+        )
         browser = Browser(headless=settings.browser_use_headless)
-        agent = Agent(task=task, llm=llm, browser=browser, output_model_schema=output_model)
+        agent = Agent(task=task_with_schema, llm=llm, browser=browser)
         try:
             return await agent.run(max_steps=settings.browser_use_max_steps)
         finally:
@@ -237,6 +243,8 @@ class BrowserResearchService:
 
     @staticmethod
     def _structured_output(history, output_model: type[BaseModel]):
+        import re
+
         structured = getattr(history, "structured_output", None)
         if structured is not None:
             if isinstance(structured, output_model):
@@ -248,7 +256,24 @@ class BrowserResearchService:
         final_result = getattr(history, "final_result", lambda: None)()
         if not final_result:
             return None
-        return output_model.model_validate_json(final_result)
+        try:
+            return output_model.model_validate_json(final_result)
+        except Exception:
+            pass
+        m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", final_result, re.DOTALL)
+        if m:
+            try:
+                return output_model.model_validate_json(m.group(1).strip())
+            except Exception:
+                pass
+        start = final_result.find("{")
+        end = final_result.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return output_model.model_validate_json(final_result[start : end + 1])
+            except Exception:
+                pass
+        return None
 
     @staticmethod
     def _load_runtime():

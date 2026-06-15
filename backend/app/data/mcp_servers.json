@@ -1,0 +1,24 @@
+{
+  "servers": [
+    {
+      "name": "local-sandbox",
+      "tier": "A",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "deno",
+      "args": ["run", "-N", "-R=node_modules", "-W=node_modules", "--node-modules-dir=auto", "jsr:@pydantic/mcp-run-python", "stdio"],
+      "env": {},
+      "description": "Tier A1: local Python sandbox (mcp-run-python / Pyodide) for reproducible experiment execution."
+    },
+    {
+      "name": "arxiv",
+      "tier": "A",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["arxiv-mcp-server"],
+      "env": {},
+      "description": "Tier A2: arXiv search + full-text download, augments evidence_provider."
+    }
+  ]
+}

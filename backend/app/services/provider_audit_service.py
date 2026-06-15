@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..core.config import settings
 from .evidence_provider import evidence_provider
+from .mcp_client_service import mcp_client_service
 
 
 class ProviderAuditService:
@@ -27,6 +28,7 @@ class ProviderAuditService:
             "require_review": settings.experiment_require_review,
             "allow_network": settings.experiment_allow_network,
         }
+        mcp = mcp_client_service.summary()
         warnings = self._warnings(evidence)
         live_evidence = [item["name"] for item in evidence if item.get("enabled")]
         return {
@@ -35,6 +37,7 @@ class ProviderAuditService:
             "evidence_providers": evidence,
             "live_evidence_providers": live_evidence,
             "experiment": experiment,
+            "mcp": mcp,
             "warnings": warnings,
         }
 

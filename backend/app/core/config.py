@@ -150,6 +150,14 @@ class Settings(BaseSettings):
     # Goal-driven generated experiments.
     experiment_generated_code_enabled: bool = False
 
+    # MCP tool adapter layer. Off by default so the system behaves exactly as
+    # before; turning it on only exposes a callable tool surface, no agent
+    # decision path changes. Each server is additionally gated by its own
+    # "enabled" flag in the registry file.
+    mcp_enabled: bool = False
+    mcp_servers_config: str = ""
+    mcp_call_timeout_seconds: int = 60
+
     # Paper / report assembly.
     paper_revision_rounds: int = 1
 
@@ -215,6 +223,13 @@ class Settings(BaseSettings):
     @property
     def data_dir(self) -> Path:
         return PROJECT_ROOT / "backend" / "app" / "data"
+
+    @property
+    def mcp_servers_path(self) -> Path:
+        if self.mcp_servers_config:
+            path = Path(self.mcp_servers_config)
+            return path if path.is_absolute() else PROJECT_ROOT / path
+        return self.data_dir / "mcp_servers.json"
 
     @property
     def artifacts_dir(self) -> Path:

@@ -5,7 +5,7 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 
 _CONTRACT = """该脚本必须满足：
-1. 仅使用 Python 标准库（可选 numpy/matplotlib，如不可用需自动降级，不得联网、不得安装包）。
+1. 可使用 Python 标准库以及 numpy、pandas、matplotlib（这些库已安装且保证可用）。不得联网、不得安装包。
 2. 围绕给定假设设计一个小而真实、可在 3 分钟内完成的实验，包含基线与处理（treatment）两种条件。
 3. 在当前工作目录写出 summary.json，字段固定为：
    {
@@ -16,7 +16,8 @@ _CONTRACT = """该脚本必须满足：
      "rows": [ {可用于报告表格的对照行} ],
      "notes": 字符串
    }
-4. 如可用 matplotlib，则额外保存 figure.png 展示对照结果；不可用时跳过且不报错。
+4. 必须使用 matplotlib（matplotlib.use("Agg")）将对照结果绘制成图表并保存为当前目录下的 figure.png。
+   绘图代码需用 try/except 包裹，万一绘图失败也不能让整个实验崩溃，但正常情况下必须产出 figure.png。
 5. 把关键过程 print 到 stdout，最后 print("experiment completed")。
 只返回完整的 Python 源码，不要任何解释或 Markdown 代码围栏。"""
 
@@ -45,7 +46,7 @@ class ExperimentCodeGenerator:
             logger.warning("[ExperimentCodeGen] generation failed | error=%s", exc)
             return None
         script = self._strip_fences(raw)
-        if "summary.json" not in script or "def " not in script:
+        if "summary.json" not in script or "def " not in script or "figure.png" not in script:
             logger.warning("[ExperimentCodeGen] generated script did not satisfy contract; falling back")
             return None
         return script

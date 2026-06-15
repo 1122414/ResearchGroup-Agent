@@ -76,7 +76,8 @@ class ReproducibleExperimentService:
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
         artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
         figure_path = workspace / "figure.png"
-        if figure_path.exists():
+        has_figure = figure_path.exists()
+        if has_figure:
             artifact_paths.append(str(figure_path))
         artifact_paths = [path for path in artifact_paths if Path(path).exists()]
         for artifact_path in artifact_paths:
@@ -124,7 +125,9 @@ class ReproducibleExperimentService:
                 "results_csv": str(results_path),
                 "summary_json": str(summary_path),
                 "chart_data_json": str(chart_path),
+                **({"figure_png": str(figure_path)} if has_figure else {}),
             },
+            "figure_path": str(figure_path) if has_figure else None,
             "metrics": metrics,
             "artifacts": artifact_paths,
             "execution": result,
@@ -280,6 +283,37 @@ DATA_DIR = Path("data")
 INPUT_PATH = DATA_DIR / "input_documents.jsonl"
 RESULTS_PATH = DATA_DIR / "results.csv"
 SUMMARY_PATH = Path("summary.json")
+FIGURE_PATH = Path("figure.png")
+
+
+def plot_results(rows):
+    """Render a grouped bar chart comparing strategies. No-op if matplotlib is missing."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001
+        print(f"plotting skipped: {exc}")
+        return False
+    metrics = ["top1_accuracy", "top3_accuracy", "mrr"]
+    strategies = [row["strategy"] for row in rows]
+    bar_width = 0.25
+    positions = list(range(len(strategies)))
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for offset, metric in enumerate(metrics):
+        xs = [pos + offset * bar_width for pos in positions]
+        ys = [row.get(metric, 0) for row in rows]
+        ax.bar(xs, ys, width=bar_width, label=metric)
+    ax.set_xticks([pos + bar_width for pos in positions])
+    ax.set_xticklabels(strategies, rotation=15, ha="right")
+    ax.set_ylabel("score")
+    ax.set_title("Chunking strategy retrieval comparison")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(FIGURE_PATH, dpi=120)
+    plt.close(fig)
+    print(f"figure saved: {FIGURE_PATH}")
+    return True
 
 
 def tokenize(text):
@@ -376,6 +410,7 @@ def main():
         writer.writerows(rows)
     best = max(rows, key=lambda row: (row["top3_accuracy"], row["mrr"], -row["chunk_count"]))
     SUMMARY_PATH.write_text(json.dumps({"rows": rows, "best_strategy": best}, ensure_ascii=False, indent=2), encoding="utf-8")
+    plot_results(rows)
     print(f"experiment completed: {len(rows)} strategies, best={best['strategy']}")
 
 
