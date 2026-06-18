@@ -13,6 +13,7 @@ from ..storage.repositories import (
     RunEventRepository,
     RunRepository,
     SubAgentRepository,
+    TaskDependencyRepository,
     TaskRepository,
 )
 from .approval_service import approval_service
@@ -63,7 +64,7 @@ class RunExecutionService:
 
             tasks = TaskRepository.get_all(run_id=run_id)
             research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
-            if any(task.get("status") != "completed" for task in research_tasks):
+            if not self._research_settled(research_tasks):
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待研究任务完成或返工")
                 return self.get_summary(run_id)
 
@@ -86,9 +87,27 @@ class RunExecutionService:
                     return self._pause_for_confirmation(run_id)
                 tasks = TaskRepository.get_all(run_id=run_id)
                 research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
-                if any(task.get("status") != "completed" for task in research_tasks):
+                if not self._research_settled(research_tasks):
                     RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待下一轮研究任务完成")
                     return self.get_summary(run_id)
+
+            # If every research task failed there is nothing to write a report
+            # from. Finalize the run as failed instead of producing an empty
+            # report or stalling.
+            settled_research = [
+                task for task in TaskRepository.get_all(run_id=run_id)
+                if task.get("task_type") != "report_writing"
+            ]
+            if settled_research and all(task.get("status") == "failed" for task in settled_research):
+                RunRepository.update_status(
+                    run_id,
+                    RunStatus.failed.value,
+                    current_step="所有研究任务均失败，无法生成报告",
+                    completed_at=datetime.now().isoformat(),
+                )
+                self._reset_agents(run_id, blocked=True)
+                run_event_service.emit(run_id, "run.failed", "error", "运行失败", "所有研究任务均未通过审核或执行失败")
+                return self.get_summary(run_id)
 
             await self._execute_writing_flow(run_id)
             if self._has_pending_approval(run_id):
@@ -96,7 +115,7 @@ class RunExecutionService:
 
             tasks = TaskRepository.get_all(run_id=run_id)
             writing_tasks = [task for task in tasks if task.get("task_type") == "report_writing"]
-            if writing_tasks and any(task.get("status") != "completed" for task in writing_tasks):
+            if writing_tasks and not self._research_settled(writing_tasks):
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
                 return self.get_summary(run_id)
 
@@ -179,6 +198,35 @@ class RunExecutionService:
                 payload=assignment,
             )
 
+    def _research_settled(self, tasks: list[dict]) -> bool:
+        """A task group is settled when nothing can make further progress.
+
+        Settled means every task is either in a terminal state
+        (completed/failed/archived) or is blocked solely because its
+        dependencies have failed and will never complete. In both cases the run
+        must move on rather than stall in `reviewing` forever. Only a task that
+        is actively runnable (running/waiting_review/need_revision or a ready
+        task) keeps the group unsettled.
+        """
+        terminal = {"completed", "failed", "archived"}
+        active = [task for task in tasks if task.get("status") not in terminal]
+        if not active:
+            return True
+        all_run_tasks = TaskRepository.get_all(run_id=tasks[0]["run_id"]) if tasks else []
+        ready_ids = {item["id"] for item in task_graph_service.ready_tasks(all_run_tasks)}
+        status_map = {task["id"]: task.get("status") for task in all_run_tasks}
+        for task in active:
+            if task.get("status") in {"running", "waiting_review", "need_revision"}:
+                return False
+            if task["id"] in ready_ids:
+                return False
+            # A blocked task whose dependencies are still progressing (not yet
+            # terminal) may still become runnable, so keep waiting.
+            deps = TaskDependencyRepository.get_for_task(task["id"])
+            if any(status_map.get(dep) not in terminal for dep in deps):
+                return False
+        return True
+
     async def _execute_research_flow(self, run_id: str) -> None:
         while True:
             tasks = TaskRepository.get_all(run_id=run_id)
@@ -193,11 +241,75 @@ class RunExecutionService:
                 return
             refreshed = TaskRepository.get_all(run_id=run_id)
             latest_research = [task for task in refreshed if task.get("task_type") != "report_writing"]
-            if all(task.get("status") == "completed" for task in latest_research):
+            if all(task.get("status") in {"completed", "failed"} for task in latest_research):
                 return
             after = [(task["id"], task.get("status")) for task in latest_research]
             if after == before:
+                # No task changed state this round. Before giving up, try to break
+                # any revision dead-lock: tasks stuck in need_revision that can no
+                # longer spawn a new revision must be finalized as failed so the run
+                # can move on instead of silently stalling forever.
+                if self._finalize_stuck_revisions(run_id, latest_research):
+                    continue
                 return
+
+    def _finalize_stuck_revisions(self, run_id: str, tasks: list[dict]) -> bool:
+        """Mark exhausted-revision tasks as failed to escape an orchestration stall.
+
+        This is only invoked once a full execute+review round produced NO state
+        change (a genuine stall). In that situation any task still sitting in
+        need_revision can no longer make progress: if it could spawn another
+        usable revision round, that round would have changed state this loop.
+        So we finalize every such task as failed and unblock its root, letting
+        the run proceed to its terminal state instead of hanging forever.
+
+        Returns True if any task was finalized (caller should re-loop)."""
+        changed = False
+        for task in tasks:
+            if task.get("status") != "need_revision":
+                continue
+            # Give the task one more chance only if a fresh revision round is
+            # genuinely available (no live sibling, under the round cap). During
+            # a stall a live sibling means that sibling is itself stuck, so we
+            # finalize regardless to avoid an endless loop.
+            terminal_feedback = (
+                f"已达到最大返工轮次 {settings.task_max_revision_rounds}，"
+                "审核仍未通过，系统终止该任务以避免运行卡死。"
+            )
+            TaskRepository.update_status(
+                task["id"],
+                "failed",
+                blocked_reason=terminal_feedback,
+                review_feedback=terminal_feedback,
+            )
+            run_event_service.emit(
+                run_id,
+                "revision.exhausted",
+                "review",
+                "返工轮次已耗尽",
+                terminal_feedback,
+                task_id=task["id"],
+                agent_id=task.get("owner_agent"),
+            )
+            # Finalize the whole revision family (root + sibling revisions) so no
+            # downstream dependent stays frozen waiting on a dead chain.
+            root_id = task.get("revision_of_task_id") or task["id"]
+            family_ids = {root_id} | {
+                item["id"]
+                for item in TaskRepository.get_all(run_id=run_id)
+                if item.get("revision_of_task_id") == root_id
+            }
+            for fid in family_ids:
+                member = TaskRepository.get_by_id(fid)
+                if member and member.get("status") not in {"completed", "failed", "archived"}:
+                    TaskRepository.update_status(
+                        fid,
+                        "failed",
+                        blocked_reason=terminal_feedback,
+                        review_feedback=terminal_feedback,
+                    )
+            changed = True
+        return changed
 
     async def _execute_writing_flow(self, run_id: str) -> None:
         tasks = TaskRepository.get_all(run_id=run_id)

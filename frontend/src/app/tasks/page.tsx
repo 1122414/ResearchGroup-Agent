@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 import { runDisplayName } from "@/lib/run-display"
 import { SKILL_NAMES, TASK_STATUS_LABELS, TASK_TYPE_LABELS, type GraduateAgent, type Run, type Task, type TaskGraph } from "@/lib/types"
+import { humanizeTaskIds } from "@/lib/utils"
 
 const ACTIVE_COLUMNS = ["pending", "assigned", "blocked", "running", "waiting_collab", "waiting_subagent", "waiting_review", "need_revision"]
 const FINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"])
@@ -383,7 +384,7 @@ function TaskDetailCard({
             <div className="space-y-1 text-[var(--rg-body)]">
               <div>是否关键路径：{task.is_critical_path ? "是" : "否"}</div>
               <div>尝试次数：{task.attempt_count}</div>
-              <div>阻塞原因：{task.blocked_reason || "无"}</div>
+              <div>阻塞原因：{task.blocked_reason ? humanizeTaskIds(task.blocked_reason, tasks) : "无"}</div>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 import { runDisplayName } from "@/lib/run-display"
+import { humanizeTaskIds } from "@/lib/utils"
 import {
   AGENT_STATUS_LABELS,
   RUN_STATUS_LABELS,
@@ -578,6 +579,7 @@ function TaskGraphPanel({ graph }: { graph: TaskGraph | null }) {
         {!graph && <div className="text-sm text-[var(--rg-muted)]">暂无任务图。</div>}
         {graph?.nodes.map((task) => {
           const deps = graph.edges.filter((edge) => edge.task_id === task.id)
+          const depNames = deps.map((item) => humanizeTaskIds(item.depends_on_task_id, graph.nodes))
           return (
             <div key={task.id} className="data-row p-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -588,7 +590,7 @@ function TaskGraphPanel({ graph }: { graph: TaskGraph | null }) {
                 </div>
               </div>
               <div className="mt-1 text-xs text-[var(--rg-muted)]">
-                前置依赖：{deps.length ? deps.map((item) => item.depends_on_task_id).join("、") : "无"} · {graph.ready_task_ids.includes(task.id) ? "可执行" : "等待"}
+                前置依赖：{depNames.length ? depNames.join("、") : "无"} · {graph.ready_task_ids.includes(task.id) ? "可执行" : "等待"}
               </div>
             </div>
           )
@@ -614,7 +616,7 @@ function TaskStatusPanel({ summary, agentMap }: { summary: RunSummary; agentMap:
             <div className="mt-1 text-xs text-[var(--rg-muted)]">
               {TASK_TYPE_LABELS[task.task_type] || task.task_type} · 负责人 {task.owner_agent ? agentMap[task.owner_agent] || task.owner_agent : "未分配"} · 尝试 {task.attempt_count}
             </div>
-            {task.blocked_reason && <div className="mt-2 text-xs text-[#964b36]">{task.blocked_reason}</div>}
+            {task.blocked_reason && <div className="mt-2 text-xs text-[#964b36]">{humanizeTaskIds(task.blocked_reason, summary.tasks)}</div>}
           </div>
         ))}
       </CardContent>

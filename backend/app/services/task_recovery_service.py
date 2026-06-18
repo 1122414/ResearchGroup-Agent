@@ -81,6 +81,30 @@ class TaskRecoveryService:
             )
         return action
 
+    def can_create_revision(self, task: dict) -> bool:
+        """Whether another revision round can still be spawned for this task's root.
+
+        Pure check (no side effects): mirrors the gating logic in
+        create_revision_task so callers can detect a dead-end without mutating
+        any state. Returns True if either an unfinished sibling revision exists
+        (the chain is still live) or the max revision rounds have not been hit.
+        """
+        root_task = self._root_task(task)
+        root_task_id = root_task["id"]
+        run_tasks = TaskRepository.get_all(run_id=task["run_id"])
+        existing_revisions = [
+            item for item in run_tasks if item.get("revision_of_task_id") == root_task_id
+        ]
+        unfinished_sibling = any(
+            item.get("revision_of_task_id") == root_task_id
+            and item.get("id") != task.get("id")
+            and item.get("status") not in {"completed", "failed", "archived"}
+            for item in run_tasks
+        )
+        if unfinished_sibling:
+            return True
+        return len(existing_revisions) < settings.task_max_revision_rounds
+
     def create_revision_task(self, task: dict, feedback: str) -> dict | None:
         root_task = self._root_task(task)
         root_task_id = root_task["id"]
