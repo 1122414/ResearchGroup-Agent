@@ -63,12 +63,20 @@ class ReportService:
             run, writer_agent, writer_draft, task_summaries, review_summary, agent_time
         )
 
+        # Derive a concise report title — either extract the first H1 from the
+        # LLM narrative (advisor's final version usually has a proper title) or
+        # generate one via LLM.  This avoids dumping the raw research-goal
+        # prompt into the document heading.
+        title = self._extract_title_from_narrative(narrative)
+        if not title:
+            title = await self._generate_title(run, task_summaries)
+
         # The final report is always assembled from the knowledge graph so that
         # claims, tables and citations are grounded. The LLM narrative (real mode)
         # is embedded as discussion prose; in mock mode the grounded skeleton stands
         # on its own instead of falling back to a generic mock template.
         mode = paper_assembly_service.detect_mode(run, tasks)
-        report = paper_assembly_service.assemble(run, mode=mode, narrative="" if settings.mock_mode else narrative)
+        report = paper_assembly_service.assemble(run, mode=mode, narrative="" if settings.mock_mode else narrative, title=title)
 
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
@@ -183,24 +191,26 @@ class ReportService:
     async def _generate_advisor_final(self, run: dict, writer_draft: str, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)
         system_prompt = prompt_loader.load("advisor_agent")
-        user_prompt = f"""请以导师 Agent 的身份，审核写作研究生提交的最终报告初稿，并给出可直接发布的 Markdown 最终研究报告。
+        user_prompt = f"""请以导师 Agent 的身份，基于写作研究生提交的报告初稿和所有审核通过的任务产出，直接撰写一份完整、可发布的 Markdown 最终研究报告。
 
 当前 Agent 时间：{agent_time}
 研究目标：{goal}
 
-写作研究生初稿：
+写作研究生初稿（供参考，需修正和提升）：
 {writer_draft}
 
 任务产出索引：
 {json.dumps(task_summaries, ensure_ascii=False, indent=2)}
 
-导师阶段审核汇总：
+导师阶段审核汇总（供参考）：
 {review_summary}
 
-要求：
-1. 输出最终 Markdown 报告，不要输出审核对话或 JSON。
-2. 修正不一致、遗漏、重复和证据不足之处。
-3. 保留清晰的小标题、结论和可追溯依据。
+严格要求：
+1. 直接输出完整的 Markdown 研究报告正文，以 # 标题开头。
+2. 禁止输出审核对话、裁决意见、评语、"好的"等寒暄语、JSON 或任何非报告内容。
+3. 报告必须是独立可读的最终成果，不是对初稿的点评。
+4. 修正不一致、遗漏、重复和证据不足之处，剔除与研究主题无关的离题内容。
+5. 保留清晰的小标题、结论和可追溯依据。
 """
         llm = create_llm_provider()
         return await llm.generate(
@@ -208,6 +218,48 @@ class ReportService:
             role="advisor_report",
             run_id=run["id"],
         )
+
+    @staticmethod
+    def _extract_title_from_narrative(narrative: str) -> str:
+        """Extract the first H1 title from the advisor's final narrative.
+
+        The advisor LLM typically rewrites the raw goal into a proper concise
+        report title as the first heading.  We prefer that over the raw prompt.
+        """
+        if not narrative:
+            return ""
+        for line in narrative.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                return stripped[2:].strip().strip("「」""''\"'")
+        return ""
+
+    async def _generate_title(self, run: dict, task_summaries: list[dict]) -> str:
+        """Generate a concise report title via LLM when none was found in the narrative."""
+        goal = self._primary_goal(run)
+        # Quick fallback: use the first meaningful line of the goal.
+        fallback = ""
+        for line in goal.splitlines():
+            s = line.strip()
+            if s and not s.startswith("#"):
+                fallback = s[:60]
+                break
+        if settings.mock_mode:
+            return fallback or "研究报告"
+        try:
+            llm = create_llm_provider()
+            raw = await llm.generate(
+                prompt=(
+                    f"请为以下研究课题生成一个简洁的中文报告标题（不超过30个字，不要句号，不要引号，只输出标题文字）：\n\n"
+                    f"{goal[:500]}"
+                ),
+                role="advisor_report",
+                run_id=run["id"],
+            )
+            title = raw.strip().split("\n")[0].strip().strip("「」""''\"\"#")
+            return title if title else fallback
+        except Exception:
+            return fallback or "研究报告"
 
     def _format_final_report(self, raw: str, run: dict, tasks: list[dict], agents: list[dict], agent_time: str) -> str:
         text = raw.strip()

@@ -45,11 +45,18 @@ class PaperAssemblyService:
             return "survey"
         return "paper"
 
-    def assemble(self, run: dict, mode: str | None = None, narrative: str = "") -> str:
+    def assemble(self, run: dict, mode: str | None = None, narrative: str = "", title: str = "") -> str:
         run_id = run["id"]
         goal = primary_goal(str(run.get("research_goal", "")))
         tasks = TaskRepository.get_all(run_id=run_id)
         mode = mode or self.detect_mode(run, tasks)
+
+        # Use a concise, refined title instead of dumping the raw research-goal
+        # prompt (which can be a long multi-paragraph instruction) into the
+        # document heading and every section that references it.
+        title = (title or self._short_title(goal)).strip()
+        # A short label (≤80 chars) for inline references inside the body.
+        goal_brief = title if len(title) <= 80 else title[:77] + "..."
 
         evidence = EvidenceRepository.get_by_run(run_id)
         claims = ResearchClaimRepository.get_by_run(run_id)
@@ -57,6 +64,11 @@ class PaperAssemblyService:
         uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
         experiment_results = ExperimentResultRepository.get_by_run(run_id)
         experiment_findings = ExperimentFindingRepository.get_by_run(run_id)
+
+        # Filter out hypotheses whose statement is just the raw goal prompt —
+        # these get ingested when the LLM echoes the full instruction as a
+        # "hypothesis" and are not real research hypotheses.
+        hypotheses = [h for h in hypotheses if h.get("statement", "").strip() != goal.strip() and len(h.get("statement", "")) < len(goal) * 0.8]
 
         source_map = {item["id"]: item for item in evidence["sources"]}
         links_by_claim: dict[str, list[dict]] = {}
@@ -70,7 +82,7 @@ class PaperAssemblyService:
         time_label = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         doc_type = "研究论文" if mode == "paper" else "调研报告"
         lines = [
-            f"# {doc_type}：{goal}",
+            f"# {doc_type}：{title}",
             "",
             f"**类型:** {'Paper' if mode == 'paper' else 'Survey/Report'}　**生成时间:** {time_label}",
             f"**证据来源:** {len(source_map)} 条　**结论:** {len(claims)} 条（已支撑 {len(grounded_claims)}）　**实验:** {len(experiment_results)} 次",
@@ -79,19 +91,29 @@ class PaperAssemblyService:
             "",
         ]
 
-        lines += self._abstract_section(goal, grounded_claims, experiment_results, mode)
+        lines += self._abstract_section(goal_brief, grounded_claims, experiment_results, mode)
         narrative_block = self._narrative_block(narrative)
+        narrative_body = narrative_block.get("discussion", "").strip()
+        has_full_narrative = bool(narrative_body) and ("#" in narrative_body or len(narrative_body) > 500)
+
+        if has_full_narrative:
+            # The advisor LLM produced a full report narrative.  Embed it as the
+            # main body so the reader sees the actual report first, then the
+            # grounded evidence/experiment details as a clearly-labelled appendix.
+            lines += ["## 报告正文", "", narrative_body, ""]
+
         if mode == "paper":
-            lines += self._intro_section(goal, hypotheses, narrative_block)
+            lines += self._intro_section(goal_brief, hypotheses, narrative_block if not has_full_narrative else {})
             lines += self._related_work_section(grounded_claims, citation_index, source_map)
-            lines += self._method_section(hypotheses, narrative_block)
+            lines += self._method_section(hypotheses, narrative_block if not has_full_narrative else {})
             lines += self._experiments_section(experiment_results, tasks)
             lines += self._results_section(grounded_claims, citation_index, source_map, links_by_claim, experiment_findings)
-            lines += self._discussion_section(narrative_block, unsupported_claims, uncertainties)
+            if not has_full_narrative:
+                lines += self._discussion_section(narrative_block, unsupported_claims, uncertainties)
             lines += self._limitations_section(unsupported_claims, uncertainties)
             lines += self._conclusion_section(grounded_claims, experiment_results)
         else:
-            lines += self._scope_section(goal, narrative_block)
+            lines += self._scope_section(goal_brief, narrative_block if not has_full_narrative else {})
             lines += self._themes_section(grounded_claims, citation_index, source_map, links_by_claim)
             lines += self._comparative_section(grounded_claims, citation_index, source_map)
             lines += self._findings_section(grounded_claims, citation_index, links_by_claim)
@@ -161,8 +183,18 @@ class PaperAssemblyService:
                 ]
                 if item
             ).strip()
-            locator = source.get("doi") or source.get("url") or ""
-            lines.append(f"[{number}] {citation} {locator}".rstrip())
+            doi = (source.get("doi") or "").strip()
+            url = (source.get("url") or "").strip()
+            if doi:
+                link = f"[{doi}](https://doi.org/{doi})"
+            elif url:
+                link = f"[{url}]({url})"
+            else:
+                link = ""
+            entry = f"[{number}] {citation}"
+            if link:
+                entry += f" {link}"
+            lines.append(entry.rstrip())
         lines.append("")
         return lines
 
@@ -311,6 +343,37 @@ class PaperAssemblyService:
     # --- helpers -----------------------------------------------------------
 
     @staticmethod
+    def _short_title(goal: str) -> str:
+        """Derive a concise title from a potentially long research-goal prompt.
+
+        The research goal stored in the run is often a full multi-paragraph
+        instruction prompt. We must not dump it verbatim into the document
+        heading.  This extracts the first meaningful line and trims it.
+        """
+        if not goal:
+            return "研究报告"
+        # Take the first non-empty line that isn't a markdown heading or list
+        # marker.
+        for line in goal.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#") or stripped.startswith("-") or stripped.startswith("*"):
+                continue
+            # Remove surrounding quotes
+            title = stripped.strip("「」""''\"'")
+            # If this first line is already very long, truncate at the first
+            # sentence boundary.
+            if len(title) > 80:
+                for sep in ("。", "；", ";", "，", ",", "—", "–"):
+                    idx = title.find(sep)
+                    if 0 < idx <= 80:
+                        title = title[:idx]
+                        break
+            return title[:80] + ("..." if len(title) > 80 else "")
+        return goal[:80]
+
+    @staticmethod
     def _metrics_table(metrics: dict) -> list[str]:
         rows = metrics.get("rows") if isinstance(metrics, dict) else None
         if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
@@ -326,6 +389,22 @@ class PaperAssemblyService:
         if not narrative or not narrative.strip():
             return {}
         cleaned = re.sub(r"\[(source_[^\]\s]+)\]", "", narrative).strip()
+        # Strip conversational filler that the LLM sometimes prepends (e.g.
+        # "好的，导师。这是基于..." or "好的，写作研究生。我已收到你的...").
+        cleaned = re.sub(
+            r"^(好的[，,]?\s*(?:导师|写作研究生)[。.]?\s*)"
+            r"(?:[^\n]*(?:整合|修正|收到|综合|基于)[^\n]*[\n。])?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        # If the narrative contains a top-level markdown heading (# title),
+        # start from there to skip any review-verdict preamble (### 裁决,
+        # **有条件通过**, 综合评审意见, etc.) that may precede the actual
+        # report content.
+        m = re.search(r"^# ", cleaned, flags=re.MULTILINE)
+        if m:
+            cleaned = cleaned[m.start():].strip()
         return {"intro": "", "method": "", "discussion": cleaned}
 
 
