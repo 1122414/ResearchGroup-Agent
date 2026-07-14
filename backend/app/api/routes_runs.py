@@ -30,6 +30,8 @@ from ..services.task_graph_service import task_graph_service
 from ..storage.repositories import (
     ApprovalRequestRepository,
     EvidenceRepository,
+    FullTextDocumentRepository,
+    LiteratureSearchRepository,
     LLMUsageRepository,
     MemoryRecordRepository,
     ReviewDecisionRepository,
@@ -480,6 +482,16 @@ async def get_run_research_loop(run_id: str):
     if not RunRepository.get_by_id(run_id):
         raise HTTPException(status_code=404, detail="run not found")
     return research_loop_service.snapshot(run_id)
+
+
+@router.get("/{run_id}/literature-search")
+async def get_run_literature_search(run_id: str):
+    if not RunRepository.get_by_id(run_id):
+        raise HTTPException(status_code=404, detail="运行不存在")
+    return {
+        **LiteratureSearchRepository.get_by_run(run_id),
+        "fulltext_documents": FullTextDocumentRepository.get_by_run(run_id),
+    }
 
 
 @router.get("/{run_id}/artifact-manifest")

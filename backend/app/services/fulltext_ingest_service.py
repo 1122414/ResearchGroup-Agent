@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import urllib.error
 import urllib.request
@@ -9,7 +10,7 @@ from io import BytesIO
 
 from ..core.config import settings
 from ..core.logger import logger
-from ..storage.repositories import EvidenceRepository
+from ..storage.repositories import EvidenceRepository, FullTextDocumentRepository
 
 
 class FulltextIngestService:
@@ -29,26 +30,39 @@ class FulltextIngestService:
             url = source.get("url")
             if not url:
                 continue
-            text = self._fetch_text(url)
+            text, parser = self._fetch_text(url)
             if not text:
                 continue
-            EvidenceRepository.insert_excerpt(
+            text = text[: settings.fulltext_max_chars]
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            document_id = f"document_{uuid.uuid4().hex[:10]}"
+            now = datetime.now().isoformat()
+            FullTextDocumentRepository.insert(
                 {
-                    "id": f"excerpt_{uuid.uuid4().hex[:10]}",
-                    "run_id": run_id,
-                    "source_id": source["id"],
-                    "excerpt": text[: settings.fulltext_max_chars],
-                    "locator": url,
-                    "excerpt_type": "fulltext",
-                    "captured_at": datetime.now().isoformat(),
+                    "id": document_id, "run_id": run_id, "source_id": source["id"], "url": url,
+                    "content_hash": content_hash, "parser": parser, "status": "parsed",
+                    "char_count": len(text), "created_at": now,
                 }
             )
+            for index, start in enumerate(range(0, len(text), settings.evidence_excerpt_max_chars)):
+                passage = text[start : start + settings.evidence_excerpt_max_chars].strip()
+                if not passage:
+                    continue
+                EvidenceRepository.insert_excerpt(
+                    {
+                        "id": f"excerpt_{uuid.uuid4().hex[:10]}", "run_id": run_id,
+                        "source_id": source["id"], "excerpt": passage,
+                        "locator": f"{url}#chars={start}-{start + len(passage)}", "excerpt_type": "fulltext",
+                        "captured_at": now, "document_id": document_id, "section": "",
+                        "page_number": None, "paragraph_index": index, "content_hash": content_hash,
+                    }
+                )
             ingested += 1
         if ingested:
             logger.info("[FulltextIngest] ingested full text | run_id=%s | sources=%d", run_id, ingested)
         return ingested
 
-    def _fetch_text(self, url: str) -> str:
+    def _fetch_text(self, url: str) -> tuple[str, str]:
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
             with urllib.request.urlopen(request, timeout=settings.fulltext_fetch_timeout) as response:
@@ -56,15 +70,15 @@ class FulltextIngestService:
                 raw = response.read(4 * 1024 * 1024)
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
             logger.debug("[FulltextIngest] fetch failed | url=%s | error=%s", url, exc)
-            return ""
+            return "", "fetch_failed"
 
         if "pdf" in content_type.lower() or url.lower().endswith(".pdf"):
-            return self._extract_pdf(raw)
+            return self._extract_pdf(raw), "pdf"
         try:
             html = raw.decode("utf-8", errors="ignore")
         except Exception:  # noqa: BLE001
-            return ""
-        return self._strip_html(html)
+            return "", "html"
+        return self._strip_html(html), "html"
 
     @staticmethod
     def _extract_pdf(raw: bytes) -> str:

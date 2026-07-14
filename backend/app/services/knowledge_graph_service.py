@@ -136,7 +136,7 @@ class KnowledgeGraphService:
                         "excerpt_id": passage_id,
                         "relation_type": relation,
                         "confidence": confidence,
-                        "rationale": str(item.get("rationale") or "")[:500],
+                        "rationale": str(item.get("entailment_rationale") or item.get("rationale") or "")[:500],
                         "created_at": now,
                     }
                 )

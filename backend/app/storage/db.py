@@ -451,6 +451,57 @@ def init_db():
             UNIQUE(run_id, milestone_key)
         );
 
+        CREATE TABLE IF NOT EXISTS literature_search_protocols (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            version INTEGER DEFAULT 1,
+            providers TEXT DEFAULT '[]',
+            queries TEXT DEFAULT '[]',
+            languages TEXT DEFAULT '[]',
+            date_range TEXT DEFAULT '{}',
+            inclusion_criteria TEXT DEFAULT '[]',
+            exclusion_criteria TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'frozen',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS literature_search_runs (
+            id TEXT PRIMARY KEY,
+            protocol_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            query TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            result_count INTEGER DEFAULT 0,
+            error TEXT,
+            response_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS screening_decisions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            task_id TEXT,
+            source_id TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS fulltext_documents (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            parser TEXT NOT NULL,
+            status TEXT NOT NULL,
+            char_count INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, source_id, content_hash)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
@@ -474,6 +525,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_research_decisions_run_created ON research_decisions(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_research_uncertainties_run_status ON research_uncertainties(run_id, status);
         CREATE INDEX IF NOT EXISTS idx_research_milestones_run_status ON research_milestones(run_id, status);
+        CREATE INDEX IF NOT EXISTS idx_literature_search_protocols_run ON literature_search_protocols(run_id, task_id);
+        CREATE INDEX IF NOT EXISTS idx_literature_search_runs_protocol ON literature_search_runs(protocol_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_screening_decisions_run_source ON screening_decisions(run_id, source_id);
+        CREATE INDEX IF NOT EXISTS idx_fulltext_documents_run_source ON fulltext_documents(run_id, source_id);
         """
     )
 
@@ -528,6 +583,14 @@ def init_db():
         "falsification_criterion": "TEXT DEFAULT ''",
         "originating_evidence_ids": "TEXT DEFAULT '[]'",
         "competing_hypothesis_ids": "TEXT DEFAULT '[]'",
+    })
+
+    _ensure_columns(conn, "evidence_excerpts", {
+        "document_id": "TEXT",
+        "section": "TEXT DEFAULT ''",
+        "page_number": "INTEGER",
+        "paragraph_index": "INTEGER",
+        "content_hash": "TEXT DEFAULT ''",
     })
 
     conn.commit()

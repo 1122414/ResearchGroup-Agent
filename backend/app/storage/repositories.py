@@ -397,6 +397,10 @@ class RunRepository:
         conn.execute("DELETE FROM research_decisions WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_uncertainties WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_milestones WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM literature_search_runs WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM literature_search_protocols WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM screening_decisions WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM fulltext_documents WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM tasks WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         conn.commit()
@@ -1196,9 +1200,10 @@ class EvidenceRepository:
         conn.execute(
             """
             INSERT INTO evidence_excerpts (
-                id, run_id, source_id, excerpt, locator, excerpt_type, captured_at
+                id, run_id, source_id, excerpt, locator, excerpt_type, captured_at,
+                document_id, section, page_number, paragraph_index, content_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 excerpt["id"],
@@ -1208,6 +1213,11 @@ class EvidenceRepository:
                 excerpt.get("locator", ""),
                 excerpt.get("excerpt_type", "summary"),
                 excerpt["captured_at"],
+                excerpt.get("document_id"),
+                excerpt.get("section", ""),
+                excerpt.get("page_number"),
+                excerpt.get("paragraph_index"),
+                excerpt.get("content_hash", ""),
             ),
         )
         conn.commit()
@@ -1446,6 +1456,114 @@ class ApprovalRequestRepository:
             if item["request_type"] == request_type and item.get("payload", {}).get("dedupe_key") == dedupe_key:
                 return item
         return None
+
+
+class LiteratureSearchRepository:
+    @staticmethod
+    def insert_protocol(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO literature_search_protocols (
+                id, run_id, task_id, version, providers, queries, languages, date_range,
+                inclusion_criteria, exclusion_criteria, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"], item["run_id"], item.get("task_id"), item.get("version", 1),
+                json.dumps(item.get("providers", []), ensure_ascii=False),
+                json.dumps(item.get("queries", []), ensure_ascii=False),
+                json.dumps(item.get("languages", []), ensure_ascii=False),
+                json.dumps(item.get("date_range", {}), ensure_ascii=False),
+                json.dumps(item.get("inclusion_criteria", []), ensure_ascii=False),
+                json.dumps(item.get("exclusion_criteria", []), ensure_ascii=False),
+                item.get("status", "frozen"), item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_run(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO literature_search_runs (
+                id, protocol_id, run_id, task_id, query, provider, result_count,
+                error, response_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"], item["protocol_id"], item["run_id"], item.get("task_id"), item["query"],
+                item["provider"], item.get("result_count", 0), item.get("error"), item["response_hash"],
+                item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_screening(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO screening_decisions (id, run_id, task_id, source_id, decision, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"], item["run_id"], item.get("task_id"), item["source_id"],
+                item["decision"], item["reason"], item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> dict:
+        conn = get_connection()
+        protocols = conn.execute(
+            "SELECT * FROM literature_search_protocols WHERE run_id = ? ORDER BY created_at", (run_id,)
+        ).fetchall()
+        runs = conn.execute(
+            "SELECT * FROM literature_search_runs WHERE run_id = ? ORDER BY created_at", (run_id,)
+        ).fetchall()
+        decisions = conn.execute(
+            "SELECT * FROM screening_decisions WHERE run_id = ? ORDER BY created_at", (run_id,)
+        ).fetchall()
+        conn.close()
+        return {
+            "protocols": [_deserialize_search_protocol(row) for row in protocols],
+            "runs": [_deserialize_search_run(row) for row in runs],
+            "screening_decisions": [dict(row) for row in decisions],
+        }
+
+
+class FullTextDocumentRepository:
+    @staticmethod
+    def insert(item: dict):
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO fulltext_documents (
+                id, run_id, source_id, url, content_hash, parser, status, char_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"], item["run_id"], item["source_id"], item["url"], item["content_hash"],
+                item["parser"], item["status"], item.get("char_count", 0), item["created_at"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM fulltext_documents WHERE run_id = ? ORDER BY created_at", (run_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
 
 
 class ResearchBriefRepository:
@@ -2109,6 +2227,7 @@ def _deserialize_evidence_claim(row) -> dict:
 
 
 def _deserialize_evidence_excerpt(row) -> dict:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "run_id": row["run_id"],
@@ -2117,6 +2236,11 @@ def _deserialize_evidence_excerpt(row) -> dict:
         "locator": row["locator"],
         "excerpt_type": row["excerpt_type"],
         "captured_at": row["captured_at"],
+        "document_id": row["document_id"] if "document_id" in keys else None,
+        "section": row["section"] if "section" in keys else "",
+        "page_number": row["page_number"] if "page_number" in keys else None,
+        "paragraph_index": row["paragraph_index"] if "paragraph_index" in keys else None,
+        "content_hash": row["content_hash"] if "content_hash" in keys else "",
     }
 
 
@@ -2179,6 +2303,26 @@ def _deserialize_approval_request(row) -> dict:
         "created_at": row["created_at"],
         "resolved_at": row["resolved_at"],
         "resolved_by": row["resolved_by"],
+    }
+
+
+def _deserialize_search_protocol(row) -> dict:
+    return {
+        "id": row["id"], "run_id": row["run_id"], "task_id": row["task_id"], "version": row["version"],
+        "providers": _json_loads(row["providers"], []), "queries": _json_loads(row["queries"], []),
+        "languages": _json_loads(row["languages"], []), "date_range": _json_loads(row["date_range"], {}),
+        "inclusion_criteria": _json_loads(row["inclusion_criteria"], []),
+        "exclusion_criteria": _json_loads(row["exclusion_criteria"], []),
+        "status": row["status"], "created_at": row["created_at"],
+    }
+
+
+def _deserialize_search_run(row) -> dict:
+    return {
+        "id": row["id"], "protocol_id": row["protocol_id"], "run_id": row["run_id"],
+        "task_id": row["task_id"], "query": row["query"], "provider": row["provider"],
+        "result_count": row["result_count"], "error": row["error"],
+        "response_hash": row["response_hash"], "created_at": row["created_at"],
     }
 
 

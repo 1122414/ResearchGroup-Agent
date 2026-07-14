@@ -15,6 +15,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .agent_skill_service import agent_skill_service
+from .claim_entailment_service import claim_entailment_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
 from .knowledge_graph_service import knowledge_graph_service
@@ -123,11 +124,17 @@ class TaskExecutor:
                 task,
                 evidence_bundle["excerpts"],
             )
+            if not result.get("insufficient_evidence") and not result.get("integrity_blocked"):
+                result = await claim_entailment_service.verify(
+                    result, evidence_bundle["excerpts"], task.get("run_id"), task.get("id")
+                )
             methods = literature_source_service.methods_from_sources(evidence_bundle["sources"])
             artifacts = literature_source_service.write_artifacts(task, evidence_bundle["sources"], methods)
             result = {
                 **result,
                 "source_mode": evidence_bundle["mode"],
+                "search_protocol_id": evidence_bundle.get("search_protocol_id"),
+                "search_metrics": evidence_bundle.get("search_metrics", {}),
                 "papers_read": evidence_bundle["sources"],
                 "methods_found": methods,
                 "evidence_excerpts": evidence_bundle["excerpts"],
