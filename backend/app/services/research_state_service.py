@@ -9,6 +9,7 @@ from ..storage.repositories import (
     ResearchClaimRepository,
     ResearchDecisionRepository,
     ResearchHypothesisRepository,
+    ResearchMilestoneRepository,
     ResearchUncertaintyRepository,
 )
 
@@ -33,7 +34,19 @@ class ResearchStateService:
                     "输出明确区分结论与未决问题的阶段性结果",
                 ],
                 "constraints": [],
-                "status": "active",
+                "research_type": "empirical",
+                "subquestions": [],
+                "scope_in": [],
+                "scope_out": [],
+                "target_domain": "",
+                "expected_contribution": "",
+                "novelty_criteria": [],
+                "data_availability": "",
+                "ethics_risks": [],
+                "failure_criteria": [],
+                "approval_status": "draft",
+                "validation_errors": [],
+                "status": "draft",
                 "created_at": now,
                 "updated_at": now,
             }
@@ -60,32 +73,6 @@ class ResearchStateService:
                 "resolved_at": None,
             }
         )
-        hypothesis_id = f"hypothesis_{uuid.uuid4().hex[:10]}"
-        ResearchHypothesisRepository.insert(
-            {
-                "id": hypothesis_id,
-                "run_id": run["id"],
-                "statement": f"针对“{question}”，改进后的研究方案应优于最小基线。",
-                "rationale": "先以一个可检验假设约束研究流程，再让证据和实验逐步修正它。",
-                "status": "active",
-                "confidence": 0.5,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        ResearchClaimRepository.insert(
-            {
-                "id": f"claim_{uuid.uuid4().hex[:10]}",
-                "run_id": run["id"],
-                "hypothesis_id": hypothesis_id,
-                "statement": "改进后的方案相较基线能够带来可测量收益。",
-                "status": "draft",
-                "evidence_ids": [],
-                "confidence": 0.0,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
 
     def get_state(self, run_id: str) -> dict:
         return {
@@ -94,6 +81,7 @@ class ResearchStateService:
             "claims": ResearchClaimRepository.get_by_run(run_id),
             "decisions": ResearchDecisionRepository.get_by_run(run_id),
             "uncertainties": ResearchUncertaintyRepository.get_by_run(run_id),
+            "milestones": ResearchMilestoneRepository.get_by_run(run_id),
         }
 
     def summary(self, run_id: str) -> dict:
@@ -101,9 +89,13 @@ class ResearchStateService:
         uncertainties = state["uncertainties"]
         return {
             "has_brief": bool(state["brief"]),
+            "research_type": (state["brief"] or {}).get("research_type"),
+            "contract_approval_status": (state["brief"] or {}).get("approval_status"),
+            "contract_validation_errors": (state["brief"] or {}).get("validation_errors", []),
             "hypothesis_count": len(state["hypotheses"]),
             "claim_count": len(state["claims"]),
             "open_uncertainty_count": len([item for item in uncertainties if item["status"] == "open"]),
+            "milestone_status": {item["milestone_key"]: item["status"] for item in state["milestones"]},
             "latest_decision": state["decisions"][-1] if state["decisions"] else None,
         }
 

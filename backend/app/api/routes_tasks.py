@@ -11,7 +11,13 @@ from ..services.run_event_service import run_event_service
 from ..services.run_execution_service import run_execution_service
 from ..services.task_graph_service import task_graph_service
 from ..services.task_recovery_service import task_recovery_service
-from ..storage.repositories import RunRepository, TaskRepository
+from ..storage.repositories import (
+    ResearchBriefRepository,
+    ResearchHypothesisRepository,
+    ResearchMilestoneRepository,
+    RunRepository,
+    TaskRepository,
+)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -26,6 +32,9 @@ DEFAULT_REQUIRED_SKILLS = {
 
 class DependencyUpdateRequest(BaseModel):
     depends_on_task_ids: list[str] = Field(default_factory=list)
+    subquestion_id: str | None = None
+    hypothesis_id: str | None = None
+    milestone_id: str | None = None
 
 
 class TaskActionRequest(BaseModel):
@@ -63,6 +72,9 @@ async def create_task(body: TaskCreateRequest):
     if not RunRepository.get_by_id(body.run_id):
         raise HTTPException(status_code=404, detail="运行不存在")
     now = datetime.now().isoformat()
+    brief = ResearchBriefRepository.get_by_run(body.run_id) or {}
+    hypotheses = ResearchHypothesisRepository.get_by_run(body.run_id)
+    milestones = ResearchMilestoneRepository.get_by_run(body.run_id)
     task = {
         "id": f"task_manual_{uuid.uuid4().hex[:8]}",
         "title": body.title,
@@ -88,6 +100,11 @@ async def create_task(body: TaskCreateRequest):
         "attempt_count": 0,
         "last_checkpoint": None,
         "revision_of_task_id": None,
+        "subquestion_id": body.subquestion_id or next(
+            (item.get("id") for item in brief.get("subquestions") or [] if item.get("id")), None
+        ),
+        "hypothesis_id": body.hypothesis_id or next((item["id"] for item in hypotheses), None),
+        "milestone_id": body.milestone_id or next((item["id"] for item in milestones), None),
         "created_at": now,
         "updated_at": now,
     }

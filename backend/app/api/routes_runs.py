@@ -24,6 +24,7 @@ from ..services.claim_evaluation_service import claim_evaluation_service
 from ..services.evidence_pipeline_service import evidence_pipeline_service
 from ..services.evidence_provider import evidence_provider
 from ..services.research_state_service import research_state_service
+from ..services.research_contract_service import research_contract_service
 from ..services.research_loop_service import research_loop_service
 from ..services.task_graph_service import task_graph_service
 from ..storage.repositories import (
@@ -456,6 +457,22 @@ async def get_run_research_state(run_id: str):
         raise HTTPException(status_code=404, detail="è¿è¡Œä¸å­˜åœ¨")
     research_state_service.ensure_initialized(run)
     return research_state_service.get_state(run_id)
+
+
+@router.patch("/{run_id}/research-contract")
+async def revise_run_research_contract(run_id: str, body: dict, background_tasks: BackgroundTasks):
+    run = RunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    revised = research_contract_service.revise(run_id, body)
+    if revised["ready"]:
+        pending = ApprovalRequestRepository.find_pending(run_id, "research_contract_revision")
+        if pending:
+            approval_service.resolve(pending["id"], True, resolved_by="user:contract_edit")
+        if run.get("status") == RunStatus.waiting_confirmation.value:
+            RunRepository.update_status(run_id, RunStatus.executing.value, current_step="研究契约已修订，继续执行")
+            background_tasks.add_task(_safe_execute_run, run_id)
+    return revised
 
 
 @router.get("/{run_id}/research-loop")

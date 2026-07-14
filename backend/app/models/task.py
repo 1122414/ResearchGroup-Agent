@@ -60,6 +60,9 @@ class Task(BaseModel):
     attempt_count: int = 0
     last_checkpoint: Optional[str] = None
     revision_of_task_id: Optional[str] = None
+    subquestion_id: Optional[str] = None
+    hypothesis_id: Optional[str] = None
+    milestone_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 

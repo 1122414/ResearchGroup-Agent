@@ -6,7 +6,7 @@ from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import OutputRepository, ReviewDecisionRepository, TaskRepository
+from ..storage.repositories import OutputRepository, ResearchMilestoneRepository, ReviewDecisionRepository, TaskRepository
 
 
 class ReviewService:
@@ -112,6 +112,8 @@ class ReviewService:
             review_result=review,
             review_feedback=review.get("feedback", ""),
         )
+        if review["approved"]:
+            self._advance_milestone(task)
         if review["approved"] and task.get("revision_of_task_id"):
             parent = TaskRepository.get_by_id(task["revision_of_task_id"])
             if parent:
@@ -134,6 +136,22 @@ class ReviewService:
                 "created_at": datetime.now().isoformat(),
             }
         )
+
+    @staticmethod
+    def _advance_milestone(task: dict) -> None:
+        milestone_id = task.get("milestone_id")
+        if not milestone_id:
+            return
+        milestones = ResearchMilestoneRepository.get_by_run(task.get("run_id"))
+        milestone = next((item for item in milestones if item["id"] == milestone_id), None)
+        if not milestone or milestone["milestone_key"] == "report_verified":
+            return
+        related = [item for item in TaskRepository.get_all(run_id=task.get("run_id")) if item.get("milestone_id") == milestone_id]
+        statuses = {item["id"]: item.get("status") for item in related}
+        statuses[task["id"]] = "completed"
+        if related and all(statuses.get(item["id"]) == "completed" for item in related):
+            now = datetime.now().isoformat()
+            ResearchMilestoneRepository.update(milestone_id, status="passed", completed_at=now, updated_at=now)
 
     @staticmethod
     def _latest_output(task: dict) -> dict:

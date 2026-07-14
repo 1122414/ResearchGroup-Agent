@@ -18,6 +18,7 @@ from ..storage.repositories import (
 )
 from .approval_service import approval_service
 from .report_service import report_service
+from .research_contract_service import research_contract_service
 from .research_loop_service import research_loop_service
 from .review_service import review_service
 from .run_event_service import run_event_service
@@ -153,9 +154,40 @@ class RunExecutionService:
     async def _initialize_run(self, run: dict) -> list[dict]:
         run_id = run["id"]
         started_at = run.get("started_at") or datetime.now().isoformat()
+        RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="定义研究契约", started_at=started_at)
+        contract = await research_contract_service.ensure_contract(run)
+        if not contract["ready"]:
+            approval_service.ensure_pending(
+                run_id,
+                "research_contract_revision",
+                "研究契约需要修订",
+                "研究问题、边界或证伪判据不完整，修订前不会创建执行任务。",
+                payload={"validation_errors": contract["errors"], "brief": contract["brief"]},
+            )
+            run_event_service.emit(
+                run_id, "research_contract.blocked", "framing", "研究契约未通过",
+                "；".join(contract["errors"]), payload={"validation_errors": contract["errors"]},
+            )
+            return []
+        brief = contract["brief"]
+        if brief.get("approval_status") != "frozen" and not self._ensure_approval(
+            run_id,
+            "research_contract_freeze",
+            None,
+            "冻结研究问题与完成判据",
+            f"主问题：{brief.get('research_question', '')}；范围外：{'；'.join(brief.get('scope_out') or [])}",
+        ):
+            return []
+        if brief.get("approval_status") != "frozen":
+            brief = research_contract_service.freeze(run_id)
+            contract["brief"] = brief
+            run_event_service.emit(
+                run_id, "research_contract.frozen", "framing", "研究契约已冻结",
+                brief.get("research_question", ""), payload={"research_type": brief.get("research_type")},
+            )
         RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="导师拆解研究任务", started_at=started_at)
         run_event_service.emit(run_id, "phase.started", "decompose", "导师拆解研究任务", "导师 Agent 生成任务图")
-        tasks = await task_decomposer.decompose(run["research_goal"], run_id)
+        tasks = await task_decomposer.decompose(run["research_goal"], run_id, contract)
         task_graph_service.build_default_graph(tasks)
         RunRepository.update_status(run_id, RunStatus.decomposing.value, task_ids=[task["id"] for task in tasks], current_step="任务拆解完成")
         for task in tasks:

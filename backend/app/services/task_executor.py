@@ -5,7 +5,15 @@ from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import AgentRepository, OutputRepository, SubAgentRepository, TaskRepository
+from ..storage.repositories import (
+    AgentRepository,
+    OutputRepository,
+    ResearchBriefRepository,
+    ResearchHypothesisRepository,
+    ResearchMilestoneRepository,
+    SubAgentRepository,
+    TaskRepository,
+)
 from .agent_skill_service import agent_skill_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
@@ -59,6 +67,7 @@ class TaskExecutor:
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
         collaboration_context = self._collaboration_context(task)
+        contract_context = self._research_contract_context(task)
         literature_grounding = ""
         if evidence_bundle is not None:
             required_source_count = research_integrity_service.required_grounded_source_count(task, evidence_bundle["query"])
@@ -83,6 +92,7 @@ class TaskExecutor:
 
 {skill_prompt}
 {collaboration_context}
+{contract_context}
 {literature_grounding}
 
 输出要求：
@@ -210,6 +220,29 @@ class TaskExecutor:
             parts.append(json.dumps(subagent_results, ensure_ascii=False, indent=2)[:4000])
         parts.append("请在 summary 与 claims 中明确说明你如何整合上述协作结果，不要简单复制。")
         return "\n".join(parts)
+
+    @staticmethod
+    def _research_contract_context(task: dict) -> str:
+        run_id = task.get("run_id")
+        if not run_id:
+            return ""
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        subquestion = next(
+            (item for item in brief.get("subquestions") or [] if item.get("id") == task.get("subquestion_id")),
+            None,
+        )
+        hypothesis = ResearchHypothesisRepository.get_by_id(task.get("hypothesis_id")) if task.get("hypothesis_id") else None
+        milestone = next(
+            (item for item in ResearchMilestoneRepository.get_by_run(run_id) if item["id"] == task.get("milestone_id")),
+            None,
+        )
+        if not any((subquestion, hypothesis, milestone)):
+            return ""
+        return "【已冻结研究契约（不得擅自改变）】\n" + json.dumps(
+            {"subquestion": subquestion, "hypothesis": hypothesis, "milestone": milestone},
+            ensure_ascii=False,
+            indent=2,
+        )
 
     async def _generate_structured(self, llm, prompt: str, task: dict, owner_id: str) -> dict:
         attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 2) + 1

@@ -9,8 +9,10 @@ from ..storage.repositories import (
     ExperimentFindingRepository,
     ExperimentProtocolRepository,
     ResearchClaimRepository,
+    ResearchBriefRepository,
     ResearchDecisionRepository,
     ResearchHypothesisRepository,
+    ResearchMilestoneRepository,
     ResearchUncertaintyRepository,
     TaskRepository,
 )
@@ -82,9 +84,13 @@ class ResearchLoopService:
         ]
         selected = snapshot["gaps"][: settings.research_loop_max_tasks_per_round]
         now = datetime.now().isoformat()
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        subquestion_id = next((item.get("id") for item in brief.get("subquestions") or [] if item.get("id")), None)
+        hypothesis_id = next((item["id"] for item in ResearchHypothesisRepository.get_by_run(run_id)), None)
+        milestones = {item["milestone_key"]: item["id"] for item in ResearchMilestoneRepository.get_by_run(run_id)}
         created: list[dict] = []
         for gap in selected:
-            task = self._build_task(run_id, gap, now)
+            task = self._build_task(run_id, gap, now, subquestion_id, hypothesis_id, milestones)
             TaskRepository.insert(task)
             task_graph_service.set_dependencies(task["id"], completed_research_ids)
             created.append(task)
@@ -102,7 +108,14 @@ class ResearchLoopService:
         return created
 
     @staticmethod
-    def _build_task(run_id: str, gap: dict, now: str) -> dict:
+    def _build_task(
+        run_id: str,
+        gap: dict,
+        now: str,
+        subquestion_id: str | None,
+        hypothesis_id: str | None,
+        milestones: dict[str, str],
+    ) -> dict:
         common = {
             "id": f"task_{uuid.uuid4().hex[:8]}",
             "run_id": run_id,
@@ -121,6 +134,11 @@ class ResearchLoopService:
             "is_critical_path": False,
             "attempt_count": 0,
             "last_checkpoint": None,
+            "subquestion_id": subquestion_id,
+            "hypothesis_id": hypothesis_id,
+            "milestone_id": milestones.get(
+                "experiment_protocol_frozen" if gap["task_type"] == "experiment_design" else "evidence_sufficient"
+            ),
             "created_at": now,
             "updated_at": now,
         }

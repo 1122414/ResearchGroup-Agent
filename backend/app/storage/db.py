@@ -437,6 +437,20 @@ def init_db():
             resolved_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS research_milestones (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            milestone_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            criteria TEXT DEFAULT '[]',
+            evidence_ids TEXT DEFAULT '[]',
+            completed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(run_id, milestone_key)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_run_events_run_created ON run_events(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_llm_usage_run_created ON llm_usage(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_status ON agent_skills(agent_id, status);
@@ -459,6 +473,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_research_claims_run_status ON research_claims(run_id, status);
         CREATE INDEX IF NOT EXISTS idx_research_decisions_run_created ON research_decisions(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_research_uncertainties_run_status ON research_uncertainties(run_id, status);
+        CREATE INDEX IF NOT EXISTS idx_research_milestones_run_status ON research_milestones(run_id, status);
         """
     )
 
@@ -471,6 +486,9 @@ def init_db():
         "attempt_count": "INTEGER DEFAULT 0",
         "last_checkpoint": "TEXT",
         "revision_of_task_id": "TEXT",
+        "subquestion_id": "TEXT",
+        "hypothesis_id": "TEXT",
+        "milestone_id": "TEXT",
     })
 
     _ensure_columns(conn, "runs", {
@@ -483,6 +501,33 @@ def init_db():
         "total_tokens": "INTEGER DEFAULT 0",
         "total_llm_calls": "INTEGER DEFAULT 0",
         "last_event_id": "TEXT",
+    })
+
+    _ensure_columns(conn, "research_briefs", {
+        "research_type": "TEXT DEFAULT 'empirical'",
+        "subquestions": "TEXT DEFAULT '[]'",
+        "scope_in": "TEXT DEFAULT '[]'",
+        "scope_out": "TEXT DEFAULT '[]'",
+        "target_domain": "TEXT DEFAULT ''",
+        "expected_contribution": "TEXT DEFAULT ''",
+        "novelty_criteria": "TEXT DEFAULT '[]'",
+        "data_availability": "TEXT DEFAULT ''",
+        "ethics_risks": "TEXT DEFAULT '[]'",
+        "failure_criteria": "TEXT DEFAULT '[]'",
+        "approval_status": "TEXT DEFAULT 'draft'",
+        "validation_errors": "TEXT DEFAULT '[]'",
+    })
+
+    _ensure_columns(conn, "research_hypotheses", {
+        "treatment": "TEXT DEFAULT ''",
+        "baseline": "TEXT DEFAULT ''",
+        "conditions": "TEXT DEFAULT '[]'",
+        "predicted_direction": "TEXT DEFAULT ''",
+        "primary_metric": "TEXT DEFAULT ''",
+        "minimum_effect": "TEXT DEFAULT ''",
+        "falsification_criterion": "TEXT DEFAULT ''",
+        "originating_evidence_ids": "TEXT DEFAULT '[]'",
+        "competing_hypothesis_ids": "TEXT DEFAULT '[]'",
     })
 
     conn.commit()

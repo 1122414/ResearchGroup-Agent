@@ -14,6 +14,7 @@ from ..storage.repositories import (
     ExperimentResultRepository,
     OutputRepository,
     ResearchClaimRepository,
+    ResearchMilestoneRepository,
     RunRepository,
     TaskRepository,
 )
@@ -83,6 +84,7 @@ class ReportService:
         report = paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
 
         self._run_grounding_audit(run["id"], report)
+        self._mark_report_verified(run["id"])
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
             {
@@ -131,6 +133,20 @@ class ReportService:
                 f"缺少引用的结论 {audit['uncited_claim_count']}"
             )
         return audit
+
+    @staticmethod
+    def _mark_report_verified(run_id: str) -> None:
+        milestone = next(
+            (
+                item
+                for item in ResearchMilestoneRepository.get_by_run(run_id)
+                if item["milestone_key"] == "report_verified"
+            ),
+            None,
+        )
+        if milestone:
+            now = datetime.now().isoformat()
+            ResearchMilestoneRepository.update(milestone["id"], status="passed", completed_at=now, updated_at=now)
 
     async def _generate_writer_draft(self, run: dict, writer_agent: dict | None, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)

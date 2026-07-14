@@ -97,9 +97,10 @@ class TaskRepository:
                 decomposability, status, owner_agent, collaborator_agents, subtasks, outputs,
                 review_result, review_feedback, run_id, assignment_info, subagent_triggered,
                 blocked_reason, parallelizable, is_critical_path, attempt_count, last_checkpoint,
-                revision_of_task_id, created_at, updated_at
+                revision_of_task_id, subquestion_id, hypothesis_id, milestone_id,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task["id"],
@@ -126,6 +127,9 @@ class TaskRepository:
                 task.get("attempt_count", 0),
                 task.get("last_checkpoint"),
                 task.get("revision_of_task_id"),
+                task.get("subquestion_id"),
+                task.get("hypothesis_id"),
+                task.get("milestone_id"),
                 task["created_at"],
                 task["updated_at"],
             ),
@@ -148,7 +152,10 @@ class TaskRepository:
             elif key == "review_result":
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False) if value else None)
-            elif key in ("owner_agent", "review_feedback", "run_id", "blocked_reason", "last_checkpoint", "revision_of_task_id"):
+            elif key in (
+                "owner_agent", "review_feedback", "run_id", "blocked_reason", "last_checkpoint",
+                "revision_of_task_id", "subquestion_id", "hypothesis_id", "milestone_id",
+            ):
                 updates.append(f"{key} = ?")
                 params.append(value)
             elif key == "attempt_count":
@@ -389,6 +396,7 @@ class RunRepository:
         conn.execute("DELETE FROM research_claims WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_decisions WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM research_uncertainties WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM research_milestones WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM tasks WHERE run_id = ?", (run_id,))
         conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         conn.commit()
@@ -1448,9 +1456,12 @@ class ResearchBriefRepository:
             """
             INSERT INTO research_briefs (
                 id, run_id, research_question, objective, scope, success_criteria,
-                constraints, status, created_at, updated_at
+                constraints, status, research_type, subquestions, scope_in, scope_out,
+                target_domain, expected_contribution, novelty_criteria, data_availability,
+                ethics_risks, failure_criteria, approval_status, validation_errors,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 brief["id"],
@@ -1461,6 +1472,18 @@ class ResearchBriefRepository:
                 json.dumps(brief.get("success_criteria", []), ensure_ascii=False),
                 json.dumps(brief.get("constraints", []), ensure_ascii=False),
                 brief.get("status", "active"),
+                brief.get("research_type", "empirical"),
+                json.dumps(brief.get("subquestions", []), ensure_ascii=False),
+                json.dumps(brief.get("scope_in", []), ensure_ascii=False),
+                json.dumps(brief.get("scope_out", []), ensure_ascii=False),
+                brief.get("target_domain", ""),
+                brief.get("expected_contribution", ""),
+                json.dumps(brief.get("novelty_criteria", []), ensure_ascii=False),
+                brief.get("data_availability", ""),
+                json.dumps(brief.get("ethics_risks", []), ensure_ascii=False),
+                json.dumps(brief.get("failure_criteria", []), ensure_ascii=False),
+                brief.get("approval_status", "draft"),
+                json.dumps(brief.get("validation_errors", []), ensure_ascii=False),
                 brief["created_at"],
                 brief["updated_at"],
             ),
@@ -1475,6 +1498,30 @@ class ResearchBriefRepository:
         conn.close()
         return _deserialize_research_brief(row) if row else None
 
+    @staticmethod
+    def update(run_id: str, **updates):
+        json_fields = {
+            "success_criteria", "constraints", "subquestions", "scope_in", "scope_out",
+            "novelty_criteria", "ethics_risks", "failure_criteria", "validation_errors",
+        }
+        allowed = {
+            "research_question", "objective", "scope", "status", "research_type",
+            "target_domain", "expected_contribution", "data_availability", "approval_status",
+            "updated_at", *json_fields,
+        }
+        assignments, params = [], []
+        for key, value in updates.items():
+            if key not in allowed:
+                continue
+            assignments.append(f"{key} = ?")
+            params.append(json.dumps(value, ensure_ascii=False) if key in json_fields else value)
+        if assignments:
+            params.append(run_id)
+            conn = get_connection()
+            conn.execute(f"UPDATE research_briefs SET {', '.join(assignments)} WHERE run_id = ?", params)
+            conn.commit()
+            conn.close()
+
 
 class ResearchHypothesisRepository:
     @staticmethod
@@ -1483,9 +1530,12 @@ class ResearchHypothesisRepository:
         conn.execute(
             """
             INSERT INTO research_hypotheses (
-                id, run_id, statement, rationale, status, confidence, created_at, updated_at
+                id, run_id, statement, rationale, status, confidence, treatment, baseline,
+                conditions, predicted_direction, primary_metric, minimum_effect,
+                falsification_criterion, originating_evidence_ids, competing_hypothesis_ids,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 hypothesis["id"],
@@ -1494,6 +1544,15 @@ class ResearchHypothesisRepository:
                 hypothesis.get("rationale", ""),
                 hypothesis.get("status", "proposed"),
                 hypothesis.get("confidence", 0),
+                hypothesis.get("treatment", ""),
+                hypothesis.get("baseline", ""),
+                json.dumps(hypothesis.get("conditions", []), ensure_ascii=False),
+                hypothesis.get("predicted_direction", ""),
+                hypothesis.get("primary_metric", ""),
+                hypothesis.get("minimum_effect", ""),
+                hypothesis.get("falsification_criterion", ""),
+                json.dumps(hypothesis.get("originating_evidence_ids", []), ensure_ascii=False),
+                json.dumps(hypothesis.get("competing_hypothesis_ids", []), ensure_ascii=False),
                 hypothesis["created_at"],
                 hypothesis["updated_at"],
             ),
@@ -1529,6 +1588,62 @@ class ResearchHypothesisRepository:
             conn.execute(f"UPDATE research_hypotheses SET {', '.join(assignments)} WHERE id = ?", params)
             conn.commit()
         conn.close()
+
+    @staticmethod
+    def delete_by_run(run_id: str):
+        conn = get_connection()
+        conn.execute("DELETE FROM research_hypotheses WHERE run_id = ?", (run_id,))
+        conn.commit()
+        conn.close()
+
+
+class ResearchMilestoneRepository:
+    @staticmethod
+    def replace_for_run(run_id: str, milestones: list[dict]):
+        conn = get_connection()
+        conn.execute("DELETE FROM research_milestones WHERE run_id = ?", (run_id,))
+        for item in milestones:
+            conn.execute(
+                """
+                INSERT INTO research_milestones (
+                    id, run_id, milestone_key, title, status, criteria, evidence_ids,
+                    completed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item["id"], run_id, item["milestone_key"], item["title"], item.get("status", "pending"),
+                    json.dumps(item.get("criteria", []), ensure_ascii=False),
+                    json.dumps(item.get("evidence_ids", []), ensure_ascii=False),
+                    item.get("completed_at"), item["created_at"], item["updated_at"],
+                ),
+            )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_by_run(run_id: str) -> list[dict]:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM research_milestones WHERE run_id = ? ORDER BY created_at", (run_id,)
+        ).fetchall()
+        conn.close()
+        return [_deserialize_research_milestone(row) for row in rows]
+
+    @staticmethod
+    def update(milestone_id: str, **updates):
+        allowed = {"status", "criteria", "evidence_ids", "completed_at", "updated_at"}
+        assignments, params = [], []
+        for key, value in updates.items():
+            if key not in allowed:
+                continue
+            assignments.append(f"{key} = ?")
+            params.append(json.dumps(value, ensure_ascii=False) if key in {"criteria", "evidence_ids"} else value)
+        if assignments:
+            params.append(milestone_id)
+            conn = get_connection()
+            conn.execute(f"UPDATE research_milestones SET {', '.join(assignments)} WHERE id = ?", params)
+            conn.commit()
+            conn.close()
 
 
 class ResearchClaimRepository:
@@ -1709,6 +1824,9 @@ def _deserialize_task(row) -> dict:
         "attempt_count": row["attempt_count"] if "attempt_count" in keys else 0,
         "last_checkpoint": row["last_checkpoint"] if "last_checkpoint" in keys else None,
         "revision_of_task_id": row["revision_of_task_id"] if "revision_of_task_id" in keys else None,
+        "subquestion_id": row["subquestion_id"] if "subquestion_id" in keys else None,
+        "hypothesis_id": row["hypothesis_id"] if "hypothesis_id" in keys else None,
+        "milestone_id": row["milestone_id"] if "milestone_id" in keys else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -2065,6 +2183,7 @@ def _deserialize_approval_request(row) -> dict:
 
 
 def _deserialize_research_brief(row) -> dict:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "run_id": row["run_id"],
@@ -2074,12 +2193,25 @@ def _deserialize_research_brief(row) -> dict:
         "success_criteria": _json_loads(row["success_criteria"], []),
         "constraints": _json_loads(row["constraints"], []),
         "status": row["status"],
+        "research_type": row["research_type"] if "research_type" in keys else "empirical",
+        "subquestions": _json_loads(row["subquestions"], []) if "subquestions" in keys else [],
+        "scope_in": _json_loads(row["scope_in"], []) if "scope_in" in keys else [],
+        "scope_out": _json_loads(row["scope_out"], []) if "scope_out" in keys else [],
+        "target_domain": row["target_domain"] if "target_domain" in keys else "",
+        "expected_contribution": row["expected_contribution"] if "expected_contribution" in keys else "",
+        "novelty_criteria": _json_loads(row["novelty_criteria"], []) if "novelty_criteria" in keys else [],
+        "data_availability": row["data_availability"] if "data_availability" in keys else "",
+        "ethics_risks": _json_loads(row["ethics_risks"], []) if "ethics_risks" in keys else [],
+        "failure_criteria": _json_loads(row["failure_criteria"], []) if "failure_criteria" in keys else [],
+        "approval_status": row["approval_status"] if "approval_status" in keys else "draft",
+        "validation_errors": _json_loads(row["validation_errors"], []) if "validation_errors" in keys else [],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
 
 
 def _deserialize_research_hypothesis(row) -> dict:
+    keys = set(row.keys())
     return {
         "id": row["id"],
         "run_id": row["run_id"],
@@ -2087,8 +2219,26 @@ def _deserialize_research_hypothesis(row) -> dict:
         "rationale": row["rationale"],
         "status": row["status"],
         "confidence": row["confidence"],
+        "treatment": row["treatment"] if "treatment" in keys else "",
+        "baseline": row["baseline"] if "baseline" in keys else "",
+        "conditions": _json_loads(row["conditions"], []) if "conditions" in keys else [],
+        "predicted_direction": row["predicted_direction"] if "predicted_direction" in keys else "",
+        "primary_metric": row["primary_metric"] if "primary_metric" in keys else "",
+        "minimum_effect": row["minimum_effect"] if "minimum_effect" in keys else "",
+        "falsification_criterion": row["falsification_criterion"] if "falsification_criterion" in keys else "",
+        "originating_evidence_ids": _json_loads(row["originating_evidence_ids"], []) if "originating_evidence_ids" in keys else [],
+        "competing_hypothesis_ids": _json_loads(row["competing_hypothesis_ids"], []) if "competing_hypothesis_ids" in keys else [],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def _deserialize_research_milestone(row) -> dict:
+    return {
+        "id": row["id"], "run_id": row["run_id"], "milestone_key": row["milestone_key"],
+        "title": row["title"], "status": row["status"],
+        "criteria": _json_loads(row["criteria"], []), "evidence_ids": _json_loads(row["evidence_ids"], []),
+        "completed_at": row["completed_at"], "created_at": row["created_at"], "updated_at": row["updated_at"],
     }
 
 

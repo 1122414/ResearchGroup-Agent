@@ -11,7 +11,19 @@ class ResearchBrief(BaseModel):
     scope: str = ""
     success_criteria: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
-    status: Literal["draft", "active", "revised"] = "active"
+    research_type: Literal["empirical", "survey", "design", "mixed"] = "empirical"
+    subquestions: list[dict] = Field(default_factory=list)
+    scope_in: list[str] = Field(default_factory=list)
+    scope_out: list[str] = Field(default_factory=list)
+    target_domain: str = ""
+    expected_contribution: str = ""
+    novelty_criteria: list[str] = Field(default_factory=list)
+    data_availability: str = ""
+    ethics_risks: list[str] = Field(default_factory=list)
+    failure_criteria: list[str] = Field(default_factory=list)
+    approval_status: Literal["draft", "frozen", "needs_revision", "rejected"] = "draft"
+    validation_errors: list[str] = Field(default_factory=list)
+    status: Literal["draft", "active", "frozen", "revised"] = "draft"
     created_at: str
     updated_at: str
 
@@ -23,6 +35,28 @@ class Hypothesis(BaseModel):
     rationale: str = ""
     status: Literal["proposed", "active", "supported", "rejected", "revised"] = "proposed"
     confidence: float = 0.0
+    treatment: str = ""
+    baseline: str = ""
+    conditions: list[str] = Field(default_factory=list)
+    predicted_direction: str = ""
+    primary_metric: str = ""
+    minimum_effect: str = ""
+    falsification_criterion: str = ""
+    originating_evidence_ids: list[str] = Field(default_factory=list)
+    competing_hypothesis_ids: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class ResearchMilestone(BaseModel):
+    id: str
+    run_id: str
+    milestone_key: str
+    title: str
+    status: Literal["pending", "passed", "blocked", "waived"] = "pending"
+    criteria: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    completed_at: str | None = None
     created_at: str
     updated_at: str
 

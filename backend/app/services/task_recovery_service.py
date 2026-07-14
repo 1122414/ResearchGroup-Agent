@@ -154,6 +154,9 @@ class TaskRecoveryService:
             "attempt_count": 0,
             "last_checkpoint": None,
             "revision_of_task_id": root_task_id,
+            "subquestion_id": root_task.get("subquestion_id"),
+            "hypothesis_id": root_task.get("hypothesis_id"),
+            "milestone_id": root_task.get("milestone_id"),
             "created_at": now,
             "updated_at": now,
         }

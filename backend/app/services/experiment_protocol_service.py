@@ -25,7 +25,7 @@ class ExperimentProtocolService:
 
     def ensure_for_task(self, task: dict) -> dict:
         run_id = str(task.get("run_id") or "")
-        hypothesis = self._resolve_hypothesis(run_id)
+        hypothesis = self._resolve_hypothesis(run_id, task.get("hypothesis_id"))
         existing = ExperimentProtocolRepository.get_latest_for_hypothesis(run_id, hypothesis["id"])
         if existing:
             return existing
@@ -63,7 +63,11 @@ class ExperimentProtocolService:
     def list_for_run(self, run_id: str) -> list[dict]:
         return ExperimentProtocolRepository.get_by_run(run_id)
 
-    def _resolve_hypothesis(self, run_id: str) -> dict:
+    def _resolve_hypothesis(self, run_id: str, hypothesis_id: str | None = None) -> dict:
+        if hypothesis_id:
+            linked = ResearchHypothesisRepository.get_by_id(hypothesis_id)
+            if linked and linked.get("run_id") == run_id:
+                return linked
         hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
         if not hypotheses:
             raise ValueError(f"run {run_id} has no hypothesis")

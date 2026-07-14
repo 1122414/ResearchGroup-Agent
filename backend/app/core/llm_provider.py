@@ -38,6 +38,8 @@ class MockLLMProvider(LLMProvider):
         logger.info("[LLM] Mock generate start | role=%s | run_id=%s | task_id=%s | prompt_len=%d", role, run_id, task_id, prompt_len)
         if role == "advisor_decompose":
             result = self._mock_advisor_decomposition()
+        elif role == "advisor_contract":
+            result = self._mock_research_contract(prompt)
         elif role == "advisor_review":
             result = self._mock_review()
         elif role == "advisor_report":
@@ -152,6 +154,43 @@ class MockLLMProvider(LLMProvider):
             ],
             ensure_ascii=False,
             indent=2,
+        )
+
+    def _mock_research_contract(self, prompt: str) -> str:
+        goal = prompt.split("用户目标：", 1)[-1].split("要求：", 1)[0].strip() or "待研究问题"
+        return json.dumps(
+            {
+                "research_type": "empirical",
+                "primary_question": f"在可获得数据与明确基线下，如何验证“{goal}”的核心方案是否有效？",
+                "objective": f"围绕“{goal}”形成可复现、可证伪且有证据支撑的研究结论。",
+                "subquestions": [
+                    {"id": "sq_literature", "question": "现有方法、数据和评价指标分别是什么？"},
+                    {"id": "sq_method", "question": "候选方案相对基线的关键差异是什么？"},
+                    {"id": "sq_evaluation", "question": "实验结果是否达到预先声明的最小效应？"},
+                ],
+                "scope_in": ["可核验公开文献", "可合法获取的数据", "可复现实验"],
+                "scope_out": ["无法取得数据的效果断言", "未经复现的单次结果", "超出当前资源的部署验证"],
+                "target_domain": "用户目标所限定的计算研究场景",
+                "constraints": ["结论必须绑定证据或实验产物", "失败结果必须保留"],
+                "expected_contribution": "给出相对基线的可复现实证比较及适用边界。",
+                "novelty_criteria": ["方法或实证结论相对现有工作有可说明差异"],
+                "data_availability": "执行前核验公开数据或用户上传数据；缺失时实验不可发布。",
+                "ethics_risks": ["核验数据许可与隐私限制"],
+                "success_criteria": ["核心主张有 passage 支撑", "实验达到预设最小效应并可复现"],
+                "failure_criteria": ["关键全文或真实数据不可得", "相对基线未达到最小效应", "复现失败"],
+                "hypotheses": [
+                    {
+                        "statement": "候选方案在目标场景的主指标上优于最小基线。",
+                        "rationale": "以预注册比较替代无基线的效果陈述。",
+                        "treatment": "候选方案", "baseline": "领域内可复现的最小合理基线",
+                        "conditions": ["相同数据划分", "相同资源预算"],
+                        "predicted_direction": "主指标提升", "primary_metric": "由领域协议冻结的主指标",
+                        "minimum_effect": "相对基线至少提升 5% 或达到领域最小重要差异",
+                        "falsification_criterion": "重复实验的置信区间未超过基线或未达到最小效应",
+                    }
+                ],
+            },
+            ensure_ascii=False,
         )
 
     def _mock_graduate_result(self, prompt: str) -> str:
