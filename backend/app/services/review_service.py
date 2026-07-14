@@ -7,6 +7,7 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import OutputRepository, ResearchMilestoneRepository, ReviewDecisionRepository, TaskRepository
+from .scientific_quality_gate_service import scientific_quality_gate_service
 
 
 class ReviewService:
@@ -17,10 +18,9 @@ class ReviewService:
             latest.get("insufficient_evidence") or latest.get("integrity_blocked")
         ):
             return self._review_insufficient_evidence(task, latest)
-        if task.get("task_type") == "experiment_design" and not (
-            latest.get("reproducible_experiment") or {}
-        ).get("publishable"):
-            return self._review_nonpublishable_experiment(task, latest)
+        quality_gates = await scientific_quality_gate_service.evaluate_task(task, latest)
+        if not quality_gates["passed"]:
+            return self._review_quality_gate_failure(task, quality_gates)
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请作为导师 Agent 审核以下任务产出。
 任务标题：{task.get('title', '')}
@@ -60,6 +60,11 @@ class ReviewService:
             "scores": scores,
             "average_score": average_score,
             "requires_revision": not approved,
+            "quality_gates": quality_gates,
+            "revision_plan": [] if approved else [{
+                "layer": "advisor_rubric", "issue": llm_review.get("feedback", "rubric rejected"),
+                "required_change": "按导师 rubric 修订后重新执行全部质量门",
+            }],
         }
         logger.info(
             "[ReviewService] review result | task_id=%s | approved=%s | score=%.4f",
@@ -67,6 +72,20 @@ class ReviewService:
             approved,
             average_score,
         )
+        self._persist_review(task, review)
+        return review
+
+    def _review_quality_gate_failure(self, task: dict, quality_gates: dict) -> dict:
+        rubric = self._rubric_for_task(task.get("task_type", ""))
+        scores = {name: 0.0 for name in rubric["dimensions"]}
+        failed_layers = [name for name, result in quality_gates["layers"].items() if not result["passed"]]
+        review = {
+            "approved": False,
+            "feedback": "科学质量硬门未通过：" + "、".join(failed_layers),
+            "rubric": rubric, "scores": scores, "average_score": 0.0,
+            "requires_revision": True, "review_mode": "scientific_quality_gate",
+            "quality_gates": quality_gates, "revision_plan": quality_gates["revision_plan"],
+        }
         self._persist_review(task, review)
         return review
 
@@ -87,29 +106,16 @@ class ReviewService:
             "requires_revision": True,
             "review_mode": "insufficient_evidence_guardrail",
             "source_mode": latest.get("source_mode"),
+            "revision_plan": [{
+                "layer": "provenance", "issue": "insufficient_grounded_evidence",
+                "required_change": "扩大检索范围或补充可核验全文 passage；禁止用模型记忆补写",
+            }],
         }
         logger.info(
             "[ReviewService] insufficient evidence guardrail | task_id=%s | score=%.4f",
             task.get("id"),
             average_score,
         )
-        self._persist_review(task, review)
-        return review
-
-    def _review_nonpublishable_experiment(self, task: dict, latest: dict) -> dict:
-        experiment = latest.get("reproducible_experiment") or {}
-        rubric = self._rubric_for_task("experiment_design")
-        reason = experiment.get("summary") or "实验未满足真实数据、统计重复与独立复现门槛。"
-        scores = self._score_task(task, {"approved": False}, rubric)
-        review = {
-            "approved": False,
-            "feedback": f"实验不可用于研究结论：{reason}",
-            "rubric": rubric,
-            "scores": scores,
-            "average_score": round(sum(scores.values()) / max(len(scores), 1), 4),
-            "requires_revision": True,
-            "review_mode": "nonpublishable_experiment_guardrail",
-        }
         self._persist_review(task, review)
         return review
 

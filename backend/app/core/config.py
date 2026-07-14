@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     advisor_model_name: str = ""
     graduate_model_name: str = ""
     subagent_model_name: str = ""
+    independent_reviewer_model_name: str = ""
     llm_timeout: int = 120
     llm_max_retries: int = 3
     llm_max_tokens: int = 4096
@@ -254,6 +255,7 @@ class Settings(BaseSettings):
             "advisor_decompose": self.advisor_model_name or self.llm_model_name,
             "advisor_review": self.advisor_model_name or self.llm_model_name,
             "advisor_report": self.advisor_model_name or self.llm_model_name,
+            "independent_reviewer": self.independent_reviewer_model_name or self.graduate_model_name or self.llm_model_name,
             "graduate": self.graduate_model_name or self.llm_model_name,
             "subagent": self.subagent_model_name or self.llm_model_name,
         }

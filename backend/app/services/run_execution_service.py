@@ -17,7 +17,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .approval_service import approval_service
-from .report_service import report_service
+from .report_service import ReportGroundingError, ReportQualityError, report_service
 from .research_contract_service import research_contract_service
 from .research_loop_service import research_loop_service
 from .review_service import review_service
@@ -152,7 +152,17 @@ class RunExecutionService:
             RunRepository.update_status(run_id, RunStatus.reporting.value, current_step="生成最终研究报告")
             run_event_service.emit(run_id, "phase.started", "report", "生成最终研究报告", "写作研究生与导师开始整理最终报告")
             updated_run = RunRepository.get_by_id(run_id)
-            await report_service.generate(updated_run)
+            try:
+                await report_service.generate(updated_run)
+            except (ReportGroundingError, ReportQualityError) as exc:
+                approval_service.ensure_pending(
+                    run_id, "report_revision_required", "最终报告质量门未通过", str(exc),
+                    payload={"required_action": "查看 grounding/scientific quality gate artifact 并修复研究状态"},
+                )
+                run_event_service.emit(
+                    run_id, "report.revision_required", "report", "报告发布已阻断", str(exc),
+                )
+                return self._pause_for_confirmation(run_id)
             run_event_service.emit(run_id, "report.created", "report", "最终报告已生成", "最终 Markdown 报告已写入 artifacts")
             completed_at = datetime.now().isoformat()
             RunRepository.update_status(run_id, RunStatus.completed.value, current_step="完成", completed_at=completed_at)

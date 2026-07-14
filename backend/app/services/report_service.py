@@ -23,9 +23,14 @@ from .artifact_manifest_service import artifact_manifest_service
 from .grounding_audit_service import grounding_audit_service
 from .paper_assembly_service import paper_assembly_service
 from .run_event_service import run_event_service
+from .scientific_quality_gate_service import scientific_quality_gate_service
 
 
 class ReportGroundingError(RuntimeError):
+    pass
+
+
+class ReportQualityError(RuntimeError):
     pass
 
 
@@ -83,7 +88,8 @@ class ReportService:
         mode = paper_assembly_service.detect_mode(run, tasks)
         report = paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
 
-        self._run_grounding_audit(run["id"], report)
+        grounding_audit = self._run_grounding_audit(run["id"], report)
+        self._run_scientific_quality_gate(run["id"], report, grounding_audit)
         self._mark_report_verified(run["id"])
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
@@ -98,6 +104,25 @@ class ReportService:
         )
         logger.info("[ReportService] generate completed | run_id=%s | report_length=%d", run["id"], len(report))
         return report
+
+    @staticmethod
+    def _run_scientific_quality_gate(run_id: str, report: str, grounding_audit: dict) -> dict:
+        quality = scientific_quality_gate_service.evaluate_report(run_id, report, grounding_audit)
+        OutputRepository.insert(
+            {
+                "id": f"scientific_quality_gate_{run_id}", "output_type": "scientific_quality_gate",
+                "title": "五层科学质量门报告", "content": json.dumps(quality, ensure_ascii=False, indent=2),
+                "run_id": run_id, "created_at": datetime.now().isoformat(),
+            }
+        )
+        run_event_service.emit(
+            run_id, "report.scientific_quality_gate", "report", "五层科学质量门完成",
+            f"通过={quality['passed']}", payload=quality,
+        )
+        if not quality["passed"]:
+            failed = [name for name, result in quality["layers"].items() if not result["passed"]]
+            raise ReportQualityError("报告科学质量门未通过：" + "、".join(failed))
+        return quality
 
     def _run_grounding_audit(self, run_id: str, report: str) -> dict:
         audit = grounding_audit_service.audit_report(report)
