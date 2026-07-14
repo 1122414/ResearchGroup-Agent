@@ -5,6 +5,7 @@ import pytest
 
 from backend.app.services.paper_assembly_service import paper_assembly_service
 from backend.app.services.grounding_audit_service import grounding_audit_service
+from backend.app.services.report_service import ReportService
 from backend.app.storage import init_db
 from backend.app.storage.repositories import (
     EvidenceRepository,
@@ -97,6 +98,11 @@ def test_paper_mode_is_grounded_with_inline_citations_and_references():
     assert "## 7. 局限性与未决问题" in doc
     assert "| strategy | recall |" in doc  # real metrics table
     assert "discussion prose here" in doc
+    assert "`ref_" in doc
+    assert "## 追溯附录" in doc
+    assert claim_id in doc
+    assert excerpt_id in doc
+    assert "负结果与有效性威胁" in doc
     assert grounding_audit_service.audit_report(doc)["passed"] is True
 
 
@@ -105,3 +111,10 @@ def test_survey_mode_detected_for_survey_goal():
     assert paper_assembly_service.detect_mode(run) == "survey"
     doc = paper_assembly_service.assemble(run)
     assert doc.startswith("# 调研报告")
+    assert "`research_report`" in doc
+
+
+def test_delivery_status_only_promotes_after_quality_gate():
+    report = "# Paper\n\n**交付等级:** `thesis_draft`\n"
+    assert "`thesis_draft`" in ReportService._promote_delivery_status(report, {"passed": False})
+    assert "`publishable_manuscript`" in ReportService._promote_delivery_status(report, {"passed": True})

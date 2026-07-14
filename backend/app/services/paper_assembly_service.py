@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -9,7 +10,9 @@ from ..core.research_goal import primary_goal
 from ..storage.repositories import (
     EvidenceRepository,
     ExperimentFindingRepository,
+    ExperimentProtocolRepository,
     ExperimentResultRepository,
+    ResearchBriefRepository,
     ResearchClaimRepository,
     ResearchHypothesisRepository,
     ResearchUncertaintyRepository,
@@ -63,6 +66,8 @@ class PaperAssemblyService:
         hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
         uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
         experiment_results = ExperimentResultRepository.get_by_run(run_id)
+        experiment_protocols = ExperimentProtocolRepository.get_by_run(run_id)
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
         experiment_findings = ExperimentFindingRepository.get_by_run(run_id)
         publishable_result_ids = {
             item["id"] for item in experiment_results if (item.get("metrics") or {}).get("publishable") is True
@@ -98,10 +103,11 @@ class PaperAssemblyService:
 
         time_label = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         doc_type = "研究论文" if mode == "paper" else "调研报告"
+        delivery_status = self._delivery_status(mode, brief, grounded_claims, uncertainties, experiment_results)
         lines = [
             f"# {doc_type}：{title}",
             "",
-            f"**类型:** {'Paper' if mode == 'paper' else 'Survey/Report'}　**生成时间:** {time_label}",
+            f"**类型:** {'Paper' if mode == 'paper' else 'Survey/Report'}　**交付等级:** `{delivery_status}`　**生成时间:** {time_label}",
             f"**证据来源:** {len(source_map)} 条　**结论:** {len(claims)} 条（已支撑 {len(grounded_claims)}）　**实验:** {len(experiment_results)} 次",
             "",
             "---",
@@ -122,12 +128,12 @@ class PaperAssemblyService:
         if mode == "paper":
             lines += self._intro_section(goal_brief, hypotheses, narrative_block if not has_full_narrative else {})
             lines += self._related_work_section(grounded_claims, citation_index, source_map)
-            lines += self._method_section(hypotheses, narrative_block if not has_full_narrative else {})
+            lines += self._method_section(hypotheses, experiment_protocols, narrative_block if not has_full_narrative else {})
             lines += self._experiments_section(experiment_results, tasks)
             lines += self._results_section(grounded_claims, citation_index, source_map, links_by_claim, experiment_findings)
             if not has_full_narrative:
                 lines += self._discussion_section(narrative_block, unsupported_claims, uncertainties)
-            lines += self._limitations_section(unsupported_claims, uncertainties)
+            lines += self._limitations_section(unsupported_claims, uncertainties, experiment_results)
             lines += self._conclusion_section(grounded_claims, experiment_results, links_by_claim, citation_index)
         else:
             lines += self._scope_section(goal_brief, narrative_block if not has_full_narrative else {})
@@ -138,6 +144,10 @@ class PaperAssemblyService:
             lines += self._conclusion_section(grounded_claims, experiment_results, links_by_claim, citation_index)
 
         lines += self._references_section(citation_index, source_map)
+        lines += self._traceability_section(
+            grounded_claims, links_by_claim, excerpt_map, citation_index, source_map,
+            experiment_results, experiment_protocols,
+        )
         return "\n".join(lines).strip() + "\n"
 
     # --- citation handling -------------------------------------------------
@@ -193,6 +203,7 @@ class PaperAssemblyService:
         lines = ["## 参考文献", ""]
         for source_id, number in sorted(citation_index.items(), key=lambda kv: kv[1]):
             source = source_map.get(source_id, {})
+            bibkey = self._bibliography_key(source)
             citation = " ".join(
                 str(item)
                 for item in [
@@ -211,7 +222,7 @@ class PaperAssemblyService:
                 link = f"[{url}]({url})"
             else:
                 link = ""
-            entry = f"[{number}] {citation}"
+            entry = f"[{number}] `{bibkey}` {citation}"
             if link:
                 entry += f" {link}"
             lines.append(entry.rstrip())
@@ -244,10 +255,19 @@ class PaperAssemblyService:
         lines.append("")
         return lines
 
-    def _method_section(self, hypotheses, narrative_block) -> list[str]:
+    def _method_section(self, hypotheses, protocols, narrative_block) -> list[str]:
         lines = ["## 3. 方法", ""]
         lines.append(narrative_block.get("method") or "本节描述围绕研究假设设计的研究与实验方法，包括数据来源、对照设置与评测指标。")
         lines.append("")
+        for protocol in protocols:
+            lines.append(f"### 协议 `{protocol['id']}`：{protocol['title']}")
+            lines.append("")
+            lines.append(f"- 研究问题：{protocol.get('research_question', '')}")
+            lines.append(f"- 数据集：{', '.join(item.get('name', '') for item in protocol.get('datasets') or [])}")
+            lines.append(f"- 基线：{', '.join(item.get('name', '') for item in protocol.get('baselines') or [])}")
+            lines.append(f"- 指标：{', '.join(item.get('name', '') for item in protocol.get('metrics') or [])}")
+            lines.append(f"- 停止条件：{'；'.join(protocol.get('stopping_conditions') or [])}")
+            lines.append("")
         return lines
 
     def _experiments_section(self, experiment_results, tasks) -> list[str]:
@@ -310,7 +330,7 @@ class PaperAssemblyService:
         lines.append("")
         return lines
 
-    def _limitations_section(self, unsupported_claims, uncertainties) -> list[str]:
+    def _limitations_section(self, unsupported_claims, uncertainties, experiment_results=None) -> list[str]:
         lines = ["## 7. 局限性与未决问题", ""]
         if unsupported_claims:
             lines.append("**证据不足、需谨慎对待的陈述:**")
@@ -325,7 +345,33 @@ class PaperAssemblyService:
             for item in open_uncertainties[:6]:
                 lines.append(f"- ({item.get('severity', 'medium')}) {item['description']}")
             lines.append("")
-        if not unsupported_claims and not open_uncertainties:
+        negative_results = [
+            item for item in (experiment_results or [])
+            if (item.get("metrics") or {}).get("publishable") is not True
+            or "未" in str(item.get("summary") or "")
+        ]
+        if negative_results:
+            lines.append("**负结果与有效性威胁（不可删除）:**")
+            lines.append("")
+            for result in negative_results:
+                metrics = result.get("metrics") or {}
+                lines.append(
+                    f"- 结果 `{result['id']}`：{result.get('summary', '')}；"
+                    f"数据类别={metrics.get('artifact_class')}；复现={'通过' if (metrics.get('reproduction') or {}).get('passed') else '未通过'}。"
+                )
+            lines.append("")
+        if experiment_results:
+            lines.append("**实验有效性威胁（不可删除）:**")
+            lines.append("")
+            for result in experiment_results:
+                metrics = result.get("metrics") or {}
+                stats = metrics.get("statistical_analysis") or {}
+                lines.append(
+                    f"- 结果 `{result['id']}` 基于 {stats.get('repeat_count', 0)} 次 bootstrap/重复运行；"
+                    f"artifact_class={metrics.get('artifact_class')}。结论仅适用于冻结的数据集、query/qrel 与协议范围。"
+                )
+            lines.append("")
+        if not unsupported_claims and not open_uncertainties and not negative_results and not experiment_results:
             lines.append("未发现显著的证据缺口或未决问题。")
             lines.append("")
         return lines
@@ -373,6 +419,54 @@ class PaperAssemblyService:
 
     def _gaps_section(self, unsupported_claims, uncertainties) -> list[str]:
         return self._limitations_section(unsupported_claims, uncertainties)
+
+    def _traceability_section(
+        self, claims, links_by_claim, excerpt_map, citation_index, source_map, results, protocols,
+    ) -> list[str]:
+        lines = ["## 追溯附录", "", "### Claim → Passage → Source", ""]
+        lines += ["| Claim ID | Bibliography key | Passage / locator |", "| --- | --- | --- |"]
+        for claim in claims:
+            for link in links_by_claim.get(claim["id"], []):
+                source = source_map.get(link["source_id"], {})
+                excerpt = excerpt_map.get(link.get("excerpt_id"), {})
+                number = citation_index.get(link["source_id"])
+                lines.append(
+                    f"| `{claim['id']}` | `{self._bibliography_key(source)}` [{number}] | "
+                    f"`{link.get('excerpt_id')}` / {excerpt.get('locator') or '未标注'} |"
+                )
+        if not claims:
+            lines.append("| — | — | — |")
+        lines += ["", "### Protocol → Result → Artifact", "", "| Protocol | Result | Artifact |", "| --- | --- | --- |"]
+        protocol_ids = {item["id"] for item in protocols}
+        for result in results:
+            protocol_id = result.get("protocol_id")
+            for artifact in result.get("artifacts") or []:
+                label = str(artifact).rsplit("/", 1)[-1]
+                lines.append(
+                    f"| `{protocol_id if protocol_id in protocol_ids else 'unknown'}` | `{result['id']}` | [{label}]({artifact}) |"
+                )
+        if not results:
+            lines.append("| — | — | — |")
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _bibliography_key(source: dict) -> str:
+        identity = str(source.get("doi") or source.get("url") or source.get("title") or "unknown").strip().lower()
+        return "ref_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+
+    @staticmethod
+    def _delivery_status(mode: str, brief: dict, grounded_claims: list[dict], uncertainties: list[dict], results: list[dict]) -> str:
+        if mode != "paper":
+            return "research_report"
+        high_open = any(item.get("status") == "open" and item.get("severity") == "high" for item in uncertainties)
+        has_publishable_experiment = any((item.get("metrics") or {}).get("publishable") is True for item in results)
+        if (
+            brief.get("approval_status") == "frozen" and len(grounded_claims) >= 1
+            and has_publishable_experiment and not high_open
+        ):
+            return "thesis_draft"
+        return "research_report"
 
     # --- helpers -----------------------------------------------------------
 

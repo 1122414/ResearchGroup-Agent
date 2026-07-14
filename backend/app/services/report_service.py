@@ -89,7 +89,8 @@ class ReportService:
         report = paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
 
         grounding_audit = self._run_grounding_audit(run["id"], report)
-        self._run_scientific_quality_gate(run["id"], report, grounding_audit)
+        scientific_quality = self._run_scientific_quality_gate(run["id"], report, grounding_audit)
+        report = self._promote_delivery_status(report, scientific_quality)
         self._mark_report_verified(run["id"])
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
@@ -103,6 +104,12 @@ class ReportService:
             }
         )
         logger.info("[ReportService] generate completed | run_id=%s | report_length=%d", run["id"], len(report))
+        return report
+
+    @staticmethod
+    def _promote_delivery_status(report: str, quality: dict) -> str:
+        if quality.get("passed") and "`thesis_draft`" in report:
+            return report.replace("`thesis_draft`", "`publishable_manuscript`", 1)
         return report
 
     @staticmethod
