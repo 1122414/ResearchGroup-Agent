@@ -24,6 +24,10 @@ from .paper_assembly_service import paper_assembly_service
 from .run_event_service import run_event_service
 
 
+class ReportGroundingError(RuntimeError):
+    pass
+
+
 class ReportService:
     async def generate(self, run: dict) -> str:
         logger.info("[ReportService] generate started | run_id=%s", run["id"])
@@ -72,12 +76,13 @@ class ReportService:
             title = await self._generate_title(run, task_summaries)
 
         # The final report is always assembled from the knowledge graph so that
-        # claims, tables and citations are grounded. The LLM narrative (real mode)
-        # is embedded as discussion prose; in mock mode the grounded skeleton stands
-        # on its own instead of falling back to a generic mock template.
+        # claims, tables and citations are grounded. The free-form writer draft is
+        # retained as an artifact, but cannot enter the publishable report until it
+        # has sentence-level evidence bindings.
         mode = paper_assembly_service.detect_mode(run, tasks)
-        report = paper_assembly_service.assemble(run, mode=mode, narrative="" if settings.mock_mode else narrative, title=title)
+        report = paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
 
+        self._run_grounding_audit(run["id"], report)
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
             {
@@ -89,14 +94,13 @@ class ReportService:
                 "created_at": datetime.now().isoformat(),
             }
         )
-        self._run_grounding_audit(run["id"], report)
         logger.info("[ReportService] generate completed | run_id=%s | report_length=%d", run["id"], len(report))
         return report
 
-    def _run_grounding_audit(self, run_id: str, report: str) -> None:
+    def _run_grounding_audit(self, run_id: str, report: str) -> dict:
         audit = grounding_audit_service.audit_report(report)
         if not audit.get("checked"):
-            return
+            return audit
         OutputRepository.insert(
             {
                 "id": f"grounding_audit_{run_id}",
@@ -122,6 +126,11 @@ class ReportService:
                 audit["invalid_citations"],
                 audit["uncited_claim_count"],
             )
+            raise ReportGroundingError(
+                f"报告接地审计未通过：无效引用 {len(audit['invalid_citations'])}，"
+                f"缺少引用的结论 {audit['uncited_claim_count']}"
+            )
+        return audit
 
     async def _generate_writer_draft(self, run: dict, writer_agent: dict | None, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)

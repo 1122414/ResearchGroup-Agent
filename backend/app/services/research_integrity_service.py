@@ -26,9 +26,18 @@ class ResearchIntegrityService:
         "学术",
     )
 
-    def render_allowed_sources(self, sources: list[dict]) -> str:
+    def render_allowed_sources(self, sources: list[dict], excerpts: list[dict] | None = None) -> str:
         if not sources:
             return "[]"
+        passages_by_source: dict[str, list[dict]] = {}
+        for excerpt in self._content_excerpts(excerpts or []):
+            passages_by_source.setdefault(excerpt["source_id"], []).append(
+                {
+                    "passage_id": excerpt["id"],
+                    "locator": excerpt.get("locator", ""),
+                    "text": excerpt.get("excerpt", ""),
+                }
+            )
         compact = [
             {
                 "source_id": item["id"],
@@ -38,6 +47,7 @@ class ResearchIntegrityService:
                 "venue": item.get("venue", ""),
                 "doi": item.get("doi"),
                 "url": item.get("url"),
+                "passages": passages_by_source.get(item["id"], []),
             }
             for item in sources
         ]
@@ -50,35 +60,54 @@ class ResearchIntegrityService:
         query: str,
         source_mode: str,
         task: dict | None = None,
+        excerpts: list[dict] | None = None,
     ) -> dict:
         required_source_count = self.required_grounded_source_count(task, query)
-        if settings.literature_require_grounded_sources and len(sources) < required_source_count:
-            return self._insufficient_evidence_result(query, source_mode, sources, required_source_count)
+        content_excerpts = self._content_excerpts(excerpts or [])
+        content_source_ids = {item["source_id"] for item in content_excerpts}
+        grounded_sources = [item for item in sources if item["id"] in content_source_ids]
+        if settings.literature_require_grounded_sources and len(grounded_sources) < required_source_count:
+            return self._insufficient_evidence_result(query, source_mode, grounded_sources, required_source_count)
 
         allowed_ids = {item["id"] for item in sources}
-        violations = self._citation_violations(result, sources, allowed_ids)
+        violations = self._citation_violations(result, sources, allowed_ids, content_excerpts)
         if settings.citation_validation_enabled and violations:
             return self._blocked_fabrication_result(query, source_mode, sources, violations)
+
+        valid_claims = self._grounded_claims(result.get("claims"), content_excerpts)
+        dropped_claims = len(result.get("claims") or []) - len(valid_claims)
 
         references_used = result.get("references_used") or []
         if not isinstance(references_used, list):
             references_used = []
+        if not references_used:
+            references_used = [
+                source_id
+                for claim in result.get("claims") or []
+                if isinstance(claim, dict)
+                for source_id in claim.get("evidence_source_ids") or []
+            ]
         normalized_refs = [str(item) for item in references_used]
 
         grounded = dict(result)
+        grounded["claims"] = valid_claims
+        if dropped_claims and not valid_claims:
+            grounded["summary"] = "完成来源核验，但模型结论未绑定到可定位证据片段，已从研究结论中移除。"
+            grounded["findings"] = []
         grounded["references_used"] = [item for item in normalized_refs if item in allowed_ids]
         grounded["grounded_source_ids"] = [item["id"] for item in sources]
         grounded["academic_integrity"] = {
             "status": "passed",
             "query": query,
             "source_mode": source_mode,
-            "allowed_source_count": len(sources),
+            "allowed_source_count": len(grounded_sources),
             "required_source_count": required_source_count,
             "default_required_source_count": settings.literature_min_grounded_sources,
             "evidence_scope": self.evidence_scope(task, query),
+            "dropped_ungrounded_claims": dropped_claims,
             "violations": [],
         }
-        if len(sources) < settings.literature_min_grounded_sources:
+        if len(grounded_sources) < settings.literature_min_grounded_sources:
             grounded["limited_evidence"] = True
         return grounded
 
@@ -102,8 +131,14 @@ class ResearchIntegrityService:
             return "academic_review"
         return "practical_brief"
 
-    @staticmethod
-    def _citation_violations(result: dict, sources: list[dict], allowed_ids: set[str]) -> list[str]:
+    @classmethod
+    def _citation_violations(
+        cls,
+        result: dict,
+        sources: list[dict],
+        allowed_ids: set[str],
+        excerpts: list[dict],
+    ) -> list[str]:
         references_used = result.get("references_used") or []
         if not isinstance(references_used, list):
             references_used = []
@@ -133,7 +168,56 @@ class ResearchIntegrityService:
         unknown_dois = sorted(item for item in cited_dois if item not in allowed_dois)
         if unknown_dois:
             violations.append(f"unknown dois: {', '.join(unknown_dois)}")
+
+        passage_by_id = {item["id"]: item for item in cls._content_excerpts(excerpts)}
+        for index, claim in enumerate(result.get("claims") or []):
+            if not isinstance(claim, dict) or not str(claim.get("statement") or "").strip():
+                continue
+            source_ids = cls._as_ids(claim.get("evidence_source_ids"))
+            passage_ids = cls._as_ids(claim.get("evidence_passage_ids"))
+            if not source_ids or not passage_ids:
+                continue
+            unknown_passages = [item for item in passage_ids if item not in passage_by_id]
+            if unknown_passages:
+                violations.append(f"claim {index} unknown passage ids: {', '.join(unknown_passages)}")
+                continue
+            passage_source_ids = {passage_by_id[item]["source_id"] for item in passage_ids}
+            if not passage_source_ids.issubset(set(source_ids)):
+                violations.append(f"claim {index} passage/source mismatch")
         return violations
+
+    @classmethod
+    def _grounded_claims(cls, claims, excerpts: list[dict]) -> list[dict]:
+        passage_by_id = {item["id"]: item for item in cls._content_excerpts(excerpts)}
+        grounded: list[dict] = []
+        for claim in claims or []:
+            if not isinstance(claim, dict) or not str(claim.get("statement") or "").strip():
+                continue
+            source_ids = set(cls._as_ids(claim.get("evidence_source_ids")))
+            passage_ids = cls._as_ids(claim.get("evidence_passage_ids"))
+            if source_ids and passage_ids and all(
+                passage_id in passage_by_id and passage_by_id[passage_id]["source_id"] in source_ids
+                for passage_id in passage_ids
+            ):
+                grounded.append(claim)
+        return grounded
+
+    @staticmethod
+    def _content_excerpts(excerpts: list[dict]) -> list[dict]:
+        return [
+            item
+            for item in excerpts
+            if item.get("excerpt_type") not in {"metadata_only", "summary"}
+            and str(item.get("excerpt") or "").strip()
+        ]
+
+    @staticmethod
+    def _as_ids(value) -> list[str]:
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
 
     @staticmethod
     def _insufficient_evidence_result(

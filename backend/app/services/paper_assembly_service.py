@@ -70,14 +70,27 @@ class PaperAssemblyService:
         # "hypothesis" and are not real research hypotheses.
         hypotheses = [h for h in hypotheses if h.get("statement", "").strip() != goal.strip() and len(h.get("statement", "")) < len(goal) * 0.8]
 
-        source_map = {item["id"]: item for item in evidence["sources"]}
+        source_map = {
+            item["id"]: item
+            for item in evidence["sources"]
+            if (item.get("metadata") or {}).get("citation_eligible")
+        }
+        excerpt_map = {item["id"]: item for item in evidence["excerpts"]}
         links_by_claim: dict[str, list[dict]] = {}
         for link in evidence["links"]:
-            links_by_claim.setdefault(link["claim_id"], []).append(link)
+            excerpt = excerpt_map.get(link.get("excerpt_id"))
+            if (
+                link.get("relation_type") == "supports"
+                and link.get("source_id") in source_map
+                and excerpt
+                and excerpt.get("excerpt_type") not in {"metadata_only", "summary"}
+                and str(excerpt.get("excerpt") or "").strip()
+            ):
+                links_by_claim.setdefault(link["claim_id"], []).append(link)
 
         citation_index = self._build_citation_index(claims, links_by_claim, source_map)
-        grounded_claims = [c for c in claims if links_by_claim.get(c["id"])]
-        unsupported_claims = [c for c in claims if not links_by_claim.get(c["id"])]
+        grounded_claims = [c for c in claims if c.get("status") == "supported" and links_by_claim.get(c["id"])]
+        unsupported_claims = [c for c in claims if c not in grounded_claims]
 
         time_label = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         doc_type = "研究论文" if mode == "paper" else "调研报告"
@@ -91,7 +104,7 @@ class PaperAssemblyService:
             "",
         ]
 
-        lines += self._abstract_section(goal_brief, grounded_claims, experiment_results, mode)
+        lines += self._abstract_section(goal_brief, grounded_claims, experiment_results, mode, links_by_claim, citation_index)
         narrative_block = self._narrative_block(narrative)
         narrative_body = narrative_block.get("discussion", "").strip()
         has_full_narrative = bool(narrative_body) and ("#" in narrative_body or len(narrative_body) > 500)
@@ -111,14 +124,14 @@ class PaperAssemblyService:
             if not has_full_narrative:
                 lines += self._discussion_section(narrative_block, unsupported_claims, uncertainties)
             lines += self._limitations_section(unsupported_claims, uncertainties)
-            lines += self._conclusion_section(grounded_claims, experiment_results)
+            lines += self._conclusion_section(grounded_claims, experiment_results, links_by_claim, citation_index)
         else:
             lines += self._scope_section(goal_brief, narrative_block if not has_full_narrative else {})
             lines += self._themes_section(grounded_claims, citation_index, source_map, links_by_claim)
             lines += self._comparative_section(grounded_claims, citation_index, source_map)
             lines += self._findings_section(grounded_claims, citation_index, links_by_claim)
             lines += self._gaps_section(unsupported_claims, uncertainties)
-            lines += self._conclusion_section(grounded_claims, experiment_results)
+            lines += self._conclusion_section(grounded_claims, experiment_results, links_by_claim, citation_index)
 
         lines += self._references_section(citation_index, source_map)
         return "\n".join(lines).strip() + "\n"
@@ -142,7 +155,7 @@ class PaperAssemblyService:
 
     # --- shared sections ---------------------------------------------------
 
-    def _abstract_section(self, goal, grounded_claims, experiment_results, mode) -> list[str]:
+    def _abstract_section(self, goal, grounded_claims, experiment_results, mode, links_by_claim, citation_index) -> list[str]:
         top = grounded_claims[:3]
         body = (
             f"本文围绕“{goal}”开展研究，基于可核验证据归纳出 {len(grounded_claims)} 条有支撑的结论"
@@ -150,18 +163,21 @@ class PaperAssemblyService:
         )
         lines = ["## 摘要", "", body, ""]
         for claim in top:
-            lines.append(f"- {claim['statement']}")
+            lines.append(f"- {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
         if top:
             lines.append("")
         return lines
 
-    def _conclusion_section(self, grounded_claims, experiment_results) -> list[str]:
+    def _conclusion_section(self, grounded_claims, experiment_results, links_by_claim, citation_index) -> list[str]:
         lines = ["## 结论", ""]
         if grounded_claims:
             lines.append("综合证据与实验，本研究得到以下有支撑的核心结论：")
             lines.append("")
             for claim in grounded_claims[:6]:
-                lines.append(f"- ({claim['status']}, 置信度 {round(claim.get('confidence', 0) * 100)}%) {claim['statement']}")
+                lines.append(
+                    f"- ({claim['status']}, 置信度 {round(claim.get('confidence', 0) * 100)}%) "
+                    f"{claim['statement']}{self._cite(claim, links_by_claim, citation_index)}"
+                )
         else:
             lines.append("当前尚无获得证据充分支撑的结论，需要补充检索或实验后再形成最终结论。")
         lines.append("")
@@ -240,6 +256,9 @@ class PaperAssemblyService:
             lines.append(f"### 实验 `{result['status']}`：{result['summary']}")
             lines.append("")
             metrics = result.get("metrics") or {}
+            if metrics.get("publishable") is False:
+                lines.append("> **不可用于论文结论：** 本实验使用合成演示数据，仅验证执行链路。")
+                lines.append("")
             table = self._metrics_table(metrics)
             if table:
                 lines.extend(table)

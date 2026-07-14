@@ -506,7 +506,8 @@ class RunExecutionService:
         if self._approved(run_id, request_type, task_id):
             return True
         request = approval_service.ensure_pending(run_id, request_type, title, message, task_id=task_id)
-        if self._auto_mode_enabled():
+        requires_human = request_type == "experiment_execute" and settings.experiment_require_review
+        if self._auto_mode_enabled() and not requires_human:
             approval_service.resolve(request["id"], True, resolved_by="system:auto")
             return True
         return False

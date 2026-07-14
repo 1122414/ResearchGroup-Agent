@@ -13,7 +13,9 @@ class ReviewService:
     async def review(self, task: dict) -> dict:
         logger.info("[ReviewService] review started | task_id=%s | title=%s", task.get("id"), task.get("title", "")[:40])
         latest = self._latest_output(task)
-        if task.get("task_type") == "literature_survey" and latest.get("insufficient_evidence"):
+        if task.get("task_type") == "literature_survey" and (
+            latest.get("insufficient_evidence") or latest.get("integrity_blocked")
+        ):
             return self._review_insufficient_evidence(task, latest)
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请作为导师 Agent 审核以下任务产出。
@@ -46,7 +48,7 @@ class ReviewService:
         rubric = self._rubric_for_task(task.get("task_type", ""))
         scores = self._score_task(task, llm_review, rubric)
         average_score = round(sum(scores.values()) / max(len(scores), 1), 4)
-        approved = bool(llm_review.get("approved", True)) and average_score >= rubric["threshold"]
+        approved = bool(llm_review.get("approved", False)) and average_score >= rubric["threshold"]
         review = {
             **llm_review,
             "approved": approved,
@@ -148,11 +150,11 @@ class ReviewService:
             text = text[:-3]
         try:
             parsed = json.loads(text.strip())
-            if isinstance(parsed, dict):
-                return {"approved": bool(parsed.get("approved", True)), "feedback": parsed.get("feedback", "")}
+            if isinstance(parsed, dict) and isinstance(parsed.get("approved"), bool):
+                return {"approved": parsed["approved"], "feedback": str(parsed.get("feedback") or "")}
         except json.JSONDecodeError:
             pass
-        return {"approved": True, "feedback": "导师审核返回了非结构化结果，已按通过处理。"}
+        return {"approved": False, "feedback": "导师审核返回缺失或非法结构，已按不通过处理；请人工检查或有限重试。"}
 
     def _rubric_for_task(self, task_type: str) -> dict:
         dimensions = {

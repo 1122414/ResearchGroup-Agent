@@ -60,8 +60,12 @@ class EvidencePipelineService:
         if not normalized:
             mode = "no_grounded_source+browser_research" if settings.browser_research_enabled else "no_grounded_source"
         normalized = source_verification_service.verify_sources(normalized)
+        normalized = [source for source in normalized if source_verification_service.citation_eligible(source)]
+        if not normalized:
+            mode = "no_citation_eligible_source"
         persisted = self.persist_sources(task, normalized)
         fulltext_ingested = fulltext_ingest_service.ingest_sources(task.get("run_id"), normalized)
+        persisted["excerpts"] = self._content_excerpts(task.get("run_id"), normalized)
         return {
             "mode": mode,
             "query": query,
@@ -150,8 +154,25 @@ class EvidencePipelineService:
         before_verification = len(normalized)
         normalized = await browser_research_service.verify_candidates(query, normalized)
         self._emit_verification_trace({"run_id": run_id, "id": None}, query, before_verification, normalized)
+        normalized = source_verification_service.verify_sources(normalized)
+        normalized = [source for source in normalized if source_verification_service.citation_eligible(source)]
         persisted = self.persist_sources({"run_id": run_id, "id": None}, normalized)
+        fulltext_ingest_service.ingest_sources(run_id, normalized)
+        persisted["excerpts"] = self._content_excerpts(run_id, normalized)
         return {"query": query, "search_attempts": search_result["attempts"], **persisted}
+
+    @staticmethod
+    def _content_excerpts(run_id: str | None, sources: list[dict]) -> list[dict]:
+        if not run_id:
+            return []
+        source_ids = {source["id"] for source in sources}
+        return [
+            excerpt
+            for excerpt in EvidenceRepository.get_by_run(run_id)["excerpts"]
+            if excerpt["source_id"] in source_ids
+            and excerpt.get("excerpt_type") not in {"metadata_only", "summary"}
+            and str(excerpt.get("excerpt") or "").strip()
+        ]
 
     def persist_sources(self, task: dict, sources: list[dict]) -> dict:
         run_id = task.get("run_id")
@@ -283,10 +304,12 @@ class EvidencePipelineService:
     def _build_excerpt(self, run_id: str, source: dict, now: str) -> dict:
         metadata = source.get("metadata", {})
         text = str(metadata.get("content") or "")
+        excerpt_type = "visible_text"
         if not text:
             methods = metadata.get("methods") or []
             method_text = ", ".join(methods) if methods else "bibliographic metadata only"
             text = f"{source['title']} | methods: {method_text}"
+            excerpt_type = "metadata_only"
         text = re.sub(r"\s+", " ", text).strip()[: settings.evidence_excerpt_max_chars]
         return {
             "id": f"excerpt_{uuid.uuid4().hex[:10]}",
@@ -294,7 +317,7 @@ class EvidencePipelineService:
             "source_id": source["id"],
             "excerpt": text,
             "locator": source.get("url") or "",
-            "excerpt_type": "summary",
+            "excerpt_type": excerpt_type,
             "captured_at": now,
         }
 

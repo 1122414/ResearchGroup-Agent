@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 
+from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
@@ -16,6 +17,28 @@ from .run_event_service import run_event_service
 
 
 class TaskExecutor:
+    RESULT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "claims": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "statement": {"type": "string"},
+                        "evidence_source_ids": {"type": "array", "items": {"type": "string"}},
+                        "evidence_passage_ids": {"type": "array", "items": {"type": "string"}},
+                        "relation": {"type": "string", "enum": ["supports", "opposes", "context"]},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": ["statement", "evidence_source_ids", "evidence_passage_ids", "relation", "confidence"],
+                },
+            },
+        },
+        "required": ["summary", "claims"],
+    }
+
     async def execute(self, task: dict) -> dict:
         task_title = task.get("title", "")
         task_type = task.get("task_type", "literature_survey")
@@ -45,11 +68,12 @@ class TaskExecutor:
 1. 你只能基于下方 allowed_sources 归纳，不得补写、猜测或伪造任何论文、作者、年份、DOI、URL。
 2. 若来源不足以回答任务，请明确输出“证据不足”，不要为了完整性编造结论。
 3. 只允许通过 source_id 引用，格式为 [source_id]；不要自行生成参考文献列表。
-4. 输出 JSON 中必须包含 references_used，且每一项都只能来自 allowed_sources.source_id。
-5. 当前检索 query：{evidence_bundle["query"]}
-6. allowed_sources：
+4. 每条结论必须同时给出 source_id 与对应 passage_id；没有 passage 的来源只能用于检索线索，不能支撑结论。
+5. 输出 JSON 中必须包含 references_used，且每一项都只能来自 allowed_sources.source_id。
+6. 当前检索 query：{evidence_bundle["query"]}
+7. allowed_sources（含可引用 passages）：
 当前任务所需最少可核验来源数：{required_source_count}
-{research_integrity_service.render_allowed_sources(evidence_bundle["sources"])}
+{research_integrity_service.render_allowed_sources(evidence_bundle["sources"], evidence_bundle["excerpts"])}
 """
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
@@ -65,7 +89,7 @@ class TaskExecutor:
 1. 给出 summary。
 2. 给出 findings 或 deliverables。
 3. 给出 risks 或 next_steps。
-4. 给出 claims：数组，每个元素 {{"statement": 该任务得出的、可单独核验的研究性结论, "evidence_source_ids": [只能来自上方 allowed_sources.source_id；无可核验证据时留空数组], "relation": "supports"|"opposes", "confidence": 0到1}}。不要把没有证据支撑的猜测写成 supports。
+4. 给出 claims：数组，每个元素 {{"statement": 可单独核验的研究性结论, "evidence_source_ids": [来源ID], "evidence_passage_ids": [该来源下的原文片段ID], "relation": "supports"|"opposes"|"context", "confidence": 0到1}}。没有可定位片段时不要输出该 claim。
 5. 给出 hypotheses（可选）：数组，每个元素 {{"statement": 可检验的假设, "rationale": 依据}}。
 6. 给出 uncertainties（可选）：数组，每个元素 {{"description": 仍未解决的问题, "severity": "low"|"medium"|"high"}}。
 7. 不要输出 Markdown，只返回 JSON。
@@ -74,18 +98,12 @@ class TaskExecutor:
         llm = create_llm_provider()
         prompt_len = len(system_prompt) + len(user_prompt)
         logger.info("[TaskExecutor] calling LLM | task_id=%s | role=graduate | prompt_len=%d | active_skills=%d", task.get("id"), prompt_len, len(active_skills))
+        prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
         try:
-            raw_response = await llm.generate(
-                prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
-                role="graduate",
-                run_id=task.get("run_id"),
-                task_id=task.get("id"),
-                agent_id=owner_id,
-            )
+            result = await self._generate_structured(llm, prompt, task, owner_id)
         except Exception:
             agent_skill_service.record_usage(active_skills, success=False)
             raise
-        result = self._parse_result(raw_response)
         if task_type == "literature_survey" and evidence_bundle is not None:
             result = research_integrity_service.apply_literature_policy(
                 result,
@@ -93,6 +111,7 @@ class TaskExecutor:
                 evidence_bundle["query"],
                 evidence_bundle["mode"],
                 task,
+                evidence_bundle["excerpts"],
             )
             methods = literature_source_service.methods_from_sources(evidence_bundle["sources"])
             artifacts = literature_source_service.write_artifacts(task, evidence_bundle["sources"], methods)
@@ -192,6 +211,32 @@ class TaskExecutor:
         parts.append("请在 summary 与 claims 中明确说明你如何整合上述协作结果，不要简单复制。")
         return "\n".join(parts)
 
+    async def _generate_structured(self, llm, prompt: str, task: dict, owner_id: str) -> dict:
+        attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 2) + 1
+        current_prompt = prompt
+        last_error = ""
+        for attempt in range(attempts):
+            raw = await llm.generate(
+                prompt=current_prompt,
+                schema=self.RESULT_SCHEMA,
+                role="graduate",
+                run_id=task.get("run_id"),
+                task_id=task.get("id"),
+                agent_id=owner_id,
+            )
+            try:
+                return self._parse_result(raw)
+            except ValueError as exc:
+                last_error = str(exc)
+                if attempt + 1 >= attempts:
+                    break
+                current_prompt = (
+                    f"{prompt}\n\n上一次输出未通过结构校验（{last_error}）。"
+                    "请只修复 JSON 结构，不新增事实；无法提供证据的 claims 必须删除。\n"
+                    f"待修复输出：{raw[:4000]}"
+                )
+        raise ValueError(f"LLM structured output invalid after {attempts} attempt(s): {last_error}")
+
     def _parse_result(self, raw: str) -> dict:
         text = raw.strip()
         if text.startswith("```json"):
@@ -202,9 +247,15 @@ class TaskExecutor:
             text = text[:-3]
         try:
             parsed = json.loads(text.strip())
-            return parsed if isinstance(parsed, dict) else {"items": parsed}
-        except json.JSONDecodeError:
-            return {"raw_output": text, "parsed": False}
+        except json.JSONDecodeError as exc:
+            raise ValueError("response is not valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("response root must be an object")
+        if not str(parsed.get("summary") or "").strip():
+            raise ValueError("summary is required")
+        if not isinstance(parsed.get("claims"), list):
+            raise ValueError("claims must be an array")
+        return parsed
 
     def _write_memory(self, task: dict, owner_id: str, result: dict) -> None:
         run_id = task.get("run_id")

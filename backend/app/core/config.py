@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     llm_timeout: int = 120
     llm_max_retries: int = 3
     llm_max_tokens: int = 4096
+    llm_structured_repair_attempts: int = 1
     # How to request structured JSON from the model. Different OpenAI-compatible
     # providers support different response_format values:
     #   - "auto": json_schema for OpenAI endpoints, json_object otherwise; on a
@@ -145,7 +146,7 @@ class Settings(BaseSettings):
 
     # Verification / grounding hardening.
     doi_verification_enabled: bool = False
-    grounding_audit_enabled: bool = False
+    grounding_audit_enabled: bool = True
 
     # Goal-driven generated experiments.
     experiment_generated_code_enabled: bool = False

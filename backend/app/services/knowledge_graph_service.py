@@ -30,12 +30,21 @@ class KnowledgeGraphService:
             return {"claims": [], "hypotheses": [], "uncertainties": [], "evidence_links": 0}
 
         evidence = EvidenceRepository.get_by_run(run_id)
-        valid_source_ids = {item["id"] for item in evidence["sources"]}
-        excerpt_by_source = {item["source_id"]: item["id"] for item in evidence["excerpts"]}
+        valid_source_ids = {
+            item["id"]
+            for item in evidence["sources"]
+            if (item.get("metadata") or {}).get("citation_eligible")
+        }
+        excerpt_by_id = {
+            item["id"]: item
+            for item in evidence["excerpts"]
+            if item.get("excerpt_type") not in {"metadata_only", "summary"}
+            and str(item.get("excerpt") or "").strip()
+        }
 
         created_hypotheses = self._ingest_hypotheses(run_id, result)
         created_claims, link_count = self._ingest_claims(
-            run_id, task, result, valid_source_ids, excerpt_by_source, created_hypotheses
+            run_id, task, result, valid_source_ids, excerpt_by_id, created_hypotheses
         )
         created_uncertainties = self._ingest_uncertainties(run_id, result)
 
@@ -81,7 +90,7 @@ class KnowledgeGraphService:
         task: dict,
         result: dict,
         valid_source_ids: set[str],
-        excerpt_by_source: dict[str, str],
+        excerpt_by_id: dict[str, dict],
         created_hypotheses: list[dict],
     ) -> tuple[list[dict], int]:
         now = datetime.now().isoformat()
@@ -110,8 +119,13 @@ class KnowledgeGraphService:
             if relation not in {"supports", "opposes", "context"}:
                 relation = "supports"
             confidence = self._as_float(item.get("confidence"), 0.7)
-            for source_id in self._source_ids(item):
-                if source_id not in valid_source_ids:
+            claimed_source_ids = set(self._source_ids(item))
+            for passage_id in self._passage_ids(item):
+                excerpt = excerpt_by_id.get(passage_id)
+                if not excerpt:
+                    continue
+                source_id = excerpt["source_id"]
+                if source_id not in valid_source_ids or source_id not in claimed_source_ids:
                     continue
                 EvidenceRepository.insert_link(
                     {
@@ -119,7 +133,7 @@ class KnowledgeGraphService:
                         "run_id": run_id,
                         "claim_id": claim_id,
                         "source_id": source_id,
-                        "excerpt_id": excerpt_by_source.get(source_id),
+                        "excerpt_id": passage_id,
                         "relation_type": relation,
                         "confidence": confidence,
                         "rationale": str(item.get("rationale") or "")[:500],
@@ -158,6 +172,13 @@ class KnowledgeGraphService:
     @staticmethod
     def _source_ids(item: dict) -> list[str]:
         raw = item.get("evidence_source_ids") or item.get("references_used") or item.get("source_ids") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return [str(value).strip() for value in raw if str(value).strip()]
+
+    @staticmethod
+    def _passage_ids(item: dict) -> list[str]:
+        raw = item.get("evidence_passage_ids") or []
         if isinstance(raw, str):
             raw = [raw]
         return [str(value).strip() for value in raw if str(value).strip()]

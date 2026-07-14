@@ -32,3 +32,15 @@ def test_legacy_rag_contract_still_supported():
 def test_failure_is_inconclusive():
     relation, _, _ = ExperimentResultService._interpret({}, "failed")
     assert relation == "inconclusive"
+
+
+def test_synthetic_demo_cannot_support_hypothesis():
+    metrics = {
+        "publishable": False,
+        "best_strategy": {"strategy": "demo", "mrr": 1.0},
+        "rows": [{"strategy": "no_split", "mrr": 0.0}],
+    }
+    relation, confidence, message = ExperimentResultService._interpret(metrics, "completed")
+    assert relation == "inconclusive"
+    assert confidence == 0.0
+    assert "合成" in message

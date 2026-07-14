@@ -4,6 +4,7 @@ from datetime import datetime
 import pytest
 
 from backend.app.services.paper_assembly_service import paper_assembly_service
+from backend.app.services.grounding_audit_service import grounding_audit_service
 from backend.app.storage import init_db
 from backend.app.storage.repositories import (
     EvidenceRepository,
@@ -40,7 +41,16 @@ def test_paper_mode_is_grounded_with_inline_citations_and_references():
             "id": source_id, "run_id": run["id"], "task_id": None,
             "title": "Dense Passage Retrieval", "authors": "Karpukhin et al.", "year": 2020,
             "venue": "EMNLP", "doi": None, "url": "https://arxiv.org/abs/2004.04906",
-            "source_type": "paper", "metadata": {}, "created_at": now,
+            "source_type": "paper", "metadata": {"citation_eligible": True}, "created_at": now,
+        }
+    )
+    excerpt_id = f"excerpt_{uuid.uuid4().hex[:8]}"
+    EvidenceRepository.insert_excerpt(
+        {
+            "id": excerpt_id, "run_id": run["id"], "source_id": source_id,
+            "excerpt": "Dense retrieval reports higher recall than BM25 on the evaluated benchmark.",
+            "locator": "https://arxiv.org/abs/2004.04906", "excerpt_type": "fulltext",
+            "captured_at": now,
         }
     )
     claim_id = f"claim_{uuid.uuid4().hex[:8]}"
@@ -55,7 +65,7 @@ def test_paper_mode_is_grounded_with_inline_citations_and_references():
     EvidenceRepository.insert_link(
         {
             "id": f"link_{uuid.uuid4().hex[:8]}", "run_id": run["id"], "claim_id": claim_id,
-            "source_id": source_id, "excerpt_id": None, "relation_type": "supports",
+            "source_id": source_id, "excerpt_id": excerpt_id, "relation_type": "supports",
             "confidence": 0.8, "rationale": "reported", "created_at": now,
         }
     )
@@ -87,6 +97,7 @@ def test_paper_mode_is_grounded_with_inline_citations_and_references():
     assert "## 7. 局限性与未决问题" in doc
     assert "| strategy | recall |" in doc  # real metrics table
     assert "discussion prose here" in doc
+    assert grounding_audit_service.audit_report(doc)["passed"] is True
 
 
 def test_survey_mode_detected_for_survey_goal():

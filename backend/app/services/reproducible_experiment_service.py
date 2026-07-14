@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 import re
-import subprocess
 import sys
 import uuid
 from datetime import datetime
@@ -19,6 +18,7 @@ from ..storage.repositories import (
     RunRepository,
 )
 from .experiment_code_generator import experiment_code_generator
+from .experiment_executor import experiment_executor_service
 from .experiment_protocol_service import experiment_protocol_service
 from .experiment_result_service import experiment_result_service
 from .artifact_manifest_service import artifact_manifest_service
@@ -36,7 +36,7 @@ class ReproducibleExperimentService:
 
         input_path = data_dir / "input_documents.jsonl"
         script_path = workspace / "run_experiment.py"
-        self._write_input_documents(input_path, task, run)
+        artifact_class = self._write_input_documents(input_path, task, run)
         script_source, generated = await self._resolve_script(task, run, protocol)
         script_path.write_text(script_source, encoding="utf-8")
 
@@ -45,33 +45,15 @@ class ReproducibleExperimentService:
         self._emit(task, plan["id"], "experiment.workspace_created", "实验研究生工作空间已创建", {"workspace": str(workspace)})
 
         started = datetime.now().isoformat()
-        ExperimentPlanRepository.update(plan["id"], {"status": "running", "updated_at": started})
         ExperimentRunRepository.update(experiment_run["id"], status="running", started_at=started)
-        proc = subprocess.run(
-            [sys.executable, str(script_path.name)],
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=settings.reproducible_experiment_timeout_seconds,
-        )
-        result = {
-            "exit_code": proc.returncode,
-            "stdout": proc.stdout[-20000:],
-            "stderr": proc.stderr[-20000:],
-            "elapsed_ms": 0,
-            "command_results": [
-                {
-                    "command": f"{sys.executable} {script_path.name}",
-                    "exit_code": proc.returncode,
-                    "stdout": proc.stdout[-20000:],
-                    "stderr": proc.stderr[-20000:],
-                }
-            ],
-        }
+        executed_plan = experiment_executor_service.execute_plan(plan["id"])
+        result = executed_plan.get("result") or {}
 
         summary_path = workspace / "summary.json"
         results_path = data_dir / "results.csv"
         metrics = self._read_metrics(summary_path)
+        metrics.update({"artifact_class": artifact_class, "publishable": artifact_class == "external"})
+        summary_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
         chart_path = workspace / "chart_data.json"
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
         artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
@@ -87,16 +69,7 @@ class ReproducibleExperimentService:
                 path=artifact_path,
                 metadata={"task_id": task.get("id"), "protocol_id": protocol["id"]},
             )
-        status = "completed" if proc.returncode == 0 else "failed"
-        ExperimentPlanRepository.update(
-            plan["id"],
-            {
-                "status": status,
-                "result": result,
-                "artifacts": artifact_paths,
-                "updated_at": datetime.now().isoformat(),
-            },
-        )
+        status = executed_plan["status"]
         ExperimentRunRepository.update(experiment_run["id"], status=status, completed_at=datetime.now().isoformat())
         recorded = experiment_result_service.record(
             protocol=protocol,
@@ -129,13 +102,15 @@ class ReproducibleExperimentService:
             },
             "figure_path": str(figure_path) if has_figure else None,
             "metrics": metrics,
+            "artifact_class": artifact_class,
+            "publishable": metrics["publishable"],
             "artifacts": artifact_paths,
             "execution": result,
             "next_steps": ["如需扩大实验规模，可替换 data/input_documents.jsonl 并重新运行 run_experiment.py。"],
         }
 
     async def _resolve_script(self, task: dict, run: dict | None, protocol: dict) -> tuple[str, bool]:
-        if not settings.experiment_generated_code_enabled:
+        if not settings.experiment_generated_code_enabled or settings.experiment_require_review:
             return self._script(), False
         hypothesis = ResearchHypothesisRepository.get_by_id(protocol["hypothesis_id"]) or {}
         goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
@@ -166,13 +141,13 @@ class ReproducibleExperimentService:
             "env_vars": {},
             "risk_level": "safe",
             "risk_reasons": [],
-            "status": "draft",
+            "status": "approved",
             "result": None,
             "artifacts": [],
             "created_at": now,
             "updated_at": now,
             "approved_at": now,
-            "approved_by": "system-safe-executor",
+            "approved_by": "run-level-human-approval" if settings.experiment_require_review else "system-safe-executor",
         }
         ExperimentPlanRepository.insert(plan)
         return plan
@@ -198,7 +173,7 @@ class ReproducibleExperimentService:
         ExperimentRunRepository.insert(item)
         return item
 
-    def _write_input_documents(self, path: Path, task: dict, run: dict | None) -> None:
+    def _write_input_documents(self, path: Path, task: dict, run: dict | None) -> str:
         goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
         seed = goal or task.get("title", "research task")
         documents = self._documents_from_uploads(run, task)
@@ -206,7 +181,7 @@ class ReproducibleExperimentService:
             with path.open("w", encoding="utf-8") as fh:
                 for item in documents:
                     fh.write(json.dumps(item, ensure_ascii=False) + "\n")
-            return
+            return "external"
 
         documents = [
             {"id": "doc_rag", "text": f"{seed} 需要比较 RAG 检索、文本切分、召回率、MRR 和答案质量之间的关系。"},
@@ -221,6 +196,7 @@ class ReproducibleExperimentService:
         with path.open("w", encoding="utf-8") as fh:
             for item in documents:
                 fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+        return "synthetic"
 
     def _documents_from_uploads(self, run: dict | None, task: dict) -> list[dict]:
         if not run:

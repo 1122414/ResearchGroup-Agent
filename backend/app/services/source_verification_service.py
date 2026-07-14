@@ -19,14 +19,38 @@ class SourceVerificationService:
     """
 
     def verify_sources(self, sources: list[dict]) -> list[dict]:
-        if not settings.doi_verification_enabled:
-            return sources
         for source in sources:
-            verdict = self._verify_one(source)
             metadata = dict(source.get("metadata") or {})
-            metadata["doi_verification"] = verdict
+            verdict = self._verify_one(source) if settings.doi_verification_enabled else None
+            if verdict is not None:
+                metadata["doi_verification"] = verdict
+            status, eligible = self._citation_status(source, metadata, verdict)
+            metadata["verification_status"] = status
+            metadata["citation_eligible"] = eligible
             source["metadata"] = metadata
         return sources
+
+    @staticmethod
+    def _citation_status(source: dict, metadata: dict, doi_verdict: dict | None) -> tuple[str, bool]:
+        """Classify citation identity without pretending metadata proves content."""
+        if doi_verdict and doi_verdict.get("status") in {"mismatch", "unresolved"}:
+            return f"doi_{doi_verdict['status']}", False
+        if doi_verdict and doi_verdict.get("verified"):
+            return "doi_verified", True
+
+        browser = metadata.get("browser_verification") or {}
+        if browser.get("accepted") and browser.get("fallback") != "search_result_metadata":
+            return "browser_verified", True
+
+        provider = metadata.get("provider")
+        traceable = bool(source.get("doi") or source.get("url") or metadata.get("canonical_id"))
+        if provider in {"crossref", "openalex", "arxiv", "semantic_scholar"} and traceable:
+            return "scholarly_metadata_verified", True
+        return "unverified", False
+
+    @staticmethod
+    def citation_eligible(source: dict) -> bool:
+        return bool((source.get("metadata") or {}).get("citation_eligible"))
 
     def _verify_one(self, source: dict) -> dict:
         doi = self._normalize_doi(source.get("doi"))

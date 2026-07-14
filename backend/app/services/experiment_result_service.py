@@ -86,6 +86,8 @@ class ExperimentResultService:
     def _summary(status: str, metrics: dict, result: dict) -> str:
         if status != "completed":
             return f"实验失败，退出码={result.get('exit_code')}"
+        if metrics.get("publishable") is False:
+            return "实验使用合成演示数据完成，仅证明执行链路可复现，不构成研究结论"
         if metrics.get("best_strategy"):
             best = metrics.get("best_strategy") or {}
             return (
@@ -105,6 +107,8 @@ class ExperimentResultService:
     def _interpret(metrics: dict, status: str) -> tuple[str, float, str]:
         if status != "completed":
             return "inconclusive", settings.experiment_inconclusive_failure_confidence, "实验执行失败，当前结果不足以支持或否定假设"
+        if metrics.get("publishable") is False:
+            return "inconclusive", 0.0, "实验使用合成演示数据，仅验证执行链路，不能支持或否定研究假设"
 
         # Legacy retrieval-chunking contract (best_strategy + rows).
         best = metrics.get("best_strategy") or {}

@@ -12,7 +12,16 @@ class ClaimEvaluationService:
         if not claim:
             return None
         evidence = EvidenceRepository.get_by_run(claim["run_id"])
-        links = [item for item in evidence["links"] if item["claim_id"] == claim_id]
+        excerpts = {item["id"]: item for item in evidence["excerpts"]}
+        sources = {item["id"]: item for item in evidence["sources"]}
+        links = [
+            item
+            for item in evidence["links"]
+            if item["claim_id"] == claim_id
+            and item.get("excerpt_id") in excerpts
+            and excerpts[item["excerpt_id"]].get("excerpt_type") not in {"metadata_only", "summary"}
+            and (sources.get(item["source_id"], {}).get("metadata") or {}).get("citation_eligible")
+        ]
         supporting = [item for item in links if item["relation_type"] == "supports"]
         opposing = [item for item in links if item["relation_type"] == "opposes"]
         findings = ExperimentFindingRepository.get_by_claim(claim_id)
