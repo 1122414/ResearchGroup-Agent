@@ -37,7 +37,9 @@ class ApprovalRequest(BaseModel):
     id: str
     run_id: str
     task_id: str | None = None
-    request_type: Literal["experiment_execute", "revision_required", "report_publish"]
+    request_type: Literal[
+        "experiment_execute", "revision_required", "report_publish", "research_loop_intervention"
+    ]
     status: Literal["pending", "approved", "rejected"] = "pending"
     title: str
     message: str = ""

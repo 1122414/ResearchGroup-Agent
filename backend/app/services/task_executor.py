@@ -16,6 +16,7 @@ from ..storage.repositories import (
 )
 from .agent_skill_service import agent_skill_service
 from .claim_entailment_service import claim_entailment_service
+from .collaborator_service import collaborator_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
 from .knowledge_graph_service import knowledge_graph_service
@@ -67,7 +68,6 @@ class TaskExecutor:
         system_prompt = prompt_loader.load(prompt_map.get(agent_type, "grad_researcher"))
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
-        collaboration_context = self._collaboration_context(task)
         contract_context = self._research_contract_context(task)
         literature_grounding = ""
         if evidence_bundle is not None:
@@ -85,6 +85,8 @@ class TaskExecutor:
 当前任务所需最少可核验来源数：{required_source_count}
 {research_integrity_service.render_allowed_sources(evidence_bundle["sources"], evidence_bundle["excerpts"])}
 """
+        collaborator_results = await collaborator_service.execute_all(task, literature_grounding)
+        collaboration_context = self._collaboration_context(task, collaborator_results)
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
 任务标题：{task_title}
@@ -203,7 +205,7 @@ class TaskExecutor:
         logger.info("[TaskExecutor] execute completed | task_id=%s | output_saved=%s", task.get("id"), f"out_{task['id']}")
         return result
 
-    def _collaboration_context(self, task: dict) -> str:
+    def _collaboration_context(self, task: dict, collaborator_results: list[dict] | None = None) -> str:
         """Surface SubAgent/collaborator results so the owner integrates them.
 
         Previously a SubAgent ran and its result was stored, but the owner's LLM
@@ -217,11 +219,14 @@ class TaskExecutor:
             if isinstance(sub.get("result"), (dict, list)) and sub.get("result")
         ]
         collaborators = task.get("collaborator_agents", []) or []
-        if not subagent_results and not collaborators:
+        if not subagent_results and not collaborators and not collaborator_results:
             return ""
         parts = ["【协作中间结果（必须整合，不得忽略）】"]
         if collaborators:
             parts.append(f"协作 Agent：{', '.join(str(item) for item in collaborators)}")
+        if collaborator_results:
+            parts.append("独立协作者的结构化产出（负责人必须检查冲突后再整合）：")
+            parts.append(json.dumps(collaborator_results, ensure_ascii=False, indent=2)[:8000])
         if subagent_results:
             parts.append("SubAgent 返回的中间结果：")
             parts.append(json.dumps(subagent_results, ensure_ascii=False, indent=2)[:4000])

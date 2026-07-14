@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,3 +91,21 @@ class Uncertainty(BaseModel):
     status: Literal["open", "resolved"] = "open"
     created_at: str
     resolved_at: str | None = None
+
+
+class ResearchActionContract(BaseModel):
+    id: str
+    round: int = Field(ge=1)
+    objective: str
+    target: dict[str, Any]
+    selected_tool: Literal["evidence_search", "experiment_runner", "result_analyzer"]
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    expected_observation: str
+    success_condition: str
+    failure_handling: str
+    budget: dict[str, float | int]
+    safety_level: Literal["low", "medium", "high"] = "low"
+    provenance: dict[str, Any]
+    fingerprint: str
+    expected_information_gain: float = Field(ge=0, le=1)
+    critic: dict[str, Any] = Field(default_factory=dict)

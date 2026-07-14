@@ -92,6 +92,25 @@ class RunExecutionService:
                     RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待下一轮研究任务完成")
                     return self.get_summary(run_id)
 
+            loop_snapshot = research_loop_service.snapshot(run_id)
+            if loop_snapshot["terminal_state"] in {"human_required", "incomplete"}:
+                approval_service.ensure_pending(
+                    run_id,
+                    "research_loop_intervention",
+                    "研究闭环尚未达到论文质量线",
+                    loop_snapshot["stop_reason"],
+                    payload={
+                        "terminal_state": loop_snapshot["terminal_state"],
+                        "required_actions": loop_snapshot["human_requirements"],
+                        "research_state": loop_snapshot["state"],
+                    },
+                )
+                run_event_service.emit(
+                    run_id, "research_loop.intervention_required", "research_loop", "需要人工补充研究条件",
+                    loop_snapshot["stop_reason"], payload={"terminal_state": loop_snapshot["terminal_state"]},
+                )
+                return self._pause_for_confirmation(run_id)
+
             # If every research task failed there is nothing to write a report
             # from. Finalize the run as failed instead of producing an empty
             # report or stalling.
@@ -377,6 +396,19 @@ class RunExecutionService:
         owner = task.get("owner_agent")
         if not owner:
             return
+        if str(task.get("title") or "").startswith("[循环R"):
+            usage = LLMUsageRepository.get_summary(run_id)
+            if (
+                usage["total_tokens"] >= settings.research_loop_max_tokens
+                or usage["total_cost_usd"] >= settings.research_loop_max_cost_usd
+            ):
+                reason = "研究循环预算已耗尽，动作未执行并转人工"
+                TaskRepository.update_status(task["id"], "failed", blocked_reason=reason)
+                run_event_service.emit(
+                    run_id, "research_loop.budget_blocked", "research_loop", "研究动作被预算硬门阻止",
+                    reason, task_id=task["id"], agent_id=owner, payload=usage,
+                )
+                return
         TaskRepository.update_status(task["id"], "running", blocked_reason=None)
         run_event_service.emit(run_id, "task.started", "execute", "任务开始执行", task.get("title", ""), task_id=task["id"], agent_id=owner)
         attempt = task_recovery_service.start_attempt(task)
@@ -389,7 +421,11 @@ class RunExecutionService:
                 self._assert_not_cancelled(run_id)
                 run_event_service.emit(run_id, "subagent.completed", "subagent", "SubAgent 已完成", "结果已返回给研究生 Agent", task_id=task["id"], agent_id=owner)
             latest_task = TaskRepository.get_by_id(task["id"]) or task
-            await task_executor.execute(latest_task)
+            execution = task_executor.execute(latest_task)
+            if str(task.get("title") or "").startswith("[循环R"):
+                await asyncio.wait_for(execution, timeout=settings.research_loop_action_timeout_seconds)
+            else:
+                await execution
             self._assert_not_cancelled(run_id)
             task_recovery_service.complete_attempt(task["id"], attempt["id"], checkpoint="task_output_created")
             run_event_service.emit(run_id, "task.output_created", "execute", "任务输出已生成", task.get("title", ""), task_id=task["id"], agent_id=owner)

@@ -321,10 +321,11 @@ class EvidencePipelineService:
 
     def _query_for_task(self, task: dict) -> str:
         root_task = self._root_task(task)
+        description = str(root_task.get("description") or "").split("## 研究动作契约（非检索词）", 1)[0]
         return " ".join(
             item
             for item in [
-                primary_goal(str(root_task.get("description") or "")),
+                primary_goal(description),
                 str(root_task.get("title") or ""),
             ]
             if item

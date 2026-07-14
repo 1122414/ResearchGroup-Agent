@@ -59,7 +59,11 @@ def test_collaboration_context_includes_subagent_results():
             "result": {"summary": "subagent contribution X", "findings": []},
         }
     )
-    context = task_executor._collaboration_context(task)
+    context = task_executor._collaboration_context(
+        task,
+        [{"collaborator_id": "grad_analyst", "output": {"summary": "independent critique Y"}}],
+    )
     assert "协作中间结果" in context
     assert "subagent contribution X" in context
     assert "grad_analyst" in context
+    assert "independent critique Y" in context

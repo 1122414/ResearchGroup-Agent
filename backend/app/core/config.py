@@ -205,8 +205,14 @@ class Settings(BaseSettings):
 
     # Research loop orchestration
     research_loop_auto_continue: bool = True
-    research_loop_max_auto_rounds: int = 1
+    research_loop_max_auto_rounds: int = 3
     research_loop_max_tasks_per_round: int = 3
+    research_loop_max_no_progress_rounds: int = 2
+    research_loop_min_information_gain: float = 0.05
+    research_loop_claim_coverage_target: float = 0.9
+    research_loop_max_tokens: int = 300000
+    research_loop_max_cost_usd: float = 20.0
+    research_loop_action_timeout_seconds: int = 900
 
     # Logging and artifacts
     log_level: str = "INFO"
