@@ -116,14 +116,19 @@ class ExperimentResultService:
             baseline = next((item for item in metrics.get("rows", []) if item.get("strategy") == "no_split"), {})
             best_mrr = float(best.get("mrr") or 0)
             baseline_mrr = float(baseline.get("mrr") or 0)
-            if best_mrr > baseline_mrr:
+            statistics_result = metrics.get("statistical_analysis") or {}
+            if (
+                best_mrr > baseline_mrr
+                and float(statistics_result.get("relative_effect") or 0) >= 0.05
+                and (statistics_result.get("confidence_interval_95") or [0])[0] > 0
+            ):
                 return (
                     "supports",
                     round(min(settings.experiment_support_base_confidence + (best_mrr - baseline_mrr), settings.experiment_support_max_confidence), 4),
                     "改进策略优于基线，实验结果支持当前假设",
                 )
-            if best_mrr == baseline_mrr:
-                return "weakens", settings.experiment_weaken_confidence, "改进策略未优于基线，实验结果削弱当前假设"
+            if best_mrr >= baseline_mrr:
+                return "weakens", settings.experiment_weaken_confidence, "改进未达到预注册最小效应或置信区间仍跨越零"
             return "rejects", settings.experiment_reject_confidence, "改进策略劣于基线，实验结果反驳当前假设"
 
         # Generic goal-driven contract (baseline_value vs treatment_value).

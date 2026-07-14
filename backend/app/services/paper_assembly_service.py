@@ -64,6 +64,10 @@ class PaperAssemblyService:
         uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
         experiment_results = ExperimentResultRepository.get_by_run(run_id)
         experiment_findings = ExperimentFindingRepository.get_by_run(run_id)
+        publishable_result_ids = {
+            item["id"] for item in experiment_results if (item.get("metrics") or {}).get("publishable") is True
+        }
+        experiment_findings = [item for item in experiment_findings if item.get("result_id") in publishable_result_ids]
 
         # Filter out hypotheses whose statement is just the raw goal prompt —
         # these get ingested when the LLM echoes the full instruction as a
@@ -257,7 +261,16 @@ class PaperAssemblyService:
             lines.append("")
             metrics = result.get("metrics") or {}
             if metrics.get("publishable") is False:
-                lines.append("> **不可用于论文结论：** 本实验使用合成演示数据，仅验证执行链路。")
+                lines.append("> **不可用于论文结论：** 数据、重复统计或独立复现门槛未全部通过。")
+                lines.append("")
+            stats = metrics.get("statistical_analysis") or {}
+            reproduction = metrics.get("reproduction") or {}
+            if stats:
+                lines.append(
+                    f"- 结果 ID：`{result['id']}`；重复 {stats.get('repeat_count', 0)} 次；"
+                    f"95% CI={stats.get('confidence_interval_95')}；相对效应={stats.get('relative_effect')}；"
+                    f"独立复现={'通过' if reproduction.get('passed') else '未通过'}。"
+                )
                 lines.append("")
             table = self._metrics_table(metrics)
             if table:
@@ -277,15 +290,17 @@ class PaperAssemblyService:
             return lines
         for claim in grounded_claims:
             lines.append(f"- ({claim['status']}) {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
-        findings_by_claim: dict[str, list[dict]] = {}
-        for finding in experiment_findings:
-            findings_by_claim.setdefault(finding.get("claim_id"), []).append(finding)
         if experiment_findings:
             lines.append("")
             lines.append("**实验 findings:**")
             lines.append("")
+            lines.append("| Result ID | 判定 | 置信度 | 结论 |")
+            lines.append("| --- | --- | ---: | --- |")
             for finding in experiment_findings:
-                lines.append(f"- {finding['relation_type']}（置信度 {round(finding.get('confidence', 0) * 100)}%）：{finding['statement']}")
+                lines.append(
+                    f"| `{finding['result_id']}` | {finding['relation_type']} | "
+                    f"{round(finding.get('confidence', 0) * 100)}% | {finding['statement']} |"
+                )
         lines.append("")
         return lines
 

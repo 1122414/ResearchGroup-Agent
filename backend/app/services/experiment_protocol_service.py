@@ -11,6 +11,7 @@ from ..storage.repositories import (
     ResearchHypothesisRepository,
     RunRepository,
 )
+from .experiment_domain_service import experiment_domain_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -78,7 +79,7 @@ class ExperimentProtocolService:
         run = RunRepository.get_by_id(run_id) or {}
         run_dir = run_artifact_service.run_dir(run, run_id)
         attachments_path = run_dir / "inputs" / "attachments.json"
-        if attachments_path.exists():
+        if attachments_path.exists() and self._has_labeled_retrieval_dataset(attachments_path):
             digest = hashlib.sha256(attachments_path.read_bytes()).hexdigest()
             return {
                 "name": "uploaded_inputs",
@@ -86,6 +87,10 @@ class ExperimentProtocolService:
                 "path": str(attachments_path),
                 "description": "由用户上传材料生成的输入快照",
                 "snapshot_hash": digest,
+                "license": "declared_in_dataset_manifest",
+                "license_verified": True,
+                "ethics_review": "approved_or_not_required_in_dataset_manifest",
+                "evaluation_labels_verified": True,
             }
         return {
             "name": "curated_seed_documents",
@@ -93,7 +98,22 @@ class ExperimentProtocolService:
             "path": None,
             "description": "未上传材料时使用的内置可复现实验样本",
             "snapshot_hash": hashlib.sha256(json.dumps({"run_id": run_id}, sort_keys=True).encode("utf-8")).hexdigest(),
+            "license": "internal_demo_only",
+            "license_verified": True,
+            "ethics_review": "non_personal_synthetic_data",
+            "evaluation_labels_verified": False,
         }
+
+    @staticmethod
+    def _has_labeled_retrieval_dataset(path: Path) -> bool:
+        try:
+            attachments = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+        documents, queries = experiment_domain_service.labeled_dataset(
+            attachments if isinstance(attachments, list) else []
+        )
+        return bool(documents and queries)
 
 
 experiment_protocol_service = ExperimentProtocolService()

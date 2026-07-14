@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -30,10 +31,17 @@ class ArtifactManifestService:
     def register(self, run_dir: Path, *, kind: str, path: str, metadata: dict | None = None) -> dict:
         manifest_path = self._path(run_dir)
         manifest = self.read(run_dir)
+        artifact_path = Path(path)
+        integrity = {}
+        if artifact_path.is_file():
+            integrity = {
+                "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+                "size_bytes": artifact_path.stat().st_size,
+            }
         entry = {
             "kind": kind,
             "path": path,
-            "metadata": metadata or {},
+            "metadata": {**(metadata or {}), **integrity},
             "registered_at": datetime.now().isoformat(),
         }
         if not any(item["path"] == path for item in manifest["artifacts"]):

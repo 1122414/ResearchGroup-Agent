@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -18,9 +19,11 @@ from ..storage.repositories import (
     RunRepository,
 )
 from .experiment_code_generator import experiment_code_generator
+from .experiment_domain_service import experiment_domain_service
 from .experiment_executor import experiment_executor_service
 from .experiment_protocol_service import experiment_protocol_service
 from .experiment_result_service import experiment_result_service
+from .experiment_statistics_service import experiment_statistics_service
 from .artifact_manifest_service import artifact_manifest_service
 from .run_artifact_service import run_artifact_service
 
@@ -29,18 +32,30 @@ class ReproducibleExperimentService:
     async def run_for_task(self, task: dict, agent_id: str) -> dict:
         run_id = task.get("run_id")
         run = RunRepository.get_by_id(run_id) if run_id else None
+        capability = experiment_domain_service.classify(task, run)
+        if not capability["supported"]:
+            return {
+                "summary": capability["reason"], "experiment_ran": False, "publishable": False,
+                "artifact_class": "unsupported", "unsupported_experiment_domain": True,
+                "experiment_domain": capability["domain"], "metrics": {}, "artifacts": [],
+                "next_steps": ["缩小课题到受支持实验域，或由人工提供领域实验模板与可信评测器。"],
+            }
         protocol = experiment_protocol_service.ensure_for_task(task)
         workspace = self._workspace(run, task, agent_id)
         data_dir = workspace / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
         input_path = data_dir / "input_documents.jsonl"
+        queries_path = data_dir / "evaluation_queries.json"
+        repeat_path = data_dir / "repeat_metrics.jsonl"
+        if repeat_path.exists():
+            repeat_path.unlink()
         script_path = workspace / "run_experiment.py"
-        artifact_class = self._write_input_documents(input_path, task, run)
+        artifact_class = self._write_input_documents(input_path, queries_path, task, run)
         script_source, generated = await self._resolve_script(task, run, protocol)
         script_path.write_text(script_source, encoding="utf-8")
 
-        plan = self._create_plan(task, agent_id, workspace, input_path, script_path, protocol)
+        plan = self._create_plan(task, agent_id, workspace, input_path, queries_path, script_path, protocol)
         experiment_run = self._create_run(task, protocol, plan, input_path)
         self._emit(task, plan["id"], "experiment.workspace_created", "实验研究生工作空间已创建", {"workspace": str(workspace)})
 
@@ -52,11 +67,25 @@ class ReproducibleExperimentService:
         summary_path = workspace / "summary.json"
         results_path = data_dir / "results.csv"
         metrics = self._read_metrics(summary_path)
-        metrics.update({"artifact_class": artifact_class, "publishable": artifact_class == "external"})
+        statistics_result = experiment_statistics_service.analyze(self._read_jsonl(repeat_path), metrics)
+        reproduction = self._reproduce(task, agent_id, workspace, input_path, queries_path, script_path, metrics)
+        metrics.update(
+            {
+                "artifact_class": artifact_class,
+                "trusted_evaluator": not generated,
+                "statistical_analysis": statistics_result,
+                "reproduction": reproduction,
+                "publishable": (
+                    artifact_class == "external" and not generated and statistics_result["passed"]
+                    and result.get("sandboxed") is True and reproduction["passed"] and reproduction["sandboxed"]
+                ),
+            }
+        )
         summary_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
         chart_path = workspace / "chart_data.json"
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
-        artifact_paths = [str(script_path), str(input_path), str(results_path), str(summary_path), str(chart_path)]
+        artifact_paths = [str(script_path), str(input_path), str(queries_path), str(repeat_path), str(results_path), str(summary_path), str(chart_path)]
+        artifact_paths.extend(reproduction.get("artifacts") or [])
         figure_path = workspace / "figure.png"
         has_figure = figure_path.exists()
         if has_figure:
@@ -95,6 +124,7 @@ class ReproducibleExperimentService:
             "script_path": str(script_path),
             "data_paths": {
                 "input_documents": str(input_path),
+                "evaluation_queries": str(queries_path),
                 "results_csv": str(results_path),
                 "summary_json": str(summary_path),
                 "chart_data_json": str(chart_path),
@@ -104,8 +134,10 @@ class ReproducibleExperimentService:
             "metrics": metrics,
             "artifact_class": artifact_class,
             "publishable": metrics["publishable"],
+            "experiment_domain": capability["domain"],
             "artifacts": artifact_paths,
             "execution": result,
+            "reproduction": reproduction,
             "next_steps": ["如需扩大实验规模，可替换 data/input_documents.jsonl 并重新运行 run_experiment.py。"],
         }
 
@@ -123,7 +155,10 @@ class ReproducibleExperimentService:
         safe_title = re.sub(r'[\\/:*?"<>|#`]+', "", str(task.get("title") or task.get("id") or "experiment_task")).strip()
         return run_artifact_service.run_dir(run, task.get("run_id")) / "workspaces" / agent_id / f"{task.get('id')}_{safe_title[:24]}"
 
-    def _create_plan(self, task: dict, agent_id: str, workspace: Path, input_path: Path, script_path: Path, protocol: dict) -> dict:
+    def _create_plan(
+        self, task: dict, agent_id: str, workspace: Path, input_path: Path,
+        queries_path: Path, script_path: Path, protocol: dict,
+    ) -> dict:
         now = datetime.now().isoformat()
         plan = {
             "id": f"exp_{uuid.uuid4().hex[:8]}",
@@ -135,9 +170,16 @@ class ReproducibleExperimentService:
             "workspace_dir": str(workspace),
             "files": [
                 {"path": str(input_path.relative_to(workspace)), "content": input_path.read_text(encoding="utf-8")},
+                {"path": str(queries_path.relative_to(workspace)), "content": queries_path.read_text(encoding="utf-8")},
                 {"path": str(script_path.relative_to(workspace)), "content": script_path.read_text(encoding="utf-8")},
             ],
-            "commands": [{"command": f"{sys.executable} {script_path.name}", "description": "运行实验脚本并生成 results.csv/summary.json"}],
+            "commands": [
+                {
+                    "command": f"{sys.executable} {script_path.name} --seed {index + 1}",
+                    "description": f"固定种子 bootstrap 重复 {index + 1}",
+                }
+                for index in range(max(int(settings.experiment_repeat_runs), 1))
+            ],
             "env_vars": {},
             "risk_level": "safe",
             "risk_reasons": [],
@@ -164,6 +206,8 @@ class ReproducibleExperimentService:
             "command": plan["commands"][0]["command"] if plan.get("commands") else "",
             "dataset_snapshot": {
                 "input_documents": str(input_path),
+                "sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
+                "size_bytes": input_path.stat().st_size,
                 "datasets": protocol.get("datasets", []),
             },
             "started_at": None,
@@ -173,14 +217,70 @@ class ReproducibleExperimentService:
         ExperimentRunRepository.insert(item)
         return item
 
-    def _write_input_documents(self, path: Path, task: dict, run: dict | None) -> str:
+    def _reproduce(
+        self,
+        task: dict,
+        agent_id: str,
+        workspace: Path,
+        input_path: Path,
+        queries_path: Path,
+        script_path: Path,
+        original_metrics: dict,
+    ) -> dict:
+        now = datetime.now().isoformat()
+        reproduction_dir = workspace / "reproduction"
+        plan = {
+            "id": f"exp_reproduction_{uuid.uuid4().hex[:8]}", "run_id": task.get("run_id"),
+            "task_id": task.get("id"), "agent_id": agent_id, "title": "干净目录独立复现",
+            "objective": "在新工作目录复跑同一脚本与输入并比较主指标", "workspace_dir": str(reproduction_dir),
+            "files": [
+                {"path": "data/input_documents.jsonl", "content": input_path.read_text(encoding="utf-8")},
+                {"path": "data/evaluation_queries.json", "content": queries_path.read_text(encoding="utf-8")},
+                {"path": "run_experiment.py", "content": script_path.read_text(encoding="utf-8")},
+            ],
+            "commands": [{
+                "command": f"{sys.executable} run_experiment.py --seed {max(int(settings.experiment_repeat_runs), 1)}",
+                "description": "使用主实验末次固定种子独立复现",
+            }],
+            "env_vars": {}, "risk_level": "safe", "risk_reasons": [], "status": "approved",
+            "result": None, "artifacts": [], "created_at": now, "updated_at": now,
+            "approved_at": now, "approved_by": "run-level-human-approval",
+        }
+        ExperimentPlanRepository.insert(plan)
+        executed = experiment_executor_service.execute_plan(plan["id"])
+        reproduced = self._read_metrics(reproduction_dir / "summary.json")
+        original_value = self._primary_value(original_metrics)
+        reproduced_value = self._primary_value(reproduced)
+        delta = abs(original_value - reproduced_value) if original_value is not None and reproduced_value is not None else None
+        return {
+            "plan_id": plan["id"], "status": executed["status"], "metric_delta": delta,
+            "tolerance": settings.experiment_reproduction_tolerance,
+            "passed": executed["status"] == "completed" and delta is not None and delta <= settings.experiment_reproduction_tolerance,
+            "sandboxed": bool((executed.get("result") or {}).get("sandboxed")),
+            "artifacts": [
+                *(executed.get("artifacts") or []),
+                *([str(reproduction_dir / "summary.json")] if (reproduction_dir / "summary.json").exists() else []),
+            ],
+        }
+
+    @staticmethod
+    def _primary_value(metrics: dict) -> float | None:
+        best = metrics.get("best_strategy") or {}
+        value = best.get("mrr") if best else metrics.get("treatment_value")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _write_input_documents(self, path: Path, queries_path: Path, task: dict, run: dict | None) -> str:
         goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
         seed = goal or task.get("title", "research task")
-        documents = self._documents_from_uploads(run, task)
+        documents, queries = self._evaluation_dataset_from_uploads(run, task)
         if documents:
             with path.open("w", encoding="utf-8") as fh:
                 for item in documents:
                     fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+            queries_path.write_text(json.dumps(queries, ensure_ascii=False, indent=2), encoding="utf-8")
             return "external"
 
         documents = [
@@ -196,26 +296,34 @@ class ReproducibleExperimentService:
         with path.open("w", encoding="utf-8") as fh:
             for item in documents:
                 fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+        queries_path.write_text(
+            json.dumps(
+                [
+                    {"query": "固定长度切分 overlap 召回", "target_doc": "doc_chunk_overlap"},
+                    {"query": "不切分 长文档 粒度 粗", "target_doc": "doc_no_split"},
+                    {"query": "Top-3 Accuracy MRR 检索评估", "target_doc": "doc_metrics"},
+                    {"query": "实验 workspace 脚本 输入数据 结果表", "target_doc": "doc_agent"},
+                    {"query": "基线策略 对照 数据来源", "target_doc": "doc_baseline"},
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return "synthetic"
 
-    def _documents_from_uploads(self, run: dict | None, task: dict) -> list[dict]:
+    def _evaluation_dataset_from_uploads(self, run: dict | None, task: dict) -> tuple[list[dict], list[dict]]:
         if not run:
-            return []
+            return [], []
         run_dir = run_artifact_service.run_dir(run, task.get("run_id"))
         attachments_path = run_dir / "inputs" / "attachments.json"
         if not attachments_path.exists():
-            return []
+            return [], []
         try:
             items = json.loads(attachments_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            return []
-        documents: list[dict] = []
-        for index, item in enumerate(items, start=1):
-            text = str(item.get("extracted_markdown") or "").strip()
-            if not text:
-                continue
-            documents.append({"id": f"upload_{index}", "text": text})
-        return documents
+            return [], []
+        return experiment_domain_service.labeled_dataset(items if isinstance(items, list) else [])
 
     @staticmethod
     def _read_metrics(path: Path) -> dict:
@@ -225,6 +333,20 @@ class ReproducibleExperimentService:
             return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    def _read_jsonl(path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        rows: list[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                item = json.loads(line)
+                if isinstance(item, dict):
+                    rows.append(item)
+            except json.JSONDecodeError:
+                continue
+        return rows
 
     @staticmethod
     def _emit(task: dict, plan_id: str, event_type: str, title: str, payload: dict) -> None:
@@ -251,15 +373,19 @@ class ReproducibleExperimentService:
         return r'''import csv
 import json
 import math
+import random
 import re
+import sys
 from pathlib import Path
 
 
 DATA_DIR = Path("data")
 INPUT_PATH = DATA_DIR / "input_documents.jsonl"
+QUERIES_PATH = DATA_DIR / "evaluation_queries.json"
 RESULTS_PATH = DATA_DIR / "results.csv"
 SUMMARY_PATH = Path("summary.json")
 FIGURE_PATH = Path("figure.png")
+REPEAT_PATH = DATA_DIR / "repeat_metrics.jsonl"
 
 
 def plot_results(rows):
@@ -361,14 +487,12 @@ def evaluate(chunks, queries):
 
 
 def main():
+    seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else 1
     docs = load_documents()
-    queries = [
-        {"query": "固定长度切分 overlap 召回", "target_doc": "doc_chunk_overlap"},
-        {"query": "不切分 长文档 粒度 粗", "target_doc": "doc_no_split"},
-        {"query": "Top-3 Accuracy MRR 检索评估", "target_doc": "doc_metrics"},
-        {"query": "实验 workspace 脚本 输入数据 结果表", "target_doc": "doc_agent"},
-        {"query": "基线策略 对照 数据来源", "target_doc": "doc_baseline"},
-    ]
+    query_pool = json.loads(QUERIES_PATH.read_text(encoding="utf-8"))
+    if not query_pool:
+        raise ValueError("evaluation_queries.json must contain at least one labeled query")
+    queries = random.Random(seed).choices(query_pool, k=len(query_pool))
     strategies = ["no_split", "fixed_100_no_overlap", "fixed_100_overlap_30"]
     rows = []
     for strategy in strategies:
@@ -385,7 +509,18 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     best = max(rows, key=lambda row: (row["top3_accuracy"], row["mrr"], -row["chunk_count"]))
-    SUMMARY_PATH.write_text(json.dumps({"rows": rows, "best_strategy": best}, ensure_ascii=False, indent=2), encoding="utf-8")
+    SUMMARY_PATH.write_text(
+        json.dumps({"seed": seed, "evaluation": "bootstrap", "rows": rows, "best_strategy": best}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    baseline = next(row for row in rows if row["strategy"] == "no_split")
+    with REPEAT_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "metric_name": "mrr",
+            "seed": seed,
+            "baseline_value": baseline["mrr"],
+            "treatment_value": best["mrr"],
+        }, ensure_ascii=False) + "\n")
     plot_results(rows)
     print(f"experiment completed: {len(rows)} strategies, best={best['strategy']}")
 

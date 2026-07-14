@@ -176,6 +176,8 @@ class Settings(BaseSettings):
     experiment_execution_backend: str = "local"
     experiment_command_timeout_seconds: int = 300
     reproducible_experiment_timeout_seconds: int = 120
+    experiment_repeat_runs: int = 3
+    experiment_reproduction_tolerance: float = 1e-6
     experiment_max_output_chars: int = 20000
     experiment_allow_network: bool = False
     experiment_allow_package_install: bool = False

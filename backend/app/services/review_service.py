@@ -17,6 +17,10 @@ class ReviewService:
             latest.get("insufficient_evidence") or latest.get("integrity_blocked")
         ):
             return self._review_insufficient_evidence(task, latest)
+        if task.get("task_type") == "experiment_design" and not (
+            latest.get("reproducible_experiment") or {}
+        ).get("publishable"):
+            return self._review_nonpublishable_experiment(task, latest)
         system_prompt = prompt_loader.load("advisor_agent")
         user_prompt = f"""请作为导师 Agent 审核以下任务产出。
 任务标题：{task.get('title', '')}
@@ -89,6 +93,23 @@ class ReviewService:
             task.get("id"),
             average_score,
         )
+        self._persist_review(task, review)
+        return review
+
+    def _review_nonpublishable_experiment(self, task: dict, latest: dict) -> dict:
+        experiment = latest.get("reproducible_experiment") or {}
+        rubric = self._rubric_for_task("experiment_design")
+        reason = experiment.get("summary") or "实验未满足真实数据、统计重复与独立复现门槛。"
+        scores = self._score_task(task, {"approved": False}, rubric)
+        review = {
+            "approved": False,
+            "feedback": f"实验不可用于研究结论：{reason}",
+            "rubric": rubric,
+            "scores": scores,
+            "average_score": round(sum(scores.values()) / max(len(scores), 1), 4),
+            "requires_revision": True,
+            "review_mode": "nonpublishable_experiment_guardrail",
+        }
         self._persist_review(task, review)
         return review
 
@@ -195,12 +216,13 @@ class ReviewService:
             elif dimension == "method_mapping":
                 score = 1.0 if latest.get("methods_found") or latest.get("insufficient_evidence") else settings.review_missing_score
             elif dimension == "reproducibility":
-                score = 1.0 if latest.get("reproducible_experiment", {}).get("experiment_ran") else 0.4
+                score = 1.0 if latest.get("reproducible_experiment", {}).get("reproduction", {}).get("passed") else 0.0
             elif dimension == "baseline":
                 metrics = latest.get("reproducible_experiment", {}).get("metrics", {})
                 score = 1.0 if metrics.get("rows") else settings.review_missing_score
             elif dimension == "metrics":
-                score = 1.0 if latest.get("reproducible_experiment", {}).get("metrics") else settings.review_missing_score
+                stats = latest.get("reproducible_experiment", {}).get("metrics", {}).get("statistical_analysis", {})
+                score = 1.0 if stats.get("passed") else settings.review_missing_score
             elif dimension == "evidence":
                 if task.get("task_type") == "report_writing":
                     score = settings.review_report_evidence_score if latest else settings.review_default_rejected_score

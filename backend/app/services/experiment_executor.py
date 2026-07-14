@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import shutil
 import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -152,6 +156,8 @@ class ExperimentExecutorService:
 
     def _run_commands(self, workspace, plan: dict) -> dict:
         env = os.environ.copy()
+        env.update({"HOME": str(workspace), "MPLCONFIGDIR": str(workspace / ".mplconfig")})
+        (workspace / ".mplconfig").mkdir(exist_ok=True)
         env.update({str(key): str(value) for key, value in plan.get("env_vars", {}).items()})
         command_results: list[dict] = []
         started = time.perf_counter()
@@ -163,9 +169,21 @@ class ExperimentExecutorService:
             command = item["command"] if isinstance(item, dict) else str(item)
             command_started = time.perf_counter()
             try:
+                execution_command, shell, sandboxed = self._sandbox_command(command, workspace)
+                if not sandboxed:
+                    command_results.append(
+                        {
+                            "command": command, "exit_code": 126, "stdout": "",
+                            "stderr": "Execution sandbox is unavailable; command was not executed.",
+                            "elapsed_ms": 0, "sandboxed": False,
+                        }
+                    )
+                    final_exit = 126
+                    stderr_parts.append("Execution sandbox is unavailable; command was not executed.")
+                    break
                 proc = subprocess.run(
-                    command,
-                    shell=True,
+                    execution_command,
+                    shell=shell,
                     cwd=str(workspace),
                     env=env,
                     capture_output=True,
@@ -180,7 +198,10 @@ class ExperimentExecutorService:
                 stderr = self._truncate((exc.stderr or "") + "\nCommand timed out")
                 exit_code = 124
             elapsed_ms = int((time.perf_counter() - command_started) * 1000)
-            command_result = {"command": command, "exit_code": exit_code, "stdout": stdout, "stderr": stderr, "elapsed_ms": elapsed_ms}
+            command_result = {
+                "command": command, "exit_code": exit_code, "stdout": stdout, "stderr": stderr,
+                "elapsed_ms": elapsed_ms, "sandboxed": sandboxed,
+            }
             command_results.append(command_result)
             stdout_parts.append(stdout)
             stderr_parts.append(stderr)
@@ -194,7 +215,27 @@ class ExperimentExecutorService:
             "stderr": self._truncate("\n".join(stderr_parts)),
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "command_results": command_results,
+            "sandboxed": bool(command_results) and all(item.get("sandboxed") for item in command_results),
         }
+
+    @staticmethod
+    def _sandbox_command(command: str, workspace) -> tuple[str | list[str], bool, bool]:
+        if platform.system() != "Darwin" or not shutil.which("sandbox-exec"):
+            return command, True, False
+        runtime_root = str(Path(sys.executable).resolve().parent.parent)
+        venv_root = str(Path(sys.prefix).resolve())
+        profile = "".join(
+            [
+                "(version 1)(deny default)(allow process*)(allow sysctl-read)",
+                "(allow mach-lookup)(allow ipc*)",
+                "(allow file-read*)",
+                f'(deny file-read* (subpath "{Path.home()}"))',
+                f'(allow file-read* (subpath "{runtime_root}") (subpath "{venv_root}") (subpath "{workspace}"))',
+                f'(allow file-write* (subpath "{workspace}"))',
+                "(allow network*)" if settings.experiment_allow_network else "(deny network*)",
+            ]
+        )
+        return ["sandbox-exec", "-p", profile, "/bin/sh", "-lc", command], False, True
 
     def _write_artifacts(self, artifacts_dir, plan: dict, result: dict) -> list[str]:
         files = {

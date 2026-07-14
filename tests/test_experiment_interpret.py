@@ -24,6 +24,7 @@ def test_legacy_rag_contract_still_supported():
     metrics = {
         "best_strategy": {"strategy": "fixed_100_overlap_30", "mrr": 0.8, "top3_accuracy": 0.9},
         "rows": [{"strategy": "no_split", "mrr": 0.5}],
+        "statistical_analysis": {"relative_effect": 0.6, "confidence_interval_95": [0.2, 0.4]},
     }
     relation, _, _ = ExperimentResultService._interpret(metrics, "completed")
     assert relation == "supports"
