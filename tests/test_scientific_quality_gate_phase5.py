@@ -242,6 +242,47 @@ async def test_independent_reviewer_uses_deliverable_scope_for_system_design(mon
 
 
 @pytest.mark.asyncio
+async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"chapter is grounded"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchClaimRepository.get_by_run",
+        lambda _run_id: [{
+            "id": "claim_verified", "statement": "bounded pilot result",
+            "status": "supported", "evidence_ids": ["artifact_1"],
+        }],
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "chapter_1", "run_id": "run_1", "task_type": "thesis_chapter"},
+        {
+            "summary": "chapter", "claims": [{"statement": "duplicate writing claim"}],
+            "chapter": {"name": "Introduction", "sections": [{
+                "heading": "Scope", "paragraphs": [{
+                    "text": "complete chapter body", "support_ids": ["claim_verified"],
+                }],
+            }]},
+        },
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is True
+    assert '"chapter"' in prompts[0]
+    assert '"allowed_support"' in prompts[0]
+    assert "bounded pilot result" in prompts[0]
+    assert "不得声称章节正文或原始依据未提供" in prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_independent_reviewer_respects_frozen_evaluation_only_experiment(monkeypatch):
     prompts = []
 
