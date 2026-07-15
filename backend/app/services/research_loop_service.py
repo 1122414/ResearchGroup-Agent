@@ -42,6 +42,10 @@ class ResearchLoopService:
     EXPERIMENT_QUESTION_MARKERS = (
         "mrr", "ranking", "retrieval", "segmentation", "chunk", "排序", "检索", "分割", "切分", "重叠",
     )
+    SCOPE_OBJECT_MARKERS = ("dataset", "corpus", "sample", "domain", "数据集", "语料", "样本", "领域")
+    SCOPE_EXPANSION_MARKERS = (
+        "larger", "more diverse", "additional", "different", "更大", "更多样", "扩大", "其他", "不同",
+    )
 
     def snapshot(self, run_id: str) -> dict:
         state = self._state(run_id)
@@ -321,7 +325,10 @@ class ResearchLoopService:
 
     def _is_scope_boundary(self, text: str) -> bool:
         lowered = text.lower()
-        return any(marker in lowered for marker in self.SCOPE_BOUNDARY_MARKERS)
+        return any(marker in lowered for marker in self.SCOPE_BOUNDARY_MARKERS) or (
+            any(marker in lowered for marker in self.SCOPE_OBJECT_MARKERS)
+            and any(marker in lowered for marker in self.SCOPE_EXPANSION_MARKERS)
+        )
 
     @classmethod
     def _same_hypothesis(cls, left: dict, right: dict) -> bool:

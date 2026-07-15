@@ -111,6 +111,8 @@ def test_frozen_scope_limitations_do_not_trigger_research_loop():
     assert research_loop_service._actionable_high_uncertainties(uncertainties, True) == [uncertainties[2]]
     assert research_loop_service._is_scope_boundary("multi-domain benchmark domain mismatch") is True
     assert research_loop_service._is_scope_boundary("该结论在更大规模、更自然的语料上是否成立仍未知") is True
+    assert research_loop_service._is_scope_boundary("pilot的均匀效应是否在更大、更多样化的数据集上持续存在未知") is True
+    assert research_loop_service._is_scope_boundary("当前冻结数据集的输入哈希尚未核验") is False
 
 
 def test_supported_cross_language_hypothesis_is_not_retested():
