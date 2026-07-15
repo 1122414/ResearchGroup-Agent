@@ -64,6 +64,7 @@ class EvidencePipelineService:
         )
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in raw_sources])
         normalized = self._rank_by_relevance(normalized, " ".join(queries) or query)
+        normalized = self._prioritize_seed_sources(normalized)
         mode = "remote_provider" if normalized else "curated_fallback"
         if not normalized and settings.literature_curated_fallback_enabled:
             normalized = self._deduplicate_sources(
@@ -121,6 +122,14 @@ class EvidencePipelineService:
             source for source in EvidenceRepository.get_by_run(run_id)["sources"]
             if (source.get("metadata") or {}).get("origin") == "user_seed"
         ]
+
+    @staticmethod
+    def _prioritize_seed_sources(sources: list[dict]) -> list[dict]:
+        """Keep user-selected scholarly starting points ahead of result truncation."""
+        return sorted(
+            sources,
+            key=lambda source: (source.get("metadata") or {}).get("origin") != "user_seed",
+        )
 
     async def _gather(self, queries: list[str]) -> tuple[list[dict], list[dict], int]:
         sources: list[dict] = []

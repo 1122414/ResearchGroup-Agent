@@ -135,3 +135,16 @@ def test_seed_sources_are_reintroduced_into_each_run_search():
     result = evidence_pipeline_service._seed_sources(run_id)
 
     assert [item["id"] for item in result] == ["seed_source_one"]
+
+
+def test_seed_sources_are_kept_ahead_of_result_truncation():
+    ranked = [
+        {"id": "search_1", "metadata": {"provider": "crossref"}},
+        {"id": "seed_1", "metadata": {"origin": "user_seed"}},
+        {"id": "search_2", "metadata": {"provider": "arxiv"}},
+        {"id": "seed_2", "metadata": {"origin": "user_seed"}},
+    ]
+
+    result = evidence_pipeline_service._prioritize_seed_sources(ranked)
+
+    assert [item["id"] for item in result] == ["seed_1", "seed_2", "search_1", "search_2"]
