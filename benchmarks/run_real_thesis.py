@@ -23,6 +23,33 @@ WORLD_BANK_COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per
 WORLD_BANK_LICENSE_URL = "https://datacatalog.worldbank.org/public-licenses"
 AUTO_APPROVALS = {"research_contract_freeze", "experiment_execute", "report_publish"}
 
+ENGINEERING_SEED_SOURCES = [
+    {
+        "title": "Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models",
+        "year": 2024, "venue": "arXiv", "url": "https://arxiv.org/abs/2409.04701",
+    },
+    {
+        "title": "Document Segmentation Matters for Long-Document Retrieval",
+        "year": 2025, "venue": "Findings of ACL", "doi": "10.18653/v1/2025.findings-acl.422",
+        "url": "https://aclanthology.org/2025.findings-acl.422/",
+    },
+    {
+        "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+        "year": 2020, "venue": "EMNLP", "doi": "10.18653/v1/2020.emnlp-main.550",
+        "url": "https://aclanthology.org/2020.emnlp-main.550/",
+    },
+    {
+        "title": "Grounding Language Model with Chunking-Free In-Context Retrieval",
+        "year": 2024, "venue": "ACL", "doi": "10.18653/v1/2024.acl-long.71",
+        "url": "https://aclanthology.org/2024.acl-long.71/",
+    },
+    {
+        "title": "Question-Based Retrieval using Atomic Units for Enterprise RAG",
+        "year": 2024, "venue": "FEVER", "doi": "10.18653/v1/2024.fever-1.25",
+        "url": "https://aclanthology.org/2024.fever-1.25/",
+    },
+]
+
 
 def fetch_json(url: str) -> object:
     req = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
@@ -224,6 +251,7 @@ def create_case(base_url: str, case: str) -> str:
     goal = contract["primary_question"] + " Produce the complete dissertation only within the frozen contract and attached data."
     created = request(base_url, "POST", "/runs", {
         "research_goal": goal,
+        "seed_sources": ENGINEERING_SEED_SOURCES if case == "engineering" else [],
         "attachments": [{
             "name": name, "mime_type": "application/json", "size": len(raw),
             "data_url": "data:application/json;base64," + encoded,

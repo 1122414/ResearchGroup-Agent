@@ -45,6 +45,13 @@ class EvidencePipelineService:
             queries = [query] if query else []
 
         raw_sources, attempts, browser_count = await self._gather(queries)
+        seed_sources = self._seed_sources(task.get("run_id"))
+        raw_sources.extend(seed_sources)
+        if seed_sources:
+            attempts.append({
+                "provider": "user_seed", "kind": "seed", "enabled": True,
+                "result_count": len(seed_sources), "error": None, "query": query,
+            })
         protocol_id = self._record_search_protocol(task, queries, attempts)
         self._record_search_runs(task, protocol_id, attempts)
         self._emit_search_trace(
@@ -105,6 +112,15 @@ class EvidencePipelineService:
             "search_metrics": search_metrics,
             **persisted,
         }
+
+    @staticmethod
+    def _seed_sources(run_id: str | None) -> list[dict]:
+        if not run_id:
+            return []
+        return [
+            source for source in EvidenceRepository.get_by_run(run_id)["sources"]
+            if (source.get("metadata") or {}).get("origin") == "user_seed"
+        ]
 
     async def _gather(self, queries: list[str]) -> tuple[list[dict], list[dict], int]:
         sources: list[dict] = []

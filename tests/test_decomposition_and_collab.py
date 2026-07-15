@@ -95,6 +95,24 @@ def test_contract_references_tolerate_provider_arrays():
     assert task_decomposer._known_or_default([], {"h1"}) == "h1"
 
 
+def test_complete_workflow_adds_only_missing_thesis_roles():
+    original = [{
+        "title": "设计", "task_type": "system_design",
+        "subquestion_id": "sq1", "hypothesis_id": "h1",
+    }]
+    result = task_decomposer._ensure_complete_workflow(
+        original, {"methodology_profile": {"family": "computational"}}, "paper",
+    )
+    task_types = [item["task_type"] for item in result]
+
+    assert task_types.count("system_design") == 1
+    assert task_types.count("literature_survey") == 1
+    assert task_types.count("experiment_design") == 1
+    assert task_types.count("result_analysis") == 1
+    assert task_types.count("report_writing") == 1
+    assert all(item.get("subquestion_id") == "sq1" for item in result[1:])
+
+
 @pytest.mark.asyncio
 async def test_survey_decomposition_drops_experiments_and_seeds_hypothesis():
     run_id = f"run_dec_{uuid.uuid4().hex[:6]}"

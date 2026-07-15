@@ -115,6 +115,7 @@ class TaskDecomposer:
             tasks_data = self._normalize_inverted_experiment_roles(tasks_data)
             tasks_data = self._normalize_supported_retrieval_tasks(tasks_data, research_goal, contract or {})
             tasks_data = self._respect_methodology_capability(tasks_data, brief)
+        tasks_data = self._ensure_complete_workflow(tasks_data, brief, mode)
         if not contract:
             self._seed_hypotheses(research_goal, run_id, mode)
         logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | mode=%s | tasks=%d", run_id, mode, len(tasks_data))
@@ -343,6 +344,66 @@ class TaskDecomposer:
                     "仅接收用户上传或经审计外部执行返回的真实材料，生成逐文件来源、授权、SHA-256、"
                     "收集日志与完整性清单；缺失材料时必须失败，不得由 LLM 补造。"
                 )
+        return tasks
+
+    @staticmethod
+    def _ensure_complete_workflow(tasks: list[dict], brief: dict, mode: str) -> list[dict]:
+        """Add only missing research roles so stochastic decomposition cannot omit the thesis."""
+        present = {item.get("task_type") for item in tasks}
+        family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
+        template = tasks[0] if tasks else {}
+
+        def add(task_type: str, title: str, description: str, skills: dict) -> None:
+            if task_type in present:
+                return
+            tasks.append({
+                "title": title,
+                "description": description,
+                "task_type": task_type,
+                "priority": 8,
+                "complexity": 6,
+                "decomposability": 4,
+                "required_skills": skills,
+                "subquestion_id": template.get("subquestion_id"),
+                "hypothesis_id": template.get("hypothesis_id"),
+                "milestone_key": TaskDecomposer._default_milestone(task_type),
+            })
+            present.add(task_type)
+
+        add(
+            "literature_survey", "核验并综合相关文献",
+            "检索、筛选并阅读全文证据，形成逐来源可追溯的综合；不得引用未核验或未取得正文的文献。",
+            {"literature_review": 9, "academic_writing": 6},
+        )
+        if not present.intersection({"research_design", "system_design"}):
+            add(
+                "research_design", "冻结研究方法与分析计划",
+                "依据 Research Contract 冻结研究设计、材料、分析方法、质量控制、停止规则和偏离处理。",
+                {"experiment": 7, "data_analysis": 7, "academic_writing": 5},
+            )
+        if mode != "survey" and not present.intersection({"data_acquisition", "experiment_design"}):
+            task_type = "experiment_design" if family == "computational" else "data_acquisition"
+            add(
+                task_type,
+                "执行冻结实验并生成可复现产物" if task_type == "experiment_design" else "获取并冻结真实研究材料",
+                (
+                    "严格执行冻结协议，保存原始结果、环境、统计分析、哈希和独立复现记录。"
+                    if task_type == "experiment_design" else
+                    "仅登记真实上传或外部返回的研究材料、来源、授权与哈希；缺失材料时停止。"
+                ),
+                {"experiment": 9, "coding": 8, "data_analysis": 7} if task_type == "experiment_design"
+                else {"experiment": 7, "data_analysis": 6},
+            )
+        add(
+            "result_analysis", "分析结果并回答研究问题",
+            "只依据已核验文献与真实研究产物完成契约指定分析，报告不确定性、反证与有效性边界。",
+            {"data_analysis": 9, "academic_writing": 7},
+        )
+        add(
+            "report_writing", "撰写并校验完整学位论文",
+            "按已确认的院校规范整合完整论文；每项实质主张须链接证据或真实产物，并通过引用、字数和章节门禁。",
+            {"academic_writing": 10, "literature_review": 8, "data_analysis": 7},
+        )
         return tasks
 
     @staticmethod

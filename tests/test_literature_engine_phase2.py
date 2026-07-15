@@ -117,3 +117,21 @@ def test_deduplication_uses_normalized_title_and_author_when_ids_missing():
         {"title": "A Study of RAG", "authors": "A Author", "metadata": {}},
     ]
     assert len(evidence_pipeline_service._deduplicate_sources(sources)) == 1
+
+
+def test_seed_sources_are_reintroduced_into_each_run_search():
+    run_id = f"run_seed_{uuid.uuid4().hex[:8]}"
+    EvidenceRepository.upsert_source({
+        "id": "seed_source_one", "run_id": run_id, "task_id": None,
+        "title": "Verified Seed", "url": "https://example.test/seed",
+        "metadata": {"origin": "user_seed"}, "created_at": "2026-07-15T00:00:00",
+    })
+    EvidenceRepository.upsert_source({
+        "id": "ordinary_source", "run_id": run_id, "task_id": None,
+        "title": "Ordinary", "url": "https://example.test/ordinary",
+        "metadata": {}, "created_at": "2026-07-15T00:00:00",
+    })
+
+    result = evidence_pipeline_service._seed_sources(run_id)
+
+    assert [item["id"] for item in result] == ["seed_source_one"]
