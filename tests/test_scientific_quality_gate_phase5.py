@@ -271,6 +271,37 @@ async def test_independent_reviewer_respects_frozen_evaluation_only_experiment(m
     assert "不得仅因样本小而要求擅自扩大" in prompts[0]
 
 
+@pytest.mark.asyncio
+async def test_result_analysis_reviewer_sees_deliverable_and_cannot_rewrite_experiment(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"bounded interpretation is sufficient"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_analysis", "run_id": "run_1", "task_type": "result_analysis"},
+        {
+            "claims": [{"statement": "均匀效应可能源于同构构造，仅限冻结 pilot。"}],
+            "analysis_artifact": {"limitations": ["禁止外推"]},
+            "reproducible_experiment": {
+                "metrics": {"benchmark_design": {"kind": "controlled pilot"}},
+            },
+        },
+        {"excerpts": []},
+    )
+    assert result["approved"] is True
+    assert '"deliverable"' in prompts[0]
+    assert "不可由分析任务改写" in prompts[0]
+    assert "不能要求改写上游实验工件" in prompts[0]
+
+
 def test_independent_reviewer_normalizes_harmless_field_drift():
     value = independent_reviewer_service._compact_review({
         "approved": False,

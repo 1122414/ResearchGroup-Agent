@@ -110,6 +110,7 @@ def test_result_analysis_reviewer_uses_artifact_not_literature_passage():
     assert "raw_results_sha256" in scope
     assert "逐 query" in scope
     assert "零方差区间可以成立" in scope
+    assert "不能要求改写上游实验工件" in scope
 
 
 def test_report_reviewer_accepts_markdown_findings_and_frozen_protocol():

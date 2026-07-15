@@ -103,6 +103,10 @@ class IndependentReviewerService:
         elif task.get("task_type") == "literature_survey":
             review_scope = self._literature_review_scope()
         elif task.get("task_type") == "result_analysis":
+            # The reviewer must see the analyst's actual interpretation.  The
+            # experiment artifact is immutable upstream evidence, so requiring
+            # an analyst revision to rewrite it creates an impossible loop.
+            payload["deliverable"] = deliverable
             review_scope = self._result_analysis_review_scope()
         else:
             review_scope = (
@@ -202,8 +206,11 @@ class IndependentReviewerService:
             "只要 provenance 含 protocol_id、raw_results、raw_results_sha256，passages 为空是正确的，"
             "不得要求文献 passage，也不得要求伪造 passage。应核验 experiment 中的逐 query 结果、"
             "paired_query_metric_deltas、bootstrap 抽样单位/种子/次数、预注册对应关系和复现状态。"
-            "若查询级差值确实全部相同，零方差区间可以成立；检查 benchmark_design 是否说明同构构造，"
-            "并要求报告该限制，不得仅因区间退化而机械拒绝。结论必须限制在冻结受控 pilot。"
+            "若查询级差值确实全部相同，零方差区间可以成立。benchmark_design 是不可由分析任务改写的"
+            "上游冻结工件；只要它提供构造事实，且 deliverable 的 claims、findings、risks、uncertainties "
+            "或 analysis_artifact 任一处已等价说明均匀效应可能源于同构构造、并把结论限制在冻结 pilot，"
+            "就不得要求把同一句话写回 benchmark_design，也不得仅因区间退化而机械拒绝。"
+            "required_change 只能指向分析任务可修改的 deliverable 字段，不能要求改写上游实验工件。"
         )
 
     @staticmethod
