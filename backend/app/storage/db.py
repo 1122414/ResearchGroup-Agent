@@ -572,6 +572,14 @@ def init_db():
         "failure_criteria": "TEXT DEFAULT '[]'",
         "approval_status": "TEXT DEFAULT 'draft'",
         "validation_errors": "TEXT DEFAULT '[]'",
+        "discipline": "TEXT DEFAULT '{}'",
+        "methodology_family": "TEXT DEFAULT ''",
+        "epistemic_mode": "TEXT DEFAULT ''",
+        "methodology_profile": "TEXT DEFAULT '{}'",
+        "resource_plan": "TEXT DEFAULT '[]'",
+        "ethics_plan": "TEXT DEFAULT '{}'",
+        "thesis_requirements": "TEXT DEFAULT '{}'",
+        "feasibility_assessment": "TEXT DEFAULT '{}'",
     })
 
     _ensure_columns(conn, "research_hypotheses", {

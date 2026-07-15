@@ -13,6 +13,7 @@ from ..storage.repositories import (
     ResearchHypothesisRepository,
     ResearchMilestoneRepository,
 )
+from .research_methodology_service import research_methodology_service
 
 
 class ResearchContractService:
@@ -20,6 +21,10 @@ class ResearchContractService:
 
     MILESTONES = (
         ("framing_frozen", "研究边界已冻结", ["研究问题、范围和完成判据已确认"]),
+        ("methodology_frozen", "方法论路线已冻结", ["学科、认识论模式、研究设计与质量判据已确认"]),
+        ("resources_ready", "研究资源已就绪", ["必需数据、设备、参与者或语料均已有可审计来源"]),
+        ("ethics_cleared", "伦理与合规已放行", ["无需审批或已提供有效审批与使用边界"]),
+        ("thesis_requirements_frozen", "学位论文规范已冻结", ["院校、专业、篇幅、章节与引文规范已确认"]),
         ("search_protocol_frozen", "检索协议已冻结", ["数据库、检索式和纳排标准已版本化"]),
         ("evidence_sufficient", "证据充分性达标", ["关键主张均有合格 passage 支撑"]),
         ("experiment_protocol_frozen", "实验协议已冻结", ["数据、基线、指标和停止条件已确认"]),
@@ -30,7 +35,10 @@ class ResearchContractService:
     SCHEMA = {
         "type": "object",
         "properties": {
-            "research_type": {"type": "string", "enum": ["empirical", "survey", "design", "mixed"]},
+            "research_type": {
+                "type": "string",
+                "enum": ["empirical", "survey", "design", "mixed", "interpretive", "theoretical"],
+            },
             "primary_question": {"type": "string"},
             "objective": {"type": "string"},
             "subquestions": {
@@ -51,6 +59,89 @@ class ResearchContractService:
             "ethics_risks": {"type": "array", "items": {"type": "string"}},
             "success_criteria": {"type": "array", "items": {"type": "string"}},
             "failure_criteria": {"type": "array", "items": {"type": "string"}},
+            "discipline": {
+                "type": "object",
+                "properties": {
+                    "broad_field": {"type": "string"}, "field": {"type": "string"},
+                    "subfield": {"type": "string"},
+                },
+                "required": ["broad_field", "field", "subfield"],
+            },
+            "methodology_profile": {
+                "type": "object",
+                "properties": {
+                    "family": {
+                        "type": "string",
+                        "enum": [
+                            "quantitative", "qualitative", "computational", "experimental",
+                            "systematic_review", "humanities", "theoretical", "design_science", "mixed_methods",
+                        ],
+                    },
+                    "epistemic_mode": {
+                        "type": "string",
+                        "enum": [
+                            "hypothesis_testing", "estimation", "exploration", "interpretation",
+                            "evidence_synthesis", "proof_construction", "artifact_evaluation", "theory_building",
+                        ],
+                    },
+                    "study_design": {"type": "string"}, "unit_of_analysis": {"type": "string"},
+                    "evidence_types": {"type": "array", "items": {"type": "string"}},
+                    "data_collection_methods": {"type": "array", "items": {"type": "string"}},
+                    "analysis_methods": {"type": "array", "items": {"type": "string"}},
+                    "quality_criteria": {"type": "array", "items": {"type": "string"}},
+                    "component_methods": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "family", "epistemic_mode", "study_design", "unit_of_analysis", "evidence_types",
+                    "data_collection_methods", "analysis_methods", "quality_criteria", "component_methods",
+                ],
+            },
+            "resource_plan": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "resource_type": {"type": "string"}, "description": {"type": "string"},
+                        "required": {"type": "boolean"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["available", "missing", "requires_human", "pending_verification", "not_required"],
+                        },
+                        "owner": {"type": "string"}, "evidence": {"type": "string"},
+                        "resolution": {"type": "string"},
+                    },
+                    "required": [
+                        "resource_type", "description", "required", "status", "owner", "evidence", "resolution",
+                    ],
+                },
+            },
+            "ethics_plan": {
+                "type": "object",
+                "properties": {
+                    "required": {"type": "boolean"},
+                    "status": {"type": "string", "enum": ["not_required", "pending", "approved", "rejected"]},
+                    "review_body": {"type": "string"}, "approval_reference": {"type": "string"},
+                    "data_sensitivity": {"type": "string"},
+                    "participant_risks": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "required", "status", "review_body", "approval_reference", "data_sensitivity", "participant_risks",
+                ],
+            },
+            "thesis_requirements": {
+                "type": "object",
+                "properties": {
+                    "degree_level": {"type": "string"}, "institution": {"type": "string"},
+                    "programme": {"type": "string"}, "language": {"type": "string"},
+                    "citation_style": {"type": "string"}, "target_word_count": {"type": "integer"},
+                    "required_chapters": {"type": "array", "items": {"type": "string"}},
+                    "status": {"type": "string", "enum": ["confirmed", "pending", "not_provided"]},
+                },
+                "required": [
+                    "degree_level", "institution", "programme", "language", "citation_style",
+                    "target_word_count", "required_chapters", "status",
+                ],
+            },
             "hypotheses": {
                 "type": "array",
                 "items": {
@@ -72,24 +163,34 @@ class ResearchContractService:
         "required": [
             "research_type", "primary_question", "objective", "subquestions", "scope_in", "scope_out",
             "target_domain", "constraints", "expected_contribution", "novelty_criteria", "data_availability",
-            "ethics_risks", "success_criteria", "failure_criteria", "hypotheses",
+            "ethics_risks", "success_criteria", "failure_criteria", "discipline", "methodology_profile",
+            "resource_plan", "ethics_plan", "thesis_requirements", "hypotheses",
         ],
     }
 
     async def ensure_contract(self, run: dict) -> dict:
         existing = ResearchBriefRepository.get_by_run(run["id"])
         if existing and existing.get("subquestions"):
-            errors = self.validate(existing, ResearchHypothesisRepository.get_by_run(run["id"]))
-            return {"brief": existing, "hypotheses": ResearchHypothesisRepository.get_by_run(run["id"]), "errors": errors, "ready": not errors}
+            hypotheses = ResearchHypothesisRepository.get_by_run(run["id"])
+            errors = self.validate(existing, hypotheses)
+            assessment = research_methodology_service.assess(existing)
+            blockers = [*errors, *self._blocker_messages(assessment)]
+            return {
+                "brief": existing, "hypotheses": hypotheses, "errors": blockers,
+                "assessment": assessment, "ready": not blockers,
+            }
 
         contract = await self._generate(run)
         errors = self.validate(contract, contract.get("hypotheses") or [])
-        self._persist(run["id"], contract, errors)
+        assessment = research_methodology_service.assess(contract)
+        blockers = [*errors, *self._blocker_messages(assessment)]
+        self._persist(run["id"], contract, blockers, assessment)
         return {
             "brief": ResearchBriefRepository.get_by_run(run["id"]),
             "hypotheses": ResearchHypothesisRepository.get_by_run(run["id"]),
-            "errors": errors,
-            "ready": not errors,
+            "errors": blockers,
+            "assessment": assessment,
+            "ready": not blockers,
         }
 
     async def _generate(self, run: dict) -> dict:
@@ -101,8 +202,12 @@ class ResearchContractService:
 用户目标：
 {goal}
 
-要求：明确不研究什么；给出 2-5 个带稳定 id 的子问题；成功与失败判据必须可检查；
-每个假设都必须包含基线、主指标、最小效应和可直接判伪的条件。不要假定尚未获得的数据或证据已经存在。
+要求：明确学科、方法族和认识论模式，不得把所有课题强行改写为计算实验；明确不研究什么；
+给出 2-5 个带稳定 id 的子问题；成功与失败判据必须可检查。仅在假设检验、估计或
+artifact evaluation 适用时给出假设；解释性、人文、理论证明和证据综合课题可以不设统计假设。
+逐项声明数据、设备、实验室、受试者、语料、软件与专业人员等资源的真实状态；缺失、待核验或
+需要人类执行时必须如实标记，不能为了让流程通过而写成 available。伦理审批与院校硕士论文规范
+分别建模；不要假定尚未获得的数据、审批、资源、证据或院校规范已经存在。
 """
         llm = create_llm_provider()
         attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 1) + 1
@@ -154,6 +259,36 @@ class ResearchContractService:
             "ethics_risks": ["不扩展使用范围；不包含受试者或个人数据"],
             "success_criteria": ["三次以上固定种子运行、统计区间、artifact hash 和干净目录复现均通过"],
             "failure_criteria": ["最小效应未达到、区间跨零、artifact 不完整或独立复现超出容差"],
+            "discipline": {
+                "broad_field": "engineering", "field": "computer_science", "subfield": "information_retrieval",
+            },
+            "methodology_profile": {
+                "family": "computational", "epistemic_mode": "hypothesis_testing",
+                "study_design": "controlled paired benchmark", "unit_of_analysis": "query",
+                "evidence_types": ["verified literature passages", "query-level retrieval results"],
+                "data_collection_methods": ["frozen user-supplied benchmark execution"],
+                "analysis_methods": ["paired query bootstrap", "ablation", "independent reproduction"],
+                "quality_criteria": ["construct validity", "reproducibility", "external-validity disclosure"],
+                "component_methods": [],
+            },
+            "resource_plan": [{
+                "resource_type": "licensed_labeled_dataset",
+                "description": "带 query/qrel、许可和伦理声明的冻结数据快照",
+                "required": True, "status": "available", "owner": "user",
+                "evidence": "运行附件快照", "resolution": "保持哈希冻结并仅在声明范围内使用",
+            }],
+            "ethics_plan": {
+                "required": False, "status": "not_required", "review_body": "",
+                "approval_reference": "", "data_sensitivity": "non-personal controlled benchmark",
+                "participant_risks": [],
+            },
+            "thesis_requirements": {
+                "degree_level": "master", "institution": "", "programme": "",
+                "language": "zh-CN", "citation_style": "GB/T 7714",
+                "target_word_count": 30000,
+                "required_chapters": ["引言", "相关工作", "方法", "实验", "结果", "讨论", "结论"],
+                "status": "not_provided",
+            },
             "hypotheses": [{
                 "statement": "固定长度重叠切分的 MRR 相对整文档不切分基线提高至少 5%",
                 "rationale": "由用户明确要求比较的预注册候选假设，不视为既有事实",
@@ -178,8 +313,13 @@ class ResearchContractService:
         for field in ("target_domain", "expected_contribution", "data_availability"):
             if not str(brief.get(field) or "").strip():
                 errors.append(f"{field} 不能为空")
-        if not isinstance(hypotheses, list) or not hypotheses:
-            errors.append("至少需要 1 个可证伪假设")
+        errors.extend(research_methodology_service.validate(brief))
+        epistemic_mode = (brief.get("methodology_profile") or {}).get("epistemic_mode")
+        hypothesis_required = epistemic_mode in {"hypothesis_testing", "estimation", "artifact_evaluation"}
+        if hypothesis_required and (not isinstance(hypotheses, list) or not hypotheses):
+            errors.append(f"{epistemic_mode} 至少需要 1 个可检验假设")
+        if hypotheses is not None and not isinstance(hypotheses, list):
+            errors.append("hypotheses 必须是数组")
         for index, hypothesis in enumerate(hypotheses if isinstance(hypotheses, list) else []):
             if not isinstance(hypothesis, dict):
                 errors.append(f"hypothesis[{index}] 必须是对象")
@@ -189,7 +329,14 @@ class ResearchContractService:
                     errors.append(f"hypothesis[{index}].{field} 不能为空")
         return errors
 
-    def _persist(self, run_id: str, contract: dict, errors: list[str]) -> None:
+    @staticmethod
+    def _blocker_messages(assessment: dict) -> list[str]:
+        return [
+            f"feasibility:{item.get('code')}:{item.get('resource_type', '')}:{item.get('resolution', '')}"
+            for item in assessment.get("research_blockers") or []
+        ]
+
+    def _persist(self, run_id: str, contract: dict, errors: list[str], assessment: dict | None = None) -> None:
         now = datetime.now().isoformat()
         ResearchBriefRepository.update(
             run_id,
@@ -208,7 +355,16 @@ class ResearchContractService:
             ethics_risks=contract.get("ethics_risks") or [],
             success_criteria=contract.get("success_criteria") or [],
             failure_criteria=contract.get("failure_criteria") or [],
-            approval_status="needs_revision" if errors else "draft",
+            discipline=contract.get("discipline") or {},
+            methodology_family=(contract.get("methodology_profile") or {}).get("family", ""),
+            epistemic_mode=(contract.get("methodology_profile") or {}).get("epistemic_mode", ""),
+            methodology_profile=contract.get("methodology_profile") or {},
+            resource_plan=contract.get("resource_plan") or [],
+            ethics_plan=contract.get("ethics_plan") or {},
+            thesis_requirements=contract.get("thesis_requirements") or {},
+            feasibility_assessment=assessment or research_methodology_service.assess(contract),
+            approval_status="blocked_resources" if any(str(error).startswith("feasibility:") for error in errors)
+            else ("needs_revision" if errors else "draft"),
             validation_errors=errors,
             status="draft",
             updated_at=now,
@@ -241,22 +397,38 @@ class ResearchContractService:
         ResearchMilestoneRepository.replace_for_run(run_id, milestones)
 
     def freeze(self, run_id: str) -> dict:
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        assessment = research_methodology_service.assess(brief)
+        blockers = self.validate(brief, ResearchHypothesisRepository.get_by_run(run_id))
+        blockers.extend(self._blocker_messages(assessment))
+        if blockers:
+            raise ValueError("研究契约尚不可冻结：" + "；".join(blockers))
         now = datetime.now().isoformat()
         ResearchBriefRepository.update(run_id, approval_status="frozen", status="frozen", updated_at=now)
         milestones = ResearchMilestoneRepository.get_by_run(run_id)
-        framing = next((item for item in milestones if item["milestone_key"] == "framing_frozen"), None)
-        if framing:
-            ResearchMilestoneRepository.update(framing["id"], status="passed", completed_at=now, updated_at=now)
+        passed_keys = {"framing_frozen", "methodology_frozen", "resources_ready"}
+        ethics = brief.get("ethics_plan") or {}
+        thesis = brief.get("thesis_requirements") or {}
+        if ethics.get("status") in {"approved", "not_required"}:
+            passed_keys.add("ethics_cleared")
+        if thesis.get("status") == "confirmed":
+            passed_keys.add("thesis_requirements_frozen")
+        for milestone in milestones:
+            if milestone["milestone_key"] in passed_keys:
+                ResearchMilestoneRepository.update(milestone["id"], status="passed", completed_at=now, updated_at=now)
         return ResearchBriefRepository.get_by_run(run_id) or {}
 
     def revise(self, run_id: str, contract: dict) -> dict:
         errors = self.validate(contract, contract.get("hypotheses") or [])
-        self._persist(run_id, contract, errors)
+        assessment = research_methodology_service.assess(contract)
+        blockers = [*errors, *self._blocker_messages(assessment)]
+        self._persist(run_id, contract, blockers, assessment)
         return {
             "brief": ResearchBriefRepository.get_by_run(run_id),
             "hypotheses": ResearchHypothesisRepository.get_by_run(run_id),
-            "errors": errors,
-            "ready": not errors,
+            "errors": blockers,
+            "assessment": assessment,
+            "ready": not blockers,
         }
 
 

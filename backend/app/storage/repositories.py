@@ -1579,9 +1579,11 @@ class ResearchBriefRepository:
                 constraints, status, research_type, subquestions, scope_in, scope_out,
                 target_domain, expected_contribution, novelty_criteria, data_availability,
                 ethics_risks, failure_criteria, approval_status, validation_errors,
+                discipline, methodology_family, epistemic_mode, methodology_profile,
+                resource_plan, ethics_plan, thesis_requirements, feasibility_assessment,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 brief["id"],
@@ -1604,6 +1606,14 @@ class ResearchBriefRepository:
                 json.dumps(brief.get("failure_criteria", []), ensure_ascii=False),
                 brief.get("approval_status", "draft"),
                 json.dumps(brief.get("validation_errors", []), ensure_ascii=False),
+                json.dumps(brief.get("discipline", {}), ensure_ascii=False),
+                brief.get("methodology_family", ""),
+                brief.get("epistemic_mode", ""),
+                json.dumps(brief.get("methodology_profile", {}), ensure_ascii=False),
+                json.dumps(brief.get("resource_plan", []), ensure_ascii=False),
+                json.dumps(brief.get("ethics_plan", {}), ensure_ascii=False),
+                json.dumps(brief.get("thesis_requirements", {}), ensure_ascii=False),
+                json.dumps(brief.get("feasibility_assessment", {}), ensure_ascii=False),
                 brief["created_at"],
                 brief["updated_at"],
             ),
@@ -1623,11 +1633,13 @@ class ResearchBriefRepository:
         json_fields = {
             "success_criteria", "constraints", "subquestions", "scope_in", "scope_out",
             "novelty_criteria", "ethics_risks", "failure_criteria", "validation_errors",
+            "discipline", "methodology_profile", "resource_plan", "ethics_plan",
+            "thesis_requirements", "feasibility_assessment",
         }
         allowed = {
             "research_question", "objective", "scope", "status", "research_type",
             "target_domain", "expected_contribution", "data_availability", "approval_status",
-            "updated_at", *json_fields,
+            "methodology_family", "epistemic_mode", "updated_at", *json_fields,
         }
         assignments, params = [], []
         for key, value in updates.items():
@@ -2352,6 +2364,15 @@ def _deserialize_research_brief(row) -> dict:
         "failure_criteria": _json_loads(row["failure_criteria"], []) if "failure_criteria" in keys else [],
         "approval_status": row["approval_status"] if "approval_status" in keys else "draft",
         "validation_errors": _json_loads(row["validation_errors"], []) if "validation_errors" in keys else [],
+        "discipline": _json_loads(row["discipline"], {}) if "discipline" in keys else {},
+        "methodology_family": row["methodology_family"] if "methodology_family" in keys else "",
+        "epistemic_mode": row["epistemic_mode"] if "epistemic_mode" in keys else "",
+        "methodology_profile": _json_loads(row["methodology_profile"], {}) if "methodology_profile" in keys else {},
+        "resource_plan": _json_loads(row["resource_plan"], []) if "resource_plan" in keys else [],
+        "ethics_plan": _json_loads(row["ethics_plan"], {}) if "ethics_plan" in keys else {},
+        "thesis_requirements": _json_loads(row["thesis_requirements"], {}) if "thesis_requirements" in keys else {},
+        "feasibility_assessment": _json_loads(row["feasibility_assessment"], {})
+        if "feasibility_assessment" in keys else {},
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

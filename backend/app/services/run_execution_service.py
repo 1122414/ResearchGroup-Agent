@@ -259,9 +259,12 @@ class RunExecutionService:
             approval_service.ensure_pending(
                 run_id,
                 "research_contract_revision",
-                "研究契约需要修订",
-                "研究问题、边界或证伪判据不完整，修订前不会创建执行任务。",
-                payload={"validation_errors": contract["errors"], "brief": contract["brief"]},
+                "研究契约或执行条件需要补充",
+                "研究问题、方法论、资源或伦理条件尚未放行；补充前不会创建可能伪造完成状态的任务。",
+                payload={
+                    "validation_errors": contract["errors"], "brief": contract["brief"],
+                    "feasibility_assessment": contract.get("assessment") or {},
+                },
             )
             run_event_service.emit(
                 run_id, "research_contract.blocked", "framing", "研究契约未通过",
@@ -282,7 +285,13 @@ class RunExecutionService:
             contract["brief"] = brief
             run_event_service.emit(
                 run_id, "research_contract.frozen", "framing", "研究契约已冻结",
-                brief.get("research_question", ""), payload={"research_type": brief.get("research_type")},
+                brief.get("research_question", ""), payload={
+                    "research_type": brief.get("research_type"),
+                    "discipline": brief.get("discipline"),
+                    "methodology_family": brief.get("methodology_family"),
+                    "epistemic_mode": brief.get("epistemic_mode"),
+                    "master_thesis_ready": (brief.get("feasibility_assessment") or {}).get("thesis_ready"),
+                },
             )
         RunRepository.update_status(run_id, RunStatus.decomposing.value, current_step="导师拆解研究任务", started_at=started_at)
         run_event_service.emit(run_id, "phase.started", "decompose", "导师拆解研究任务", "导师 Agent 生成任务图")

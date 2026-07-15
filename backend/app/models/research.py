@@ -11,7 +11,7 @@ class ResearchBrief(BaseModel):
     scope: str = ""
     success_criteria: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
-    research_type: Literal["empirical", "survey", "design", "mixed"] = "empirical"
+    research_type: Literal["empirical", "survey", "design", "mixed", "interpretive", "theoretical"] = "empirical"
     subquestions: list[dict] = Field(default_factory=list)
     scope_in: list[str] = Field(default_factory=list)
     scope_out: list[str] = Field(default_factory=list)
@@ -21,7 +21,15 @@ class ResearchBrief(BaseModel):
     data_availability: str = ""
     ethics_risks: list[str] = Field(default_factory=list)
     failure_criteria: list[str] = Field(default_factory=list)
-    approval_status: Literal["draft", "frozen", "needs_revision", "rejected"] = "draft"
+    discipline: dict = Field(default_factory=dict)
+    methodology_family: str = ""
+    epistemic_mode: str = ""
+    methodology_profile: dict = Field(default_factory=dict)
+    resource_plan: list[dict] = Field(default_factory=list)
+    ethics_plan: dict = Field(default_factory=dict)
+    thesis_requirements: dict = Field(default_factory=dict)
+    feasibility_assessment: dict = Field(default_factory=dict)
+    approval_status: Literal["draft", "frozen", "needs_revision", "blocked_resources", "rejected"] = "draft"
     validation_errors: list[str] = Field(default_factory=list)
     status: Literal["draft", "active", "frozen", "revised"] = "draft"
     created_at: str

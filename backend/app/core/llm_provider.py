@@ -178,6 +178,34 @@ class MockLLMProvider(LLMProvider):
                 "ethics_risks": ["核验数据许可与隐私限制"],
                 "success_criteria": ["核心主张有 passage 支撑", "实验达到预设最小效应并可复现"],
                 "failure_criteria": ["关键全文或真实数据不可得", "相对基线未达到最小效应", "复现失败"],
+                "discipline": {
+                    "broad_field": "engineering", "field": "computer_science", "subfield": "computational_research",
+                },
+                "methodology_profile": {
+                    "family": "computational", "epistemic_mode": "hypothesis_testing",
+                    "study_design": "controlled comparative study", "unit_of_analysis": "evaluation item",
+                    "evidence_types": ["verified literature passages", "raw benchmark observations"],
+                    "data_collection_methods": ["versioned dataset execution"],
+                    "analysis_methods": ["paired comparison", "uncertainty interval", "independent reproduction"],
+                    "quality_criteria": ["construct validity", "reproducibility", "external-validity disclosure"],
+                    "component_methods": [],
+                },
+                "resource_plan": [{
+                    "resource_type": "licensed_dataset", "description": "合法且可版本化的研究数据",
+                    "required": True, "status": "available", "owner": "user_or_public_source",
+                    "evidence": "执行前由数据门复核", "resolution": "缺失时阻断实验而非生成指标",
+                }],
+                "ethics_plan": {
+                    "required": False, "status": "not_required", "review_body": "",
+                    "approval_reference": "", "data_sensitivity": "待数据门复核",
+                    "participant_risks": [],
+                },
+                "thesis_requirements": {
+                    "degree_level": "master", "institution": "", "programme": "",
+                    "language": "zh-CN", "citation_style": "GB/T 7714", "target_word_count": 30000,
+                    "required_chapters": ["引言", "文献综述", "方法", "结果", "讨论", "结论"],
+                    "status": "not_provided",
+                },
                 "hypotheses": [
                     {
                         "statement": "候选方案在目标场景的主指标上优于最小基线。",

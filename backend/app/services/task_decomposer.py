@@ -17,7 +17,8 @@ SURVEY_MARKERS = ("综述", "调研", "survey", "review", "github", "现状", "�
 class TaskDecomposer:
     def detect_mode(self, research_goal: str, brief: dict | None = None) -> str:
         if brief:
-            return "survey" if brief.get("research_type") == "survey" else "paper"
+            family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
+            return "survey" if brief.get("research_type") == "survey" or family == "systematic_review" else "paper"
         goal = primary_goal(str(research_goal or "")).lower()
         return "survey" if any(marker in goal for marker in SURVEY_MARKERS) else "paper"
 
@@ -34,14 +35,16 @@ class TaskDecomposer:
 
 要求：
 1. 每个任务必须包含 title、description、task_type、priority、complexity、decomposability、required_skills。
-2. task_type 只能是 literature_survey、system_design、experiment_design、result_analysis、report_writing。
-   - system_design：冻结系统/实验方案、参数、接口和实现计划，不声称已经运行实验或生成结果文件。
-   - experiment_design：实际创建工作区、执行实验、统计重复运行并生成可核验 artifact。
+2. task_type 目前只能是 literature_survey、system_design、experiment_design、result_analysis、report_writing。
+   - system_design 表示通用研究设计：应按 methodology_profile 冻结抽样、语料、测量、解释框架、证明路线或实验方案，不能默认是软件系统设计。
+   - experiment_design 仅用于系统能够真实执行并产生 artifact 的计算/定量实验。不得把访谈、田野、湿实验、临床、人文解释或理论证明伪装成自动计算实验。
+   - result_analysis 必须采用 methodology_profile.analysis_methods 与 quality_criteria，而不是一律输出数值指标。
 3. priority、complexity、decomposability 和 required_skills 中的技能分数均为 1-10。
 4. 每个任务必须给出 subquestion_id、hypothesis_id、milestone_key，且只能引用 Contract 中已有对象。
 5. 若课题是本系统已支持的 RAG/检索切分受控实验，检索器固定为 Python 标准库实现的
    deterministic_lexical_overlap；不得改成 BM25/rank_bm25、embedding 或其他外部检索器。
 6. 只返回合法 JSON 数组，不要输出解释性文字。
+7. resource_plan 或 ethics_plan 未放行的步骤不得写成已经可自动执行；应保留为范围外条件或人工资源要求。
 """
 
         llm = create_llm_provider()
@@ -107,6 +110,7 @@ class TaskDecomposer:
         else:
             tasks_data = self._normalize_inverted_experiment_roles(tasks_data)
             tasks_data = self._normalize_supported_retrieval_tasks(tasks_data, research_goal, contract or {})
+            tasks_data = self._respect_methodology_capability(tasks_data, brief)
         if not contract:
             self._seed_hypotheses(research_goal, run_id, mode)
         logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | mode=%s | tasks=%d", run_id, mode, len(tasks_data))
@@ -311,6 +315,16 @@ class TaskDecomposer:
                     "不得用文字声称代替真实 artifact。"
                 )
         return tasks
+
+    @staticmethod
+    def _respect_methodology_capability(tasks: list[dict], brief: dict) -> list[dict]:
+        """Do not turn non-computational scholarship into a fabricated executable experiment."""
+        family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
+        executable_families = {"computational", "quantitative", "design_science"}
+        if family in executable_families:
+            return tasks
+        filtered = [item for item in tasks if item.get("task_type") != "experiment_design"]
+        return filtered or tasks
 
     @staticmethod
     def _known_or_default(value, allowed: set[str]) -> str | None:

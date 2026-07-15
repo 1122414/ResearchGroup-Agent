@@ -101,7 +101,31 @@
         "scope_in": ["RAG retrieval"], "scope_out": ["generation quality"],
         "success_criteria": ["MRR interval"], "failure_criteria": ["effect below 5%"],
         "novelty_criteria": ["controlled comparison"], "target_domain": "retrieval_rag",
-        "expected_contribution": "reproducible comparison", "data_availability": "labeled qrels uploaded"
+        "expected_contribution": "reproducible comparison", "data_availability": "labeled qrels uploaded",
+        "discipline": {"broad_field": "engineering", "field": "computer_science", "subfield": "information_retrieval"},
+        "methodology_profile": {
+          "family": "computational", "epistemic_mode": "hypothesis_testing",
+          "study_design": "controlled paired benchmark", "unit_of_analysis": "query",
+          "evidence_types": ["verified passages", "query-level results"],
+          "data_collection_methods": ["frozen benchmark execution"],
+          "analysis_methods": ["paired bootstrap"],
+          "quality_criteria": ["reproducibility", "construct validity"],
+          "component_methods": []
+        },
+        "resource_plan": [{
+          "resource_type": "labeled_dataset", "description": "licensed query/qrel dataset",
+          "required": true, "status": "available", "owner": "user",
+          "evidence": "uploaded snapshot", "resolution": "keep frozen"
+        }],
+        "ethics_plan": {
+          "required": false, "status": "not_required", "review_body": "", "approval_reference": "",
+          "data_sensitivity": "non-personal", "participant_risks": []
+        },
+        "thesis_requirements": {
+          "degree_level": "master", "institution": "benchmark", "programme": "benchmark",
+          "language": "en", "citation_style": "APA", "target_word_count": 30000,
+          "required_chapters": ["Introduction", "Methods", "Results", "Discussion"], "status": "confirmed"
+        }
       },
       "hypotheses": [
         {"statement": "Overlap improves MRR", "baseline": "no split", "primary_metric": "MRR", "minimum_effect": "5%", "falsification_criterion": "95% CI crosses zero"}

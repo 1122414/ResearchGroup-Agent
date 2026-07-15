@@ -45,6 +45,7 @@ async def test_contract_has_scope_falsification_and_milestones(monkeypatch):
     assert {item["milestone_key"] for item in state["milestones"]} == {
         "framing_frozen", "search_protocol_frozen", "evidence_sufficient",
         "experiment_protocol_frozen", "replication_passed", "report_verified",
+        "methodology_frozen", "resources_ready", "ethics_cleared", "thesis_requirements_frozen",
     }
 
 

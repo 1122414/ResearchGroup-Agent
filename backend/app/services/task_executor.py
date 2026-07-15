@@ -289,10 +289,22 @@ class TaskExecutor:
             (item for item in ResearchMilestoneRepository.get_by_run(run_id) if item["id"] == task.get("milestone_id")),
             None,
         )
-        if not any((subquestion, hypothesis, milestone)):
+        research_frame = {
+            "research_type": brief.get("research_type"),
+            "discipline": brief.get("discipline"),
+            "methodology_profile": brief.get("methodology_profile"),
+            "resource_plan": brief.get("resource_plan"),
+            "ethics_plan": brief.get("ethics_plan"),
+            "thesis_requirements": brief.get("thesis_requirements"),
+            "feasibility_assessment": brief.get("feasibility_assessment"),
+        }
+        if not any((subquestion, hypothesis, milestone, research_frame.get("methodology_profile"))):
             return ""
         return "【已冻结研究契约（不得擅自改变）】\n" + json.dumps(
-            {"subquestion": subquestion, "hypothesis": hypothesis, "milestone": milestone},
+            {
+                "research_frame": research_frame, "subquestion": subquestion,
+                "hypothesis": hypothesis, "milestone": milestone,
+            },
             ensure_ascii=False,
             indent=2,
         )
