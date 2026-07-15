@@ -5,6 +5,8 @@ import pytest
 
 from backend.app.services.report_service import ReportService
 from backend.app.services.research_state_service import research_state_service
+from backend.app.services.run_execution_service import run_execution_service
+from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.services.thesis_chapter_service import thesis_chapter_service
 from backend.app.storage import init_db
 from backend.app.storage.repositories import (
@@ -102,6 +104,24 @@ def test_chapter_tasks_are_created_once_and_depend_on_completed_research(tmp_pat
     assert {item["id"] for item in created} == {item["id"] for item in repeated}
     assert all(TaskDependencyRepository.get_for_task(item["id"]) == [research["id"]] for item in created)
     assert set(TaskDependencyRepository.get_for_task(report["id"])) == {item["id"] for item in created}
+
+
+def test_transient_chapter_json_failure_gets_one_bounded_retry(tmp_path, monkeypatch):
+    run_id, _ = _run_with_thesis(tmp_path)
+    task = _insert_task(run_id, f"chapter_{uuid.uuid4().hex[:8]}", "thesis_chapter", "failed")
+    TaskRepository.update_status(
+        task["id"], "failed", attempt_count=1,
+        blocked_reason="LLM structured output invalid after 2 attempt(s): response is not valid JSON",
+    )
+    task = TaskRepository.get_by_id(task["id"])
+    retried = []
+    monkeypatch.setattr(task_recovery_service, "retry", lambda item, reason: retried.append((item["id"], reason)))
+
+    assert run_execution_service._retry_transient_writing_failures([task]) is True
+    assert retried and retried[0][0] == task["id"]
+
+    task["attempt_count"] = 2
+    assert run_execution_service._retry_transient_writing_failures([task]) is False
 
 
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):

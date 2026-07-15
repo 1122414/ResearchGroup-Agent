@@ -38,6 +38,8 @@ class RunCancelled(Exception):
 
 
 class RunExecutionService:
+    TRANSIENT_WRITING_MAX_ATTEMPTS = 2
+
     def __init__(self) -> None:
         self._active_tasks: dict[str, asyncio.Task] = {}
 
@@ -498,6 +500,11 @@ class RunExecutionService:
             writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
             if not writing_tasks:
                 return
+            self._retry_transient_writing_failures(writing_tasks)
+            writing_tasks = [
+                task for task in TaskRepository.get_all(run_id=run_id)
+                if thesis_chapter_service.is_writing_task(task)
+            ]
             before = [(task["id"], task.get("status")) for task in writing_tasks]
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="论文章节与总稿写作中")
             await self._execute_ready_tasks(run_id, writing_tasks)
@@ -514,6 +521,23 @@ class RunExecutionService:
             if after == before:
                 self._finalize_stuck_revisions(run_id, refreshed)
                 return
+
+    def _retry_transient_writing_failures(self, tasks: list[dict]) -> bool:
+        changed = False
+        for task in tasks:
+            if (
+                task.get("status") == "failed"
+                and int(task.get("attempt_count") or 0) < self.TRANSIENT_WRITING_MAX_ATTEMPTS
+                and "structured output invalid" in str(task.get("blocked_reason") or "")
+            ):
+                task_recovery_service.retry(task, reason="写作 JSON 结构瞬态失败，执行一次有界重试")
+                run_event_service.emit(
+                    task["run_id"], "task.transient_retry", "recovery", "写作任务结构修复重试",
+                    "仅重试一次完整写作调用；科学质量门保持不变", task_id=task["id"],
+                    agent_id=task.get("owner_agent"),
+                )
+                changed = True
+        return changed
 
     async def _execute_ready_tasks(self, run_id: str, tasks: list[dict]) -> None:
         ordered = task_graph_service.topological_order(TaskRepository.get_all(run_id=run_id))
