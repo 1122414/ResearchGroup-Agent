@@ -19,6 +19,7 @@ class LLMProvider(ABC):
         run_id: str | None = None,
         task_id: str | None = None,
         agent_id: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         pass
 
@@ -32,6 +33,7 @@ class MockLLMProvider(LLMProvider):
         run_id: str | None = None,
         task_id: str | None = None,
         agent_id: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         started = time.perf_counter()
         prompt_len = len(prompt)
@@ -399,7 +401,10 @@ class OpenAICompatibleProvider(LLMProvider):
             return ["json_schema", "json_object", "none"]
         return ["json_object", "none"]
 
-    def _build_body(self, prompt: str, schema: Optional[dict], model: str, role: str, rf_mode: str) -> dict:
+    def _build_body(
+        self, prompt: str, schema: Optional[dict], model: str, role: str,
+        rf_mode: str, max_tokens: int | None = None,
+    ) -> dict:
         messages = [{"role": "user", "content": prompt}]
         # json_object mode on several providers requires the word "json" to appear
         # in the messages; add a tiny system hint when it is missing.
@@ -409,7 +414,7 @@ class OpenAICompatibleProvider(LLMProvider):
             "model": model,
             "messages": messages,
             "temperature": settings.get_temperature_for_role(role),
-            "max_tokens": settings.llm_max_tokens,
+            "max_tokens": max_tokens or settings.llm_max_tokens,
         }
         if rf_mode == "json_schema":
             body["response_format"] = {
@@ -428,6 +433,7 @@ class OpenAICompatibleProvider(LLMProvider):
         run_id: str | None = None,
         task_id: str | None = None,
         agent_id: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         model = settings.get_model_for_role(role)
         endpoint = self._endpoint()
@@ -443,7 +449,7 @@ class OpenAICompatibleProvider(LLMProvider):
         last_error: Exception | None = None
         async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
             for rf_mode in strategies:
-                request_body = self._build_body(prompt, schema, model, role, rf_mode)
+                request_body = self._build_body(prompt, schema, model, role, rf_mode, max_tokens)
                 for attempt in range(settings.llm_max_retries):
                     try:
                         response = await client.post(endpoint, json=request_body, headers=headers)

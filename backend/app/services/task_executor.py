@@ -564,6 +564,11 @@ class TaskExecutor:
                 run_id=task.get("run_id"),
                 task_id=task.get("id"),
                 agent_id=owner_id,
+                max_tokens=(
+                    settings.thesis_chapter_max_tokens
+                    if task.get("task_type") == "thesis_chapter"
+                    else None
+                ),
             )
             try:
                 return self._parse_result(raw)

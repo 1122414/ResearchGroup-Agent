@@ -4,6 +4,7 @@ from datetime import datetime
 import pytest
 
 from backend.app.services.report_service import ReportService
+from backend.app.services.task_executor import TaskExecutor
 from backend.app.services.research_state_service import research_state_service
 from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_recovery_service import task_recovery_service
@@ -122,6 +123,27 @@ def test_transient_chapter_json_failure_gets_one_bounded_retry(tmp_path, monkeyp
 
     task["attempt_count"] = 2
     assert run_execution_service._retry_transient_writing_failures([task]) is False
+
+
+@pytest.mark.asyncio
+async def test_chapter_generation_uses_longform_token_budget():
+    calls = []
+
+    class FakeLLM:
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            return '{"summary":"ok","claims":[]}'
+
+    await TaskExecutor()._generate_structured(
+        FakeLLM(), "prompt", {"task_type": "thesis_chapter"}, "writer",
+    )
+    assert calls[0]["max_tokens"] == 8192
+
+    calls.clear()
+    await TaskExecutor()._generate_structured(
+        FakeLLM(), "prompt", {"task_type": "literature_survey"}, "researcher",
+    )
+    assert calls[0]["max_tokens"] is None
 
 
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):

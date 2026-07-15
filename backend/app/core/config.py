@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_timeout: int = 120
     llm_max_retries: int = 3
     llm_max_tokens: int = 4096
+    thesis_chapter_max_tokens: int = 8192
     llm_structured_repair_attempts: int = 1
     # How to request structured JSON from the model. Different OpenAI-compatible
     # providers support different response_format values:
