@@ -113,6 +113,7 @@ class TaskDecomposer:
             tasks_data = self._normalize_supported_retrieval_tasks(tasks_data, research_goal, contract or {})
             tasks_data = self._respect_methodology_capability(tasks_data, brief)
         tasks_data = self._ensure_complete_workflow(tasks_data, brief, mode)
+        tasks_data = self._normalize_data_acquisition_scope(tasks_data)
         if not contract:
             self._seed_hypotheses(research_goal, run_id, mode)
         logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | mode=%s | tasks=%d", run_id, mode, len(tasks_data))
@@ -234,6 +235,20 @@ class TaskDecomposer:
     def _normalize_skills(self, skills: dict) -> dict:
         keys = ["literature_review", "coding", "experiment", "data_analysis", "academic_writing", "mentoring"]
         return {key: self._bounded_int(skills.get(key, 1), default=1) for key in keys}
+
+    @staticmethod
+    def _normalize_data_acquisition_scope(tasks: list[dict]) -> list[dict]:
+        """Keep material registration separate from executable transformations."""
+        for item in tasks:
+            if item.get("task_type") != "data_acquisition":
+                continue
+            item["description"] = (
+                "登记并冻结真实上传材料或外部执行返回的原始材料；记录每个真实文件的路径、"
+                "SHA-256、大小、来源、授权、伦理声明和完整性。不得声称由语言模型生成、切分、"
+                "清洗或转换出新的数据文件；所有派生数据必须由后续可执行实验或分析任务真实生成，"
+                "并在对应任务中另行登记哈希。"
+            )
+        return tasks
 
     @staticmethod
     def _normalize_inverted_experiment_roles(tasks: list[dict]) -> list[dict]:

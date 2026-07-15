@@ -205,7 +205,7 @@ class TaskExecutor:
                     result["claims"] = research_analysis_service.claims_for_artifact(analysis_artifact)
         if task_type == "data_acquisition":
             material_manifest = research_material_service.ingest_for_task(task)
-            result["material_manifest"] = material_manifest
+            result = self._ground_material_output(result, material_manifest)
             if material_manifest.get("completeness") != "complete":
                 result.setdefault("uncertainties", []).append({
                     "description": "真实研究材料清单不完整：" + "、".join(
@@ -276,6 +276,31 @@ class TaskExecutor:
         )
         logger.info("[TaskExecutor] execute completed | task_id=%s | output_saved=%s", task.get("id"), f"out_{task['id']}")
         return result
+
+    @staticmethod
+    def _ground_material_output(result: dict, material_manifest: dict) -> dict:
+        """Replace LLM file claims with the deterministic material registry."""
+        records = material_manifest.get("source_records") or []
+        findings = [
+            f"已冻结 {record.get('name') or record.get('id')}："
+            f"sha256={record.get('sha256')}，size_bytes={record.get('size_bytes')}，"
+            f"provenance={record.get('provenance')}"
+            for record in records
+        ]
+        return {
+            **result,
+            "summary": (
+                f"已登记并冻结 {len(records)} 个真实原始材料文件；清单只陈述磁盘上存在且已校验哈希的材料。"
+            ),
+            "findings": findings,
+            "risks": [
+                "本清单不包含尚未由可执行任务生成的派生数据；派生文件必须在生成任务中另行登记哈希。"
+            ],
+            "next_steps": ["由获批的实验或分析任务读取冻结材料并生成可追溯派生工件。"],
+            "claims": [],
+            "hypotheses": [],
+            "material_manifest": material_manifest,
+        }
 
     def _collaboration_context(self, task: dict, collaborator_results: list[dict] | None = None) -> str:
         """Surface SubAgent/collaborator results so the owner integrates them.

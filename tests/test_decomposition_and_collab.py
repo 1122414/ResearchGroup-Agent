@@ -157,6 +157,17 @@ def test_systematic_review_workflow_always_includes_real_study_pool_acquisition(
     assert "data_acquisition" in {item["task_type"] for item in result}
 
 
+def test_data_acquisition_scope_cannot_claim_llm_generated_derivatives():
+    result = task_decomposer._normalize_data_acquisition_scope([{
+        "task_type": "data_acquisition",
+        "description": "生成三套切分数据并写文件",
+    }])
+
+    assert "登记并冻结" in result[0]["description"]
+    assert "不得声称由语言模型生成" in result[0]["description"]
+    assert "后续可执行实验或分析任务" in result[0]["description"]
+
+
 @pytest.mark.asyncio
 async def test_survey_decomposition_drops_experiments_and_seeds_hypothesis():
     run_id = f"run_dec_{uuid.uuid4().hex[:6]}"

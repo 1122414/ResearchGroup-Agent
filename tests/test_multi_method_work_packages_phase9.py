@@ -13,6 +13,7 @@ from backend.app.services.research_method_registry_service import research_metho
 from backend.app.services.research_state_service import research_state_service
 from backend.app.services.scientific_quality_gate_service import scientific_quality_gate_service
 from backend.app.services.task_decomposer import task_decomposer
+from backend.app.services.task_executor import task_executor
 from backend.app.storage import init_db
 from backend.app.storage.repositories import EvidenceRepository, ResearchBriefRepository, RunRepository
 
@@ -195,6 +196,28 @@ def test_data_acquisition_quality_gate_rejects_unregistered_or_tampered_material
     )
     assert "material_manifest.source_records[0].sha256_invalid" in issues
     assert "material_manifest_missing" not in issues
+
+
+def test_data_acquisition_narrative_only_lists_registered_real_files():
+    manifest = {
+        "source_records": [{
+            "id": "material_1", "name": "source.json", "sha256": "a" * 64,
+            "size_bytes": 42, "provenance": "user_supplied_run_attachment",
+        }],
+        "completeness": "complete",
+    }
+    grounded = task_executor._ground_material_output({
+        "summary": "已生成 passages_fake.json",
+        "findings": ["passages_fake.json"],
+        "hypotheses": [{"statement": "越界假设"}],
+    }, manifest)
+
+    serialized = json.dumps(grounded, ensure_ascii=False)
+    assert "passages_fake.json" not in serialized
+    assert "source.json" in serialized
+    assert grounded["claims"] == []
+    assert grounded["hypotheses"] == []
+    assert grounded["material_manifest"] == manifest
 
 
 def test_noncomputational_decomposition_uses_method_neutral_work_packages():
