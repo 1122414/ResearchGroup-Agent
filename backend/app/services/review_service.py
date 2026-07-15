@@ -6,7 +6,10 @@ from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
-from ..storage.repositories import OutputRepository, ResearchMilestoneRepository, ReviewDecisionRepository, TaskRepository
+from ..storage.repositories import (
+    OutputRepository, ResearchClaimRepository, ResearchMilestoneRepository,
+    ReviewDecisionRepository, TaskRepository,
+)
 from .scientific_quality_gate_service import scientific_quality_gate_service
 
 
@@ -99,7 +102,35 @@ class ReviewService:
             average_score,
         )
         self._persist_review(task, review)
+        if approved:
+            self._promote_artifact_claims(task, latest)
         return review
+
+    @staticmethod
+    def _promote_artifact_claims(task: dict, latest: dict) -> None:
+        """Promote only artifact claims that already passed all hard and independent gates."""
+        claims = {
+            " ".join(str(item.get("statement") or "").lower().split()): item
+            for item in ResearchClaimRepository.get_by_run(task.get("run_id"))
+        }
+        now = datetime.now().isoformat()
+        for item in latest.get("claims") or []:
+            provenance = item.get("provenance") or {}
+            if not all(provenance.get(key) for key in (
+                "method_family", "input_hashes", "analysis_artifact", "analysis_artifact_sha256",
+            )):
+                continue
+            claim = claims.get(" ".join(str(item.get("statement") or "").lower().split()))
+            if not claim:
+                continue
+            ResearchClaimRepository.update(
+                claim["id"], status="supported", confidence=float(item.get("confidence") or 0.8),
+                evidence_ids=[
+                    provenance["analysis_artifact"], provenance["analysis_artifact_sha256"],
+                    *provenance["input_hashes"],
+                ],
+                updated_at=now,
+            )
 
     def _review_quality_gate_failure(self, task: dict, quality_gates: dict) -> dict:
         rubric = self._rubric_for_task(task.get("task_type", ""))

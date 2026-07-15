@@ -23,6 +23,7 @@ from .experiment_protocol_service import experiment_protocol_service
 from .knowledge_graph_service import knowledge_graph_service
 from .literature_source_service import literature_source_service
 from .research_integrity_service import research_integrity_service
+from .research_analysis_service import research_analysis_service
 from .research_material_service import research_material_service
 from .research_method_registry_service import research_method_registry_service
 from .reproducible_experiment_service import reproducible_experiment_service
@@ -178,6 +179,16 @@ class TaskExecutor:
             result["reproducible_experiment"] = executed
             if task_type == "result_analysis":
                 result["claims"] = executed.get("claims") or experiment.get("claims") or []
+                method_inputs = self._approved_task_results(
+                    task.get("run_id"), {"data_acquisition"}, task.get("id")
+                ).get("data_acquisition", {})
+                material_manifest = method_inputs.get("material_manifest") or {}
+                if material_manifest:
+                    analysis_artifact = research_analysis_service.analyze_for_task(
+                        task, material_manifest
+                    )
+                    result["analysis_artifact"] = analysis_artifact
+                    result["claims"] = research_analysis_service.claims_for_artifact(analysis_artifact)
         if task_type == "data_acquisition":
             material_manifest = research_material_service.ingest_for_task(task)
             result["material_manifest"] = material_manifest

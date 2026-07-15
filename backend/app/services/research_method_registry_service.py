@@ -85,6 +85,8 @@ class ResearchMethodRegistryService:
                 result = checks.get(check)
                 if not isinstance(result, dict) or result.get("status") not in {"passed", "not_applicable"}:
                     issues.append(f"analysis_artifact.method_checks.{check}_not_passed")
+                elif not str(result.get("evidence") or "").strip():
+                    issues.append(f"analysis_artifact.method_checks.{check}_evidence_missing")
             hashes = payload.get("input_hashes")
             if not isinstance(hashes, list) or not hashes:
                 issues.append("analysis_artifact.input_hashes_empty")

@@ -12,6 +12,7 @@ from ..storage.repositories import (
     ResearchBriefRepository,
     ResearchHypothesisRepository,
     ResearchMilestoneRepository,
+    ResearchUncertaintyRepository,
 )
 from .research_methodology_service import research_methodology_service
 
@@ -395,6 +396,8 @@ artifact evaluation 适用时给出假设；解释性、人文、理论证明和
             for key, title, criteria in self.MILESTONES
         ]
         ResearchMilestoneRepository.replace_for_run(run_id, milestones)
+        if contract.get("methodology_profile"):
+            ResearchUncertaintyRepository.resolve_by_category(run_id, "hypothesis", now)
 
     def freeze(self, run_id: str) -> dict:
         brief = ResearchBriefRepository.get_by_run(run_id) or {}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -79,7 +80,7 @@ class ScientificQualityGateService:
                 and excerpts[link["excerpt_id"]].get("excerpt_type") not in {"metadata_only", "summary"}
                 and (sources.get(link["source_id"], {}).get("metadata") or {}).get("citation_eligible")
             ]
-            if not valid_links:
+            if not valid_links and not self._artifact_backed_research_claim(run_id, claim):
                 issues["semantic"].append(f"supported_claim_without_verified_link:{claim['id']}")
         if brief.get("research_type") in {"empirical", "mixed"} and not any(
             (item.get("metrics") or {}).get("publishable") is True for item in results
@@ -142,6 +143,11 @@ class ScientificQualityGateService:
                 provenance.get(key) for key in ("protocol_id", "raw_results", "raw_results_sha256")
             ):
                 continue
+            if task.get("task_type") == "result_analysis" and provenance.get("method_family"):
+                method_issues = self._method_claim_provenance_issues(task, provenance)
+                issues.extend(f"claim_{index}:{issue}" for issue in method_issues)
+                if not method_issues:
+                    continue
             source_ids = set(claim.get("evidence_source_ids") or [])
             passage_ids = claim.get("evidence_passage_ids") or []
             if not source_ids or not passage_ids:
@@ -271,6 +277,52 @@ class ScientificQualityGateService:
             except (OSError, RuntimeError):
                 issues.append(f"material_record_{index}:read_failed")
         return issues
+
+    @staticmethod
+    def _method_claim_provenance_issues(task: dict, provenance: dict) -> list[str]:
+        run = RunRepository.get_by_id(task.get("run_id")) or {}
+        run_dir = run_artifact_service.run_dir(run, task.get("run_id")).resolve()
+        raw_path = provenance.get("analysis_artifact")
+        expected_hash = provenance.get("analysis_artifact_sha256")
+        input_hashes = provenance.get("input_hashes")
+        if not raw_path or not expected_hash or not isinstance(input_hashes, list) or not input_hashes:
+            return ["method_artifact_provenance_incomplete"]
+        try:
+            path = Path(str(raw_path)).resolve()
+            if not path.is_file() or not path.is_relative_to(run_dir):
+                return ["method_artifact_path_invalid"]
+            manifest = artifact_manifest_service.read(run_dir)
+            entry = next((item for item in manifest.get("artifacts") or [] if item.get("path") == str(path)), None)
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            if not entry or (entry.get("metadata") or {}).get("sha256") != expected_hash or actual_hash != expected_hash:
+                return ["method_artifact_hash_mismatch"]
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("family") != provenance.get("method_family"):
+                return ["method_artifact_family_mismatch"]
+            if payload.get("input_hashes") != input_hashes:
+                return ["method_artifact_input_hash_mismatch"]
+        except (OSError, json.JSONDecodeError, RuntimeError):
+            return ["method_artifact_unreadable"]
+        return []
+
+    @staticmethod
+    def _artifact_backed_research_claim(run_id: str, claim: dict) -> bool:
+        evidence_ids = set(claim.get("evidence_ids") or [])
+        run = RunRepository.get_by_id(run_id) or {}
+        run_dir = run_artifact_service.run_dir(run, run_id).resolve()
+        manifest = artifact_manifest_service.read(run_dir)
+        for entry in manifest.get("artifacts") or []:
+            path_text = entry.get("path")
+            expected = (entry.get("metadata") or {}).get("sha256")
+            if not path_text or not expected or path_text not in evidence_ids or expected not in evidence_ids:
+                continue
+            try:
+                path = Path(path_text).resolve()
+                if path.is_file() and path.is_relative_to(run_dir) and hashlib.sha256(path.read_bytes()).hexdigest() == expected:
+                    return True
+            except (OSError, RuntimeError):
+                continue
+        return False
 
 
 scientific_quality_gate_service = ScientificQualityGateService()

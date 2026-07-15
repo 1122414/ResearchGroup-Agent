@@ -1899,6 +1899,17 @@ class ResearchUncertaintyRepository:
         conn.close()
         return [_deserialize_research_uncertainty(row) for row in rows]
 
+    @staticmethod
+    def resolve_by_category(run_id: str, category: str, resolved_at: str) -> None:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE research_uncertainties SET status = 'resolved', resolved_at = ? "
+            "WHERE run_id = ? AND category = ? AND status = 'open'",
+            (resolved_at, run_id, category),
+        )
+        conn.commit()
+        conn.close()
+
 
 def _json_loads(value, default):
     if value is None:
