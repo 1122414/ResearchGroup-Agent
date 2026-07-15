@@ -2,7 +2,6 @@ import json
 import uuid
 from datetime import datetime
 
-from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
@@ -89,23 +88,20 @@ class TaskDecomposer:
         )
 
         tasks_data = self._parse_response(raw_response)
-        if not tasks_data and settings.llm_structured_repair_attempts > 0:
-            raw_response = await llm.generate(
-                prompt=(
-                    f"{system_prompt}\n\n---\n\n{user_prompt}\n\n"
-                    "上次 tasks 数组结构非法或为空。只修复 JSON 结构，不新增研究目标之外的内容：\n"
-                    f"{raw_response[:4000]}"
-                ),
-                schema=task_schema,
-                role="advisor_decompose",
-                run_id=run_id,
-            )
-            tasks_data = self._parse_response(raw_response)
-        if not tasks_data:
-            raise ValueError("任务拆解未返回合法非空数组，已停止而非继续空转")
         brief = (contract or {}).get("brief") or {}
         hypotheses = (contract or {}).get("hypotheses") or []
         mode = self.detect_mode(research_goal, brief or None)
+        if not tasks_data:
+            if not brief:
+                raise ValueError("任务拆解未返回合法非空数组且没有冻结契约，已停止而非继续空转")
+            logger.warning(
+                "[TaskDecomposer] model plan invalid or truncated; using frozen-contract workflow | run_id=%s",
+                run_id,
+            )
+            run_event_service.emit(
+                run_id, "decompose.contract_fallback", "decompose", "模型任务表无效，已使用冻结契约生成工作流",
+                "未重复调用模型；仅生成方法中立任务结构，不生成研究结论。",
+            )
         if mode == "survey":
             tasks_data = self._respect_methodology_capability(tasks_data, brief)
             # Surveys/investigations should not fabricate experiments; drop experiment tasks.

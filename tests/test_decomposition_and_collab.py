@@ -34,6 +34,33 @@ def test_task_parser_accepts_provider_json_object_wrapper_and_legacy_array():
     assert task_decomposer._parse_response(json.dumps({"items": [task]})) == []
 
 
+@pytest.mark.asyncio
+async def test_truncated_model_plan_uses_frozen_contract_once_without_repair_loop(monkeypatch):
+    calls = 0
+
+    class TruncatedProvider:
+        async def generate(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return '{"tasks": [{"title": "truncated"}'
+
+    monkeypatch.setattr("backend.app.services.task_decomposer.create_llm_provider", lambda: TruncatedProvider())
+    run_id = f"run_fallback_{uuid.uuid4().hex[:6]}"
+    tasks = await task_decomposer.decompose(
+        "Systematically review verified evidence",
+        run_id,
+        {"brief": {
+            "research_type": "survey", "methodology_family": "systematic_review",
+            "methodology_profile": {"family": "systematic_review"}, "subquestions": [],
+        }, "hypotheses": []},
+    )
+
+    assert calls == 1
+    assert {item["task_type"] for item in tasks} >= {
+        "literature_survey", "research_design", "data_acquisition", "result_analysis", "report_writing",
+    }
+
+
 def test_inverted_design_and_execution_roles_are_normalized():
     tasks = [
         {
