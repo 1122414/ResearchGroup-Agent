@@ -85,6 +85,14 @@ class TaskGraphService:
             # cycle and bypasses the configured round limit.
             if task.get("status") not in {"pending", "assigned", "blocked"}:
                 continue
+            root_id = task.get("revision_of_task_id")
+            if root_id and status_map.get(root_id) in {"completed", "failed", "archived"}:
+                TaskRepository.update_status(
+                    task["id"],
+                    "archived",
+                    blocked_reason="根任务已终态，该返工分支已失效。",
+                )
+                continue
             if task["id"] in pending_revisions:
                 continue
             deps = TaskDependencyRepository.get_for_task(task["id"])

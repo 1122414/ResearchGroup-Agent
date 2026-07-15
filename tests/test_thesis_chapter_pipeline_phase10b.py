@@ -148,9 +148,12 @@ async def test_chapter_generation_uses_longform_token_budget():
 
 
 @pytest.mark.asyncio
-async def test_short_chapter_gets_one_grounded_expansion(monkeypatch):
+async def test_short_chapter_gets_bounded_monotonic_expansion(monkeypatch):
     calls = []
-    expanded = {"summary": "expanded", "claims": [], "chapter": {"sections": []}}
+    expanded = {
+        "summary": "expanded", "claims": [],
+        "chapter": {"sections": [{"paragraphs": [{"text": "expanded text"}]}]},
+    }
 
     class FakeLLM:
         async def generate(self, **kwargs):
@@ -161,18 +164,56 @@ async def test_short_chapter_gets_one_grounded_expansion(monkeypatch):
         "id": "chapter", "task_type": "thesis_chapter",
         "description": '【thesis_chapter_spec】{"chapter_name":"Results","word_budget":1000}\n',
     }
-    monkeypatch.setattr(
-        thesis_chapter_service, "validate_output",
-        lambda *_args: ["chapter_word_count_below_70_percent:400/1000"],
-    )
+    counts = iter([400, 780])
+    monkeypatch.setattr(thesis_chapter_service, "word_count", lambda *_args: next(counts))
+    monkeypatch.setattr(thesis_chapter_service, "validate_output", lambda *_args: [])
     result = await TaskExecutor()._expand_short_chapter(
-        FakeLLM(), "original prompt", task, "writer", {"summary": "short", "claims": []},
+        FakeLLM(), "original prompt", task, "writer",
+        {"summary": "short", "claims": [{"statement": "keep"}], "chapter": {"sections": []}},
     )
 
-    assert result == expanded
+    assert result["chapter"] == expanded["chapter"]
+    assert result["summary"] == "short"
+    assert result["claims"] == [{"statement": "keep"}]
     assert len(calls) == 1
-    assert "至少 700 词" in calls[0]["prompt"]
+    assert "硬性最低 700 词" in calls[0]["prompt"]
+    assert "original prompt" not in calls[0]["prompt"]
     assert calls[0]["max_tokens"] == 8192
+
+
+@pytest.mark.asyncio
+async def test_chapter_expansion_rejects_shorter_draft_then_stops_after_second_round(monkeypatch):
+    calls = []
+
+    class FakeLLM:
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            marker = "shorter" if len(calls) == 1 else "longer"
+            return json.dumps({
+                "summary": "expanded", "claims": [],
+                "chapter": {"marker": marker, "sections": []},
+            })
+
+    task = {
+        "id": "chapter", "task_type": "thesis_chapter",
+        "description": '【thesis_chapter_spec】{"chapter_name":"Results","word_budget":1000}\n',
+    }
+    monkeypatch.setattr(
+        thesis_chapter_service,
+        "word_count",
+        lambda _task, output: {None: 400, "shorter": 350, "longer": 780}[
+            (output.get("chapter") or {}).get("marker")
+        ],
+    )
+    monkeypatch.setattr(thesis_chapter_service, "validate_output", lambda *_args: [])
+
+    result = await TaskExecutor()._expand_short_chapter(
+        FakeLLM(), "unused", task, "writer",
+        {"summary": "original", "claims": [], "chapter": {"sections": []}},
+    )
+
+    assert len(calls) == 2
+    assert result["chapter"]["marker"] == "longer"
 
 
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):

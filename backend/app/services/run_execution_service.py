@@ -389,7 +389,7 @@ class RunExecutionService:
         for task in tasks:
             if (
                 task.get("revision_of_task_id") in completed_roots
-                and task.get("status") == "need_revision"
+                and task.get("status") not in {"completed", "failed", "archived"}
             ):
                 TaskRepository.update_status(
                     task["id"],

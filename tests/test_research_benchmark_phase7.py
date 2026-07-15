@@ -349,6 +349,17 @@ def test_revision_limit_does_not_reuse_older_rejected_sibling(monkeypatch):
     assert task_recovery_service.create_revision_task(latest, "still insufficient") is None
 
 
+def test_ready_tasks_archives_revision_after_root_completed(monkeypatch):
+    root = {"id": "root", "status": "completed"}
+    stale = {"id": "stale", "status": "pending", "revision_of_task_id": "root"}
+    updates = []
+    monkeypatch.setattr(TaskDependencyRepository, "get_for_task", lambda _task_id: [])
+    monkeypatch.setattr(TaskRepository, "update_status", lambda task_id, status, **kwargs: updates.append((task_id, status, kwargs)))
+
+    assert task_graph_service.ready_tasks([root, stale]) == []
+    assert updates == [("stale", "archived", {"blocked_reason": "根任务已终态，该返工分支已失效。"})]
+
+
 def test_failed_critical_dependency_propagates_to_descendants(monkeypatch):
     tasks = {
         "child": {"id": "child", "status": "blocked"},

@@ -192,6 +192,22 @@ class ThesisChapterService:
         return issues
 
     @staticmethod
+    def word_count(task: dict, latest: dict) -> int:
+        chapter = latest.get("chapter") if isinstance(latest, dict) else None
+        if not isinstance(chapter, dict):
+            return 0
+        text = "\n".join(
+            str(paragraph.get("text") or "")
+            for section in chapter.get("sections") or []
+            if isinstance(section, dict)
+            for paragraph in section.get("paragraphs") or []
+            if isinstance(paragraph, dict)
+        )
+        brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+        language = str((brief.get("thesis_requirements") or {}).get("language") or "")
+        return thesis_quality_service._word_count(text, language)
+
+    @staticmethod
     def artifact_support(run_id: str | None) -> list[dict]:
         support = []
         for result in ExperimentResultRepository.get_by_run(run_id) if run_id else []:

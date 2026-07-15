@@ -285,27 +285,46 @@ class TaskExecutor:
         return result
 
     async def _expand_short_chapter(self, llm, prompt: str, task: dict, owner_id: str, result: dict) -> dict:
-        issues = thesis_chapter_service.validate_output(task, result)
-        if not any(issue.startswith("chapter_word_count_below_70_percent:") for issue in issues):
-            return result
         budget = int(thesis_chapter_service.spec_from_task(task).get("word_budget") or 0)
         minimum = int(budget * 0.7)
-        expansion_prompt = (
-            f"{prompt}\n\n【章节长度有界补全】\n"
-            f"现有章节未达到硬性最低长度。请把 chapter 正文扩展到至少 {minimum} 词。"
-            "必须保留原有事实边界与 support_ids，只能深化论证、解释方法选择、分析结果含义、"
-            "讨论内部/外部效度与局限；禁止新增来源、实验结果或无依据事实，禁止重复句凑字数。"
-            "只返回补全后的完整 JSON 对象。\n现有 JSON：\n"
-            + json.dumps(result, ensure_ascii=False)
-        )
-        try:
-            return await self._generate_structured(llm, expansion_prompt, task, owner_id)
-        except Exception as exc:
-            logger.warning(
-                "[TaskExecutor] bounded chapter expansion failed; keeping original | task_id=%s | error=%s",
-                task.get("id"), exc,
+        best = result
+        best_issues = thesis_chapter_service.validate_output(task, best)
+        best_count = thesis_chapter_service.word_count(task, best)
+        for round_index in range(2):
+            if best_count >= minimum:
+                break
+            expansion_prompt = (
+                "你是学术章节编辑。只扩展下方 chapter 正文，返回合法 JSON："
+                '{"summary":"expanded","claims":[],"chapter":{...}}。'
+                f"当前正文约 {best_count} 词，硬性最低 {minimum} 词；请留出余量扩展到至少 {minimum + 80} 词。"
+                "保留所有已有事实边界、数值、段落 ID 和 support_ids，只可深化论证、方法理由、"
+                "结果含义、效度边界和局限；不得新增来源、数值、实验结果或 support_id，不得重复凑字。"
+                "summary 必须简短，claims 必须为空数组，把 token 用于 chapter。\n\n"
+                + thesis_chapter_service.context_for_task(task)
+                + "\n\n【待扩展 chapter】\n"
+                + json.dumps(best.get("chapter") or {}, ensure_ascii=False)
             )
-            return result
+            try:
+                expanded = await self._generate_structured(llm, expansion_prompt, task, owner_id)
+            except Exception as exc:
+                logger.warning(
+                    "[TaskExecutor] bounded chapter expansion failed | task_id=%s | round=%d | error=%s",
+                    task.get("id"), round_index + 1, exc,
+                )
+                continue
+            candidate = {**best, "chapter": expanded.get("chapter")}
+            candidate_issues = thesis_chapter_service.validate_output(task, candidate)
+            candidate_count = thesis_chapter_service.word_count(task, candidate)
+            old_non_length = {item for item in best_issues if not item.startswith("chapter_word_count_below_70_percent:")}
+            new_non_length = {item for item in candidate_issues if not item.startswith("chapter_word_count_below_70_percent:")}
+            if candidate_count > best_count and new_non_length.issubset(old_non_length):
+                best, best_count, best_issues = candidate, candidate_count, candidate_issues
+            else:
+                logger.warning(
+                    "[TaskExecutor] chapter expansion rejected (not monotonic) | task_id=%s | round=%d | words=%d->%d",
+                    task.get("id"), round_index + 1, best_count, candidate_count,
+                )
+        return best
 
     @staticmethod
     def _ground_material_output(result: dict, material_manifest: dict) -> dict:
