@@ -192,6 +192,20 @@ class TaskRecoveryService:
             )
         return TaskRepository.get_by_id(task["id"]) or task
 
+    def reopen_thesis_in_place(self, task: dict, feedback: str | dict) -> dict:
+        root = self._root_task(task)
+        description = self._revision_description(root, task, feedback)
+        TaskRepository.update_status(
+            task["id"], "pending", description=description, outputs=[],
+            blocked_reason=None, review_result=None, review_feedback=None,
+        )
+        if task.get("revision_of_task_id"):
+            TaskRepository.update_status(
+                root["id"], "blocked", blocked_reason=f"等待末轮原地定点返工: {task['id']}",
+                review_result=None, review_feedback=None,
+            )
+        return TaskRepository.get_by_id(task["id"]) or task
+
     @staticmethod
     def _newer_live_revision(task: dict, revisions: list[dict]) -> dict | None:
         """Return only a genuinely newer active revision for idempotent reuse."""

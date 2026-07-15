@@ -681,6 +681,14 @@ class RunExecutionService:
                 if review.get("requires_revision"):
                     revision_task = task_recovery_service.create_revision_task(latest_after_review, review)
                     if not revision_task:
+                        if self._can_reopen_thesis_in_place(latest_after_review):
+                            reopened = task_recovery_service.reopen_thesis_in_place(latest_after_review, review)
+                            run_event_service.emit(
+                                run_id, "revision.reopened_in_place", "review", "论文章节末轮定点返工",
+                                review.get("feedback", "按独立审稿清单原地修改"),
+                                task_id=reopened["id"], agent_id=latest_task.get("owner_agent"),
+                            )
+                            continue
                         terminal_feedback = (
                             f"已达到最大返工轮次 {settings.task_max_revision_rounds}，"
                             "系统停止继续生成返工任务，请先补充检索能力或调整任务边界。"
@@ -726,6 +734,10 @@ class RunExecutionService:
                     if self._auto_mode_enabled():
                         approval_service.resolve(request["id"], True, resolved_by="system:auto")
                         TaskRepository.update_status(revision_task["id"], "pending", blocked_reason=None)
+
+    @staticmethod
+    def _can_reopen_thesis_in_place(task: dict) -> bool:
+        return task.get("task_type") == "thesis_chapter" and int(task.get("attempt_count") or 0) < 2
 
     def request_cancel(self, run_id: str, reason: str = "用户取消运行") -> dict:
         run = RunRepository.get_by_id(run_id)
