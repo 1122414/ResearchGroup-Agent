@@ -107,6 +107,17 @@ def test_research_loop_budget_excludes_writing_and_includes_loop_revisions(monke
     }
 
 
+def test_research_loop_actions_never_depend_on_writing_tasks():
+    tasks = [
+        {"id": "research", "task_type": "literature_survey", "status": "completed"},
+        {"id": "analysis", "task_type": "result_analysis", "status": "completed"},
+        {"id": "chapter", "task_type": "thesis_chapter", "status": "completed"},
+        {"id": "report", "task_type": "report_writing", "status": "completed"},
+    ]
+
+    assert research_loop_service._research_dependencies(tasks) == ["research", "analysis"]
+
+
 def test_run_executor_uses_isolated_research_loop_budget():
     assert "get_summary" not in __import__("inspect").getsource(
         run_execution_service._execute_one_task

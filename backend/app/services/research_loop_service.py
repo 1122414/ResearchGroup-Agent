@@ -113,10 +113,7 @@ class ResearchLoopService:
             return []
 
         current_tasks = TaskRepository.get_all(run_id=run_id)
-        dependencies = [
-            item["id"] for item in current_tasks
-            if item.get("task_type") != "report_writing" and item.get("status") == "completed"
-        ]
+        dependencies = self._research_dependencies(current_tasks)
         selected = snapshot["approved_actions"][: settings.research_loop_max_tasks_per_round]
         round_number = snapshot["loop_rounds"] + 1
         now = datetime.now().isoformat()
@@ -157,6 +154,14 @@ class ResearchLoopService:
             }
         )
         return created
+
+    @staticmethod
+    def _research_dependencies(tasks: list[dict]) -> list[str]:
+        return [
+            item["id"] for item in tasks
+            if item.get("task_type") not in {"report_writing", "thesis_chapter"}
+            and item.get("status") == "completed"
+        ]
 
     def validate_observations(self, run_id: str) -> list[dict]:
         events = RunEventRepository.get_by_run(run_id, limit=500, phase="research_loop")
