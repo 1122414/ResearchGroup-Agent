@@ -162,6 +162,36 @@ class TaskRecoveryService:
         task_graph_service.recompute_critical_path(task["run_id"])
         return revision_task
 
+    def reopen_for_thesis_length(self, task: dict, adjustment: dict) -> dict:
+        root = self._root_task(task)
+        direction = adjustment["direction"]
+        verb = "扩展" if direction == "expand" else "压缩"
+        target = int(adjustment["target"])
+        feedback = {
+            "feedback": (
+                f"整篇论文当前 {adjustment['total']} 词，院校范围为 "
+                f"{adjustment['minimum']}–{adjustment['maximum'] or '不限上限'} 词。"
+                f"仅对本章做有界{verb}，将正文控制在 {max(target - 30, 1)}–{target + 30} 词。"
+                "保留事实、数值、段落 ID、support_ids 与限定边界；不得新增来源或重复凑字。"
+            ),
+            "revision_plan": [{
+                "layer": "institutional_total_length",
+                "issue": "整篇论文总字数超出冻结院校范围",
+                "required_change": f"本章有界{verb}到目标区间，不改变研究结论",
+            }],
+        }
+        description = self._revision_description(root, task, feedback)
+        TaskRepository.update_status(
+            task["id"], "pending", description=description, outputs=[], attempt_count=0,
+            blocked_reason=None, review_result=None, review_feedback=None,
+        )
+        if task.get("revision_of_task_id"):
+            TaskRepository.update_status(
+                root["id"], "blocked", blocked_reason=f"等待论文总字数拟合: {task['id']}",
+                review_result=None, review_feedback=None,
+            )
+        return TaskRepository.get_by_id(task["id"]) or task
+
     @staticmethod
     def _newer_live_revision(task: dict, revisions: list[dict]) -> dict | None:
         """Return only a genuinely newer active revision for idempotent reuse."""

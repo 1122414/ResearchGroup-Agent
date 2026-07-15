@@ -258,6 +258,32 @@ class ThesisChapterService:
             and all(item.get("status") == "completed" and not self.validate_output(item, (item.get("outputs") or [{}])[-1]) for item in chapters)
         )
 
+    def total_word_adjustment(self, run_id: str) -> dict | None:
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        requirements = brief.get("thesis_requirements") or {}
+        minimum = int(requirements.get("minimum_word_count") or 0)
+        maximum = int(requirements.get("maximum_word_count") or 0)
+        chapters = self.resolved_chapters(run_id)
+        if not chapters or not all(item.get("status") == "completed" for item in chapters):
+            return None
+        counts = {item["id"]: self.word_count(item, (item.get("outputs") or [{}])[-1]) for item in chapters}
+        total = sum(counts.values())
+        if minimum and total < minimum:
+            task = max(
+                chapters,
+                key=lambda item: int(self.spec_from_task(item).get("word_budget") or 0) - counts[item["id"]],
+            )
+            target = counts[task["id"]] + (minimum - total) + 60
+            return {"task": task, "direction": "expand", "target": target, "total": total, "minimum": minimum, "maximum": maximum}
+        if maximum and total > maximum:
+            task = max(
+                chapters,
+                key=lambda item: counts[item["id"]] - int(self.spec_from_task(item).get("word_budget") or 0),
+            )
+            target = max(self.minimum_word_count(task), counts[task["id"]] - (total - maximum) - 60)
+            return {"task": task, "direction": "condense", "target": target, "total": total, "minimum": minimum, "maximum": maximum}
+        return None
+
     @staticmethod
     def resolved_chapters(run_id: str) -> list[dict]:
         tasks = [

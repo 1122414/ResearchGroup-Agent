@@ -153,7 +153,7 @@ class TaskRepository:
                 updates.append(f"{key} = ?")
                 params.append(json.dumps(value, ensure_ascii=False) if value else None)
             elif key in (
-                "owner_agent", "review_feedback", "run_id", "blocked_reason", "last_checkpoint",
+                "title", "description", "owner_agent", "review_feedback", "run_id", "blocked_reason", "last_checkpoint",
                 "revision_of_task_id", "subquestion_id", "hypothesis_id", "milestone_id",
             ):
                 updates.append(f"{key} = ?")

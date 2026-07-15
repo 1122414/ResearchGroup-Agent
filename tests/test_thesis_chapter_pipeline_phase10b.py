@@ -248,6 +248,25 @@ def test_chapter_minimum_tracks_frozen_institutional_word_floor(tmp_path):
     assert thesis_chapter_service.minimum_word_count(task) == 2800
 
 
+def test_total_length_adjustment_targets_largest_excess_chapter(monkeypatch):
+    chapters = [
+        {"id": "intro", "status": "completed", "description": '【thesis_chapter_spec】{"word_budget":1000}\n', "outputs": [{"count": 1100}]},
+        {"id": "results", "status": "completed", "description": '【thesis_chapter_spec】{"word_budget":1200}\n', "outputs": [{"count": 1700}]},
+    ]
+    monkeypatch.setattr(ResearchBriefRepository, "get_by_run", lambda _run_id: {
+        "thesis_requirements": {"minimum_word_count": 2000, "maximum_word_count": 2500},
+    })
+    monkeypatch.setattr(thesis_chapter_service, "resolved_chapters", lambda _run_id: chapters)
+    monkeypatch.setattr(thesis_chapter_service, "word_count", lambda task, _output: task["outputs"][-1]["count"])
+    monkeypatch.setattr(thesis_chapter_service, "minimum_word_count", lambda _task: 900)
+
+    adjustment = thesis_chapter_service.total_word_adjustment("run_length")
+
+    assert adjustment["task"]["id"] == "results"
+    assert adjustment["direction"] == "condense"
+    assert adjustment["target"] == 1340
+
+
 def test_chapter_gate_accepts_frozen_experiment_support(tmp_path, monkeypatch):
     run_id, _ = _run_with_thesis(tmp_path, ["Results"])
     task = thesis_chapter_service.ensure_tasks(run_id)[0]

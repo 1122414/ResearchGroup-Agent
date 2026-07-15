@@ -197,33 +197,51 @@ class RunExecutionService:
                     f"按冻结院校规范创建 {len(chapter_tasks)} 个章节任务",
                     payload={"task_ids": [item["id"] for item in chapter_tasks]},
                 )
-            await self._execute_writing_flow(run_id)
-            if self._has_pending_approval(run_id):
-                return self._pause_for_confirmation(run_id)
+            for length_round in range(3):
+                await self._execute_writing_flow(run_id)
+                if self._has_pending_approval(run_id):
+                    return self._pause_for_confirmation(run_id)
 
-            tasks = TaskRepository.get_all(run_id=run_id)
-            writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
-            if writing_tasks and not self._research_settled(writing_tasks):
-                RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
-                return self.get_summary(run_id)
-            failed_chapters = self._failed_required_chapters(tasks)
-            failed_chapters.extend(
-                task for task in self._invalid_required_chapters(run_id)
-                if task["id"] not in {item["id"] for item in failed_chapters}
-            )
-            if failed_chapters:
-                names = "、".join(task.get("title") or task["id"] for task in failed_chapters)
-                reason = f"必需论文章节未通过科学质量门：{names}"
-                RunRepository.update_status(
-                    run_id, RunStatus.failed.value, current_step=reason,
-                    completed_at=datetime.now().isoformat(),
+                tasks = TaskRepository.get_all(run_id=run_id)
+                writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
+                if writing_tasks and not self._research_settled(writing_tasks):
+                    RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
+                    return self.get_summary(run_id)
+                failed_chapters = self._failed_required_chapters(tasks)
+                failed_chapters.extend(
+                    task for task in self._invalid_required_chapters(run_id)
+                    if task["id"] not in {item["id"] for item in failed_chapters}
                 )
-                self._reset_agents(run_id, blocked=True)
+                if failed_chapters:
+                    names = "、".join(task.get("title") or task["id"] for task in failed_chapters)
+                    reason = f"必需论文章节未通过科学质量门：{names}"
+                    RunRepository.update_status(
+                        run_id, RunStatus.failed.value, current_step=reason,
+                        completed_at=datetime.now().isoformat(),
+                    )
+                    self._reset_agents(run_id, blocked=True)
+                    run_event_service.emit(
+                        run_id, "thesis.assembly_blocked", "writing", "论文装配已阻断", reason,
+                        payload={"failed_chapter_ids": [task["id"] for task in failed_chapters]},
+                    )
+                    return self.get_summary(run_id)
+                adjustment = thesis_chapter_service.total_word_adjustment(run_id)
+                if not adjustment:
+                    break
+                if length_round >= 2:
+                    reason = "论文总字数经过两轮有界拟合后仍未进入冻结院校范围"
+                    RunRepository.update_status(
+                        run_id, RunStatus.failed.value, current_step=reason,
+                        completed_at=datetime.now().isoformat(),
+                    )
+                    self._reset_agents(run_id, blocked=True)
+                    return self.get_summary(run_id)
+                reopened = task_recovery_service.reopen_for_thesis_length(adjustment["task"], adjustment)
                 run_event_service.emit(
-                    run_id, "thesis.assembly_blocked", "writing", "论文装配已阻断", reason,
-                    payload={"failed_chapter_ids": [task["id"] for task in failed_chapters]},
+                    run_id, "thesis.length_adjustment", "writing", "论文总字数有界拟合",
+                    f"{adjustment['direction']} {reopened['id']} 到约 {adjustment['target']} 词",
+                    task_id=reopened["id"], payload={key: value for key, value in adjustment.items() if key != "task"},
                 )
-                return self.get_summary(run_id)
 
             if not self._ensure_approval(
                 run_id,
