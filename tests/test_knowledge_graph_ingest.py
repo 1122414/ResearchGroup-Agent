@@ -123,3 +123,28 @@ def test_partially_entailed_claim_stays_in_audit_not_knowledge_graph():
 
     assert graph["claims"] == []
     assert ResearchClaimRepository.get_by_run(run_id) == []
+
+
+def test_thesis_writing_cannot_mutate_frozen_knowledge_graph():
+    run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
+    now = datetime.now().isoformat()
+    ResearchClaimRepository.insert({
+        "id": f"claim_{uuid.uuid4().hex[:8]}", "run_id": run_id,
+        "statement": "A verified experiment claim.", "status": "supported",
+        "evidence_ids": ["artifact", "sha256"], "confidence": 0.9,
+        "created_at": now, "updated_at": now,
+    })
+    task = {"id": f"chapter_{uuid.uuid4().hex[:6]}", "run_id": run_id, "task_type": "thesis_chapter"}
+
+    graph = knowledge_graph_service.ingest_task_result(task, {
+        "claims": [{"statement": "A verified experiment claim.", "confidence": 0.1}],
+        "hypotheses": [{"statement": "Writing must not create a hypothesis."}],
+        "uncertainties": [{"description": "Writing must not reopen research.", "severity": "high"}],
+    })
+
+    assert graph == {"claims": [], "hypotheses": [], "uncertainties": [], "evidence_links": 0}
+    claim = ResearchClaimRepository.get_by_run(run_id)[0]
+    assert claim["status"] == "supported"
+    assert claim["confidence"] == 0.9
+    assert ResearchHypothesisRepository.get_by_run(run_id) == []
+    assert ResearchUncertaintyRepository.get_by_run(run_id) == []

@@ -1900,6 +1900,16 @@ class ResearchUncertaintyRepository:
         return [_deserialize_research_uncertainty(row) for row in rows]
 
     @staticmethod
+    def resolve(uncertainty_id: str, resolved_at: str) -> None:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE research_uncertainties SET status = 'resolved', resolved_at = ? WHERE id = ?",
+            (resolved_at, uncertainty_id),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
     def resolve_by_category(run_id: str, category: str, resolved_at: str) -> None:
         conn = get_connection()
         conn.execute(

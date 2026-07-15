@@ -28,6 +28,10 @@ class KnowledgeGraphService:
         run_id = task.get("run_id")
         if not run_id or not isinstance(result, dict):
             return {"claims": [], "hypotheses": [], "uncertainties": [], "evidence_links": 0}
+        if task.get("task_type") in {"thesis_chapter", "report_writing"}:
+            # Writing consumes the frozen graph. Letting prose flow back into
+            # research state can downgrade verified claims and reopen the loop.
+            return {"claims": [], "hypotheses": [], "uncertainties": [], "evidence_links": 0}
 
         evidence = EvidenceRepository.get_by_run(run_id)
         valid_source_ids = {
