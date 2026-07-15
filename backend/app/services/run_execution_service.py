@@ -737,7 +737,7 @@ class RunExecutionService:
 
     @staticmethod
     def _can_reopen_thesis_in_place(task: dict) -> bool:
-        return task.get("task_type") == "thesis_chapter" and int(task.get("attempt_count") or 0) < 2
+        return task.get("task_type") == "thesis_chapter" and int(task.get("attempt_count") or 0) < 3
 
     def request_cancel(self, run_id: str, reason: str = "用户取消运行") -> dict:
         run = RunRepository.get_by_id(run_id)
