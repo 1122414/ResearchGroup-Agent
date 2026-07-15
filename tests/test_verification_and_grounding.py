@@ -117,6 +117,31 @@ def test_literature_policy_keeps_only_passage_grounded_claims(monkeypatch):
     assert checked["academic_integrity"]["dropped_ungrounded_claims"] == 1
 
 
+def test_contextual_absence_is_kept_as_note_not_research_claim(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    source = {"id": "source_ok", "metadata": {"citation_eligible": True}}
+    excerpt = {
+        "id": "excerpt_ok", "source_id": "source_ok", "excerpt": "The paper evaluates dense retrieval.",
+        "excerpt_type": "fulltext",
+    }
+    result = {
+        "summary": "search gap",
+        "claims": [{
+            "statement": "The source does not compare chunk overlap settings.",
+            "evidence_source_ids": ["source_ok"], "evidence_passage_ids": ["excerpt_ok"],
+            "relation": "context", "confidence": 0.8,
+        }],
+    }
+
+    checked = research_integrity_service.apply_literature_policy(
+        result, [source], "chunking literature", "test", {"title": "literature review"}, [excerpt],
+    )
+
+    assert checked["claims"] == []
+    assert len(checked["context_notes"]) == 1
+    assert checked["academic_integrity"]["context_claims_moved_to_notes"] == 1
+
+
 def test_literature_policy_allows_locator_of_whitelisted_url(monkeypatch):
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
     sources = [{

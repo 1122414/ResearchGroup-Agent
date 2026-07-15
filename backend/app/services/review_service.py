@@ -1,6 +1,7 @@
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
@@ -8,8 +9,9 @@ from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import (
     OutputRepository, ResearchClaimRepository, ResearchMilestoneRepository,
-    ReviewDecisionRepository, TaskRepository,
+    ReviewDecisionRepository, RunRepository, TaskRepository,
 )
+from .artifact_manifest_service import artifact_manifest_service
 from .scientific_quality_gate_service import scientific_quality_gate_service
 
 
@@ -114,23 +116,51 @@ class ReviewService:
             for item in ResearchClaimRepository.get_by_run(task.get("run_id"))
         }
         now = datetime.now().isoformat()
+        experiment_evidence = ReviewService._verified_experiment_evidence(task, latest)
         for item in latest.get("claims") or []:
             provenance = item.get("provenance") or {}
-            if not all(provenance.get(key) for key in (
+            method_evidence = all(provenance.get(key) for key in (
                 "method_family", "input_hashes", "analysis_artifact", "analysis_artifact_sha256",
-            )):
+            ))
+            experiment_claim = all(provenance.get(key) for key in (
+                "protocol_id", "raw_results", "raw_results_sha256",
+            ))
+            if not method_evidence and not (experiment_claim and experiment_evidence):
                 continue
             claim = claims.get(" ".join(str(item.get("statement") or "").lower().split()))
             if not claim:
                 continue
+            evidence_ids = experiment_evidence if experiment_claim else [
+                provenance["analysis_artifact"], provenance["analysis_artifact_sha256"],
+                *provenance["input_hashes"],
+            ]
             ResearchClaimRepository.update(
                 claim["id"], status="supported", confidence=float(item.get("confidence") or 0.8),
-                evidence_ids=[
-                    provenance["analysis_artifact"], provenance["analysis_artifact_sha256"],
-                    *provenance["input_hashes"],
-                ],
+                evidence_ids=evidence_ids,
                 updated_at=now,
             )
+
+    @staticmethod
+    def _verified_experiment_evidence(task: dict, latest: dict) -> list[str]:
+        experiment = latest.get("reproducible_experiment") or {}
+        metrics = experiment.get("metrics") or {}
+        if not (
+            experiment.get("publishable") is True
+            and (experiment.get("reproduction") or {}).get("passed") is True
+            and (metrics.get("statistical_analysis") or {}).get("passed") is True
+        ):
+            return []
+        run = RunRepository.get_by_id(task.get("run_id")) or {}
+        run_dir = Path(str(run.get("artifact_dir") or ""))
+        manifest = artifact_manifest_service.read(run_dir)
+        artifact_paths = {str(path) for path in experiment.get("artifacts") or []}
+        evidence_ids: list[str] = []
+        for entry in manifest.get("artifacts") or []:
+            path = str(entry.get("path") or "")
+            digest = str((entry.get("metadata") or {}).get("sha256") or "")
+            if path in artifact_paths and digest:
+                evidence_ids.extend([path, digest])
+        return evidence_ids
 
     def _review_quality_gate_failure(self, task: dict, quality_gates: dict) -> dict:
         rubric = self._rubric_for_task(task.get("task_type", ""))

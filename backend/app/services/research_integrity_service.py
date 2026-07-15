@@ -75,10 +75,12 @@ class ResearchIntegrityService:
         if settings.citation_validation_enabled and violations:
             return self._blocked_fabrication_result(query, source_mode, sources, violations)
 
-        valid_claims = self._scope_single_source_claims(
+        grounded_claims = self._scope_single_source_claims(
             self._grounded_claims(result.get("claims"), content_excerpts)
         )
-        dropped_claims = len(result.get("claims") or []) - len(valid_claims)
+        context_notes = [item for item in grounded_claims if item.get("relation") == "context"]
+        valid_claims = [item for item in grounded_claims if item.get("relation") != "context"]
+        dropped_claims = len(result.get("claims") or []) - len(grounded_claims)
 
         references_used = result.get("references_used") or []
         if not isinstance(references_used, list):
@@ -94,6 +96,7 @@ class ResearchIntegrityService:
 
         grounded = dict(result)
         grounded["claims"] = valid_claims
+        grounded["context_notes"] = context_notes
         if dropped_claims and not valid_claims:
             grounded["summary"] = "完成来源核验，但模型结论未绑定到可定位证据片段，已从研究结论中移除。"
             grounded["findings"] = []
@@ -108,6 +111,7 @@ class ResearchIntegrityService:
             "default_required_source_count": settings.literature_min_grounded_sources,
             "evidence_scope": self.evidence_scope(task, query),
             "dropped_ungrounded_claims": dropped_claims,
+            "context_claims_moved_to_notes": len(context_notes),
             "violations": [],
         }
         if len(grounded_sources) < settings.literature_min_grounded_sources:

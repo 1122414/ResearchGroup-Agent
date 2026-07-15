@@ -109,6 +109,12 @@ class TaskExecutor:
 7. allowed_sources（含可引用 passages）：
 当前任务所需最少可核验来源数：{required_source_count}
 {research_integrity_service.render_allowed_sources(prompt_sources, prompt_excerpts)}
+
+【文献综合要求】
+1. 优先提取 3–5 条来源实际报告的原子化方法、结果或局限，每条只表达一个可由 passage 直接蕴含的事实。
+2. 单篇来源结论必须明确归因于该研究；若五篇来源各有相关事实，应分别形成 claim，不要压成一个宽泛总结。
+3. “这些来源没有讨论/没有比较某主题”属于检索缺口，只能写入 uncertainties 或 search_gaps，relation=context 的说明不得放入 claims。
+4. 没有直接做相同实验不等于没有可用背景证据；可提取与构念、指标、基线、方法选择或有效性边界相关的实际报告，但不得暗示其验证了本课题结果。
 """
         collaborator_results = await collaborator_service.execute_all(task, literature_grounding)
         collaboration_context = self._collaboration_context(task, collaborator_results)

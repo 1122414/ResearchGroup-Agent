@@ -12,9 +12,11 @@ from backend.app.services.experiment_executor import ExperimentExecutorService
 from backend.app.services.experiment_statistics_service import experiment_statistics_service
 from backend.app.services.independent_reviewer_service import independent_reviewer_service
 from backend.app.services.reproducible_experiment_service import reproducible_experiment_service
+from backend.app.services.review_service import review_service
+from backend.app.services.scientific_quality_gate_service import scientific_quality_gate_service
 from backend.app.services.task_executor import task_executor
 from backend.app.storage import init_db
-from backend.app.storage.repositories import ResearchHypothesisRepository, RunRepository
+from backend.app.storage.repositories import ResearchClaimRepository, ResearchHypothesisRepository, RunRepository
 
 
 @pytest.fixture(autouse=True)
@@ -223,3 +225,15 @@ async def test_real_uploaded_retrieval_data_runs_repeats_and_clean_reproduction(
     assert reviewer_payload["per_query_results_summary"]["no_split"]["count"] == 3
     manifest = artifact_manifest_service.read(artifact_dir)
     assert all(item["metadata"].get("sha256") for item in manifest["artifacts"] if item["kind"] == "experiment")
+
+    claim_id = f"claim_{uuid.uuid4().hex[:8]}"
+    ResearchClaimRepository.insert({
+        "id": claim_id, "run_id": run_id, "statement": result["claims"][0]["statement"],
+        "status": "draft", "evidence_ids": [], "confidence": 0,
+        "created_at": now, "updated_at": now,
+    })
+    latest = task_executor._ground_experiment_output(result)
+    review_service._promote_artifact_claims(task, latest)
+    promoted = ResearchClaimRepository.get_by_id(claim_id)
+    assert promoted["status"] == "supported"
+    assert scientific_quality_gate_service._artifact_backed_research_claim(run_id, promoted) is True
