@@ -48,33 +48,47 @@ def _packages() -> dict[str, dict]:
         },
         "qualitative": {
             **_base("qualitative"),
-            "coded_segments": [
-                {"id": "s1", "source_id": "i1", "codes": ["trust", "risk"]},
-                {"id": "s2", "source_id": "i2", "codes": ["trust"]},
+            "source_materials": [
+                {"id": "i1", "locator": "transcript:1", "sha256": "1" * 64},
+                {"id": "i2", "locator": "transcript:2", "sha256": "2" * 64},
             ],
-            "codebook": [{"code": "trust", "definition": "declared definition"}],
-            "audit_trail": "two coding rounds", "negative_cases": ["s3"],
+            "coded_segments": [
+                {"id": "s1", "source_id": "i1", "text_sha256": "3" * 64, "codes": ["trust", "risk"]},
+                {"id": "s2", "source_id": "i2", "text_sha256": "4" * 64, "codes": ["trust"]},
+                {"id": "s3", "source_id": "i2", "text_sha256": "5" * 64, "codes": ["risk"]},
+            ],
+            "codebook": [
+                {"code": "trust", "definition": "declared definition"},
+                {"code": "risk", "definition": "declared risk definition"},
+            ],
+            "audit_trail": [
+                {"coder_id": "coder_1", "action": "initial coding"},
+                {"coder_id": "coder_2", "action": "independent review"},
+            ], "negative_cases": ["s3"],
             "reflexivity_statement": "researcher position declared",
             "saturation_assessment": "information power assessed",
         },
         "systematic_review": {
             **_base("systematic_review"),
+            "studies": [{"id": "p1", "title": "Verified Study", "doi": "10.1000/p1"}],
             "screening_records": [
                 {"study_id": "p1", "reviewer": "r1", "stage": "title", "decision": "include"},
                 {"study_id": "p1", "reviewer": "r2", "stage": "title", "decision": "include"},
             ],
-            "deduplication_log": "10 -> 9", "quality_appraisals": [{"study_id": "p1", "rating": "low risk"}],
+            "deduplication_log": {"input_count": 2, "deduplicated_count": 1, "duplicate_ids": ["dup1"]},
+            "quality_appraisals": [{"study_id": "p1", "rating": "low risk"}],
             "synthesis_method": "narrative synthesis",
         },
         "humanities": {
             **_base("humanities"),
             "primary_sources": [
-                {"id": "a", "provenance": "archive_a", "criticism": "authorship and date checked"},
-                {"id": "b", "provenance": "archive_b", "criticism": "edition and transmission checked"},
+                {"id": "a", "provenance": "archive_a", "locator": "archive:a", "sha256": "6" * 64, "criticism": "authorship and date checked"},
+                {"id": "b", "provenance": "archive_b", "locator": "archive:b", "sha256": "7" * 64, "criticism": "edition and transmission checked"},
             ],
             "historical_or_textual_context": "bounded historical context",
             "interpretive_framework": "declared hermeneutic framework",
-            "counterarguments": ["alternative reading"], "interpretations": ["bounded interpretation"],
+            "counterarguments": [{"statement": "alternative reading", "source_ids": ["b"]}],
+            "interpretations": [{"statement": "bounded interpretation", "source_ids": ["a", "b"]}],
         },
         "theoretical": {
             **_base("theoretical"), "definitions": ["D1"], "assumptions": ["A1"],
@@ -163,6 +177,43 @@ def test_systematic_review_adapter_rejects_single_reviewer_screening():
     }
     artifact = research_analysis_service.analyze_package(package, "systematic_review", ["f" * 64])
     assert artifact["method_checks"]["dual_screening"]["status"] == "failed"
+
+
+def test_qualitative_adapter_rejects_unhashed_or_unknown_source_segments():
+    package = {
+        **_packages()["qualitative"],
+        "coded_segments": [{"id": "s1", "source_id": "invented", "text_sha256": "bad", "codes": ["trust"]}],
+    }
+
+    artifact = research_analysis_service.analyze_package(package, "qualitative", ["a" * 64])
+
+    assert artifact["method_checks"]["material_traceability"]["status"] == "failed"
+
+
+def test_systematic_review_rejects_screening_of_unregistered_study():
+    package = {
+        **_packages()["systematic_review"],
+        "screening_records": [
+            {"study_id": "invented", "reviewer": "r1", "stage": "title", "decision": "include"},
+            {"study_id": "invented", "reviewer": "r2", "stage": "title", "decision": "include"},
+        ],
+    }
+
+    artifact = research_analysis_service.analyze_package(package, "systematic_review", ["b" * 64])
+
+    assert artifact["method_checks"]["screening_integrity"]["status"] == "failed"
+    assert artifact["method_checks"]["appraisal_coverage"]["status"] == "failed"
+
+
+def test_humanities_adapter_rejects_untraceable_interpretation():
+    package = {
+        **_packages()["humanities"],
+        "interpretations": [{"statement": "invented reading", "source_ids": ["missing"]}],
+    }
+
+    artifact = research_analysis_service.analyze_package(package, "humanities", ["c" * 64])
+
+    assert artifact["method_checks"]["interpretation_traceability"]["status"] == "failed"
 
 
 def test_analysis_reads_only_hashed_method_package_and_registers_artifact(tmp_path):

@@ -8,9 +8,18 @@ class ResearchMethodRegistryService:
         "quantitative": {"measurement_validity", "missing_data", "effect_size", "uncertainty", "robustness"},
         "computational": {"baseline", "data_split", "effect_size", "uncertainty", "reproduction"},
         "experimental": {"controls", "protocol_deviations", "effect_size", "uncertainty", "raw_record_audit"},
-        "qualitative": {"codebook", "audit_trail", "negative_cases", "reflexivity", "saturation_or_information_power"},
-        "systematic_review": {"deduplication", "dual_screening", "quality_appraisal", "flow_accounting", "synthesis_method"},
-        "humanities": {"primary_source_criticism", "contextualization", "interpretive_framework", "counterarguments", "source_triangulation"},
+        "qualitative": {
+            "material_traceability", "codebook", "coding_coverage", "audit_trail",
+            "negative_cases", "reflexivity", "saturation_or_information_power",
+        },
+        "systematic_review": {
+            "study_identity", "deduplication", "screening_integrity", "dual_screening",
+            "quality_appraisal", "appraisal_coverage", "flow_accounting", "synthesis_method",
+        },
+        "humanities": {
+            "material_integrity", "primary_source_criticism", "contextualization",
+            "interpretive_framework", "interpretation_traceability", "counterarguments", "source_triangulation",
+        },
         "theoretical": {"definitions", "assumptions", "dependency_graph", "proof_or_derivation_check", "counterexample_search"},
         "design_science": {"requirements_traceability", "artifact_description", "evaluation", "alternatives", "limitations"},
         "mixed_methods": {"component_quality", "integration_design", "joint_display", "discordance_analysis", "meta_inference"},

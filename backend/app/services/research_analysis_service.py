@@ -176,6 +176,17 @@ class ResearchAnalysisService:
 
     def _qualitative(self, package: dict) -> tuple[list[dict], dict, list[str], str]:
         segments = package.get("coded_segments") or []
+        materials = package.get("source_materials") or []
+        material_ids = {str(item.get("id")) for item in materials if item.get("id")}
+        segment_ids = {str(item.get("id")) for item in segments if item.get("id")}
+        defined_codes = {
+            str(item.get("code")) for item in package.get("codebook") or []
+            if item.get("code") and item.get("definition")
+        }
+        used_codes = {
+            str(code) for segment in segments if isinstance(segment, dict)
+            for code in segment.get("codes") or []
+        }
         counts: dict[str, int] = {}
         source_ids: set[str] = set()
         for segment in segments if isinstance(segments, list) else []:
@@ -183,9 +194,31 @@ class ResearchAnalysisService:
             for code in segment.get("codes") or []:
                 counts[str(code)] = counts.get(str(code), 0) + 1
         checks = {
-            "codebook": self._check(bool(package.get("codebook")), f"codebook条目={len(package.get('codebook') or [])}"),
-            "audit_trail": self._check(bool(package.get("audit_trail")), str(package.get("audit_trail") or "")),
-            "negative_cases": self._check(bool(package.get("negative_cases")), f"负例数={len(package.get('negative_cases') or [])}"),
+            "material_traceability": self._check(
+                bool(materials) and all(
+                    item.get("id") and item.get("locator") and self._valid_hash(item.get("sha256"))
+                    for item in materials
+                ) and all(
+                    str(item.get("source_id")) in material_ids and self._valid_hash(item.get("text_sha256"))
+                    for item in segments
+                ),
+                f"原始材料={len(materials)}，编码片段={len(segments)}",
+            ),
+            "codebook": self._check(bool(defined_codes), f"有效codebook条目={len(defined_codes)}"),
+            "coding_coverage": self._check(
+                bool(segments) and len(segment_ids) == len(segments) and used_codes <= defined_codes,
+                f"已定义代码={sorted(defined_codes)}，已使用代码={sorted(used_codes)}",
+            ),
+            "audit_trail": self._check(
+                isinstance(package.get("audit_trail"), list) and bool(package.get("audit_trail"))
+                and all(isinstance(item, dict) and item.get("coder_id") and item.get("action") for item in package.get("audit_trail")),
+                f"结构化审计事件={len(package.get('audit_trail') or [])}",
+            ),
+            "negative_cases": self._check(
+                bool(package.get("negative_cases"))
+                and set(map(str, package.get("negative_cases") or [])) <= segment_ids,
+                f"负例数={len(package.get('negative_cases') or [])}",
+            ),
             "reflexivity": self._check(bool(package.get("reflexivity_statement")), str(package.get("reflexivity_statement") or "")),
             "saturation_or_information_power": self._check(bool(package.get("saturation_assessment")), str(package.get("saturation_assessment") or "")),
         }
@@ -194,6 +227,8 @@ class ResearchAnalysisService:
 
     def _systematic_review(self, package: dict) -> tuple[list[dict], dict, list[str], str]:
         records = package.get("screening_records") or []
+        studies = package.get("studies") or []
+        study_ids = {str(item.get("id")) for item in studies if item.get("id")}
         decisions: dict[str, set[str]] = {}
         flow: dict[str, int] = {}
         for item in records if isinstance(records, list) else []:
@@ -202,10 +237,39 @@ class ResearchAnalysisService:
             key = f"{item.get('stage')}:{item.get('decision')}"
             flow[key] = flow.get(key, 0) + 1
         dual = bool(decisions) and all(len(reviewers - {""}) >= 2 for reviewers in decisions.values())
+        dedup = package.get("deduplication_log") or {}
+        input_count = int(dedup.get("input_count") or 0) if isinstance(dedup, dict) else 0
+        deduplicated_count = int(dedup.get("deduplicated_count") or 0) if isinstance(dedup, dict) else 0
+        duplicates = (dedup.get("duplicate_ids") or []) if isinstance(dedup, dict) else []
+        included_ids = {
+            str(item.get("study_id")) for item in records
+            if str(item.get("decision") or "").lower() == "include"
+        }
+        appraisal_ids = {
+            str(item.get("study_id")) for item in package.get("quality_appraisals") or []
+            if item.get("rating")
+        }
         checks = {
-            "deduplication": self._check(bool(package.get("deduplication_log")), str(package.get("deduplication_log") or "")),
+            "study_identity": self._check(
+                bool(studies) and all(
+                    item.get("id") and item.get("title") and (item.get("doi") or item.get("url"))
+                    for item in studies
+                ), f"可识别研究={len(studies)}",
+            ),
+            "deduplication": self._check(
+                input_count >= deduplicated_count > 0 and input_count - deduplicated_count == len(duplicates),
+                f"输入={input_count}，去重后={deduplicated_count}，重复={len(duplicates)}",
+            ),
+            "screening_integrity": self._check(
+                bool(records) and set(decisions) <= study_ids,
+                f"筛选研究={len(decisions)}，已登记研究={len(study_ids)}",
+            ),
             "dual_screening": self._check(dual, f"双人记录覆盖={sum(len(v - {''}) >= 2 for v in decisions.values())}/{len(decisions)}"),
             "quality_appraisal": self._check(bool(package.get("quality_appraisals")), f"评价数={len(package.get('quality_appraisals') or [])}"),
+            "appraisal_coverage": self._check(
+                bool(included_ids) and included_ids <= appraisal_ids,
+                f"纳入={sorted(included_ids)}，已评价={sorted(appraisal_ids)}",
+            ),
             "flow_accounting": self._check(bool(flow), json.dumps(flow, ensure_ascii=False)),
             "synthesis_method": self._check(bool(package.get("synthesis_method")), str(package.get("synthesis_method") or "")),
         }
@@ -213,14 +277,37 @@ class ResearchAnalysisService:
 
     def _humanities(self, package: dict) -> tuple[list[dict], dict, list[str], str]:
         sources = package.get("primary_sources") or []
+        source_ids = {str(item.get("id")) for item in sources if item.get("id")}
+        interpretations = package.get("interpretations") or []
+        counterarguments = package.get("counterarguments") or []
+        interpretation_links_valid = bool(interpretations) and all(
+            isinstance(item, dict) and item.get("statement") and item.get("source_ids")
+            and set(map(str, item.get("source_ids") or [])) <= source_ids
+            for item in interpretations
+        )
         checks = {
+            "material_integrity": self._check(
+                bool(sources) and all(
+                    item.get("id") and item.get("locator") and self._valid_hash(item.get("sha256"))
+                    for item in sources
+                ), f"哈希一手来源={len(sources)}",
+            ),
             "primary_source_criticism": self._check(bool(sources) and all(item.get("criticism") for item in sources), f"一手来源数={len(sources)}"),
             "contextualization": self._check(bool(package.get("historical_or_textual_context")), str(package.get("historical_or_textual_context") or "")),
             "interpretive_framework": self._check(bool(package.get("interpretive_framework")), str(package.get("interpretive_framework") or "")),
-            "counterarguments": self._check(bool(package.get("counterarguments")), f"反论证数={len(package.get('counterarguments') or [])}"),
+            "interpretation_traceability": self._check(
+                interpretation_links_valid, f"可追溯解释={len(interpretations)}",
+            ),
+            "counterarguments": self._check(
+                bool(counterarguments) and all(
+                    isinstance(item, dict) and item.get("statement")
+                    and set(map(str, item.get("source_ids") or [])) <= source_ids
+                    for item in counterarguments
+                ), f"反论证数={len(counterarguments)}",
+            ),
             "source_triangulation": self._check(len({item.get("provenance") for item in sources if item.get("provenance")}) >= 2, "独立出处至少2类"),
         }
-        findings = [{"primary_source_count": len(sources), "interpretations": package.get("interpretations") or []}]
+        findings = [{"primary_source_count": len(sources), "interpretations": interpretations}]
         return findings, checks, list(package.get("limitations") or []), "核对一手来源批判、语境、解释框架、反论证和多出处互证"
 
     def _theoretical(self, package: dict) -> tuple[list[dict], dict, list[str], str]:
@@ -261,6 +348,11 @@ class ResearchAnalysisService:
     @staticmethod
     def _check(passed: bool, evidence: str) -> dict:
         return {"status": "passed" if passed else "failed", "evidence": evidence or "未提供"}
+
+    @staticmethod
+    def _valid_hash(value) -> bool:
+        digest = str(value or "").lower()
+        return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
     @staticmethod
     def _acyclic(steps: list[dict]) -> bool:
