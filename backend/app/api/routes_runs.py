@@ -226,6 +226,9 @@ def _save_and_extract_attachments(run_id: str, attachments: list[dict], artifact
                 "size": item.get("size"),
                 "path": str(path),
                 "extracted_markdown": text,
+                "source_url": item.get("source_url"),
+                "license": item.get("license"),
+                "provenance": item.get("provenance") or item.get("source_url"),
             }
         )
 

@@ -25,10 +25,6 @@ AUTO_APPROVALS = {"research_contract_freeze", "experiment_execute", "report_publ
 
 ENGINEERING_SEED_SOURCES = [
     {
-        "title": "Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models",
-        "year": 2024, "venue": "arXiv", "url": "https://arxiv.org/abs/2409.04701",
-    },
-    {
         "title": "Document Segmentation Matters for Retrieval-Augmented Generation",
         "year": 2025, "venue": "Findings of ACL", "doi": "10.18653/v1/2025.findings-acl.422",
         "url": "https://aclanthology.org/2025.findings-acl.422/",
@@ -48,13 +44,86 @@ ENGINEERING_SEED_SOURCES = [
         "year": 2024, "venue": "FEVER", "doi": "10.18653/v1/2024.fever-1.25",
         "url": "https://aclanthology.org/2024.fever-1.25/",
     },
+    {
+        "title": "RAGAS: Automated Evaluation of Retrieval Augmented Generation",
+        "year": 2024, "venue": "EACL System Demonstrations", "doi": "10.18653/v1/2024.eacl-demo.16",
+        "url": "https://aclanthology.org/2024.eacl-demo.16/",
+    },
+    {
+        "title": "Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models",
+        "year": 2024, "venue": "arXiv", "url": "https://arxiv.org/abs/2409.04701",
+    },
 ]
+
+PUBLIC_TEXT_SOURCES = {
+    "humanities": [
+        {
+            "name": "wollstonecraft_vindication_excerpt.txt",
+            "title": "A Vindication of the Rights of Woman",
+            "authors": "Mary Wollstonecraft",
+            "url": "https://www.gutenberg.org/cache/epub/3420/pg3420.txt",
+            "markers": ["A VINDICATION OF THE RIGHTS OF WOMAN", "MARY WOLLSTONECRAFT"],
+        },
+        {
+            "name": "burke_reflections_excerpt.txt",
+            "title": "Reflections on the Revolution in France",
+            "authors": "Edmund Burke",
+            "url": "https://www.gutenberg.org/cache/epub/15679/pg15679.txt",
+            "markers": ["REFLECTIONS ON THE REVOLUTION IN FRANCE", "EDMUND BURKE"],
+        },
+    ],
+    "qualitative": [
+        {
+            "name": "douglass_narrative_excerpt.txt",
+            "title": "Narrative of the Life of Frederick Douglass",
+            "authors": "Frederick Douglass",
+            "url": "https://www.gutenberg.org/cache/epub/23/pg23.txt",
+            "markers": ["NARRATIVE OF THE LIFE OF FREDERICK DOUGLASS", "FREDERICK DOUGLASS"],
+        },
+        {
+            "name": "jacobs_incidents_excerpt.txt",
+            "title": "Incidents in the Life of a Slave Girl",
+            "authors": "Harriet A. Jacobs",
+            "url": "https://www.gutenberg.org/cache/epub/11030/pg11030.txt",
+            "markers": ["INCIDENTS IN THE LIFE OF A SLAVE GIRL", "HARRIET A. JACOBS"],
+        },
+    ],
+}
+GUTENBERG_LICENSE = "Public domain in the USA; Project Gutenberg terms apply to the electronic edition"
 
 
 def fetch_json(url: str) -> object:
     req = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
     with urllib.request.urlopen(req, timeout=60) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_text(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return response.read().decode("utf-8-sig", errors="replace")
+
+
+def build_public_text_corpus(case: str, downloaded: dict[str, str] | None = None) -> list[dict]:
+    records = []
+    for source in PUBLIC_TEXT_SOURCES[case]:
+        text = (downloaded or {}).get(source["url"]) if downloaded is not None else fetch_text(source["url"])
+        if not text or not all(marker.casefold() in text.casefold() for marker in source["markers"]):
+            raise ValueError(f"Downloaded public text failed identity check: {source['url']}")
+        start_marker = "*** START OF"
+        start = text.upper().find(start_marker)
+        body = text[text.find("\n", start) + 1:] if start >= 0 else text
+        excerpt = body.strip()[:10000]
+        content = (
+            f"Source title: {source['title']}\nAuthor: {source['authors']}\n"
+            f"Source URL: {source['url']}\nExtraction: first 10,000 characters after the Gutenberg start marker\n\n"
+            f"{excerpt}"
+        )
+        records.append({
+            **source, "mime_type": "text/plain", "content": content,
+            "source_url": source["url"], "license": GUTENBERG_LICENSE, "provenance": source["url"],
+        })
+    return records
 
 
 def build_social_dataset(indicator_payload: list, countries_payload: list) -> dict:
@@ -235,27 +304,181 @@ def social_contract() -> dict:
     }
 
 
-def case_payload(case: str) -> tuple[str, dict, dict]:
+def systematic_review_contract() -> dict:
+    return {
+        "research_type": "survey",
+        "primary_question": (
+            "Across a frozen pool of verified full-text studies, what effects, evaluation choices, and limitations "
+            "are reported for passage segmentation in retrieval-augmented generation?"
+        ),
+        "objective": "Conduct a reproducible bounded systematic review with independent dual screening and appraisal.",
+        "subquestions": [
+            {"id": "sq1", "question": "Which verified studies satisfy the frozen inclusion criteria?"},
+            {"id": "sq2", "question": "What findings and validity limitations recur across included studies?"},
+        ],
+        "scope_in": ["English full-text empirical studies in the frozen seed/search pool", "Passage segmentation and retrieval evaluation"],
+        "scope_out": ["Unverified citations", "Generation quality without retrieval evaluation", "Meta-analysis of incompatible outcomes"],
+        "target_domain": "systematic evidence synthesis of RAG passage segmentation",
+        "constraints": ["Dual full-text screening", "No study without verified passage evidence", "Narrative synthesis when outcomes differ"],
+        "expected_contribution": "A traceable synthesis separating reported findings from cross-study inference.",
+        "novelty_criteria": ["Hash-frozen evidence pool with independent screening records"],
+        "data_availability": "Protocol attachment, verified passages, screening records, and appraisal artifacts remain in the run directory.",
+        "ethics_risks": [],
+        "success_criteria": ["Every frozen study is screened twice", "Every included study is appraised", "Disagreements are disclosed"],
+        "failure_criteria": ["A study is skipped", "Metadata-only evidence supports a finding", "Screening is single-reviewer"],
+        "discipline": {"broad_field": "information_science", "field": "evidence_synthesis", "subfield": "retrieval_augmented_generation"},
+        "methodology_profile": {
+            "family": "systematic_review", "epistemic_mode": "evidence_synthesis",
+            "study_design": "bounded systematic review", "unit_of_analysis": "verified full-text study",
+            "evidence_types": ["verified full-text passages", "screening and appraisal records"],
+            "data_collection_methods": ["seeded scholarly retrieval", "deduplication", "independent dual screening"],
+            "analysis_methods": ["quality appraisal", "structured narrative synthesis"],
+            "quality_criteria": ["study identity", "screening completeness", "appraisal coverage", "flow accounting"],
+            "component_methods": [],
+        },
+        "resource_plan": [{
+            "resource_type": "verified_fulltext_study_pool", "description": "Five traceable open scholarly records plus provider search",
+            "required": True, "status": "available", "owner": "benchmark runner and evidence pipeline",
+            "evidence": "Seed URLs/DOIs and full-text passage hashes stored in the run",
+            "resolution": "Fail if verified full text is unavailable",
+        }],
+        "ethics_plan": {
+            "required": False, "status": "not_required", "review_body": "", "approval_reference": "",
+            "data_sensitivity": "Published scholarly literature only", "participant_risks": [],
+        },
+        "thesis_requirements": _thesis_requirements(
+            "MSc Speech and Language Processing", 7500, 7000, 8000,
+            "https://www.drps.ed.ac.uk/current/dpt/cxlasc11037.htm",
+        ),
+        "hypotheses": [],
+    }
+
+
+def _public_text_contract(case: str) -> dict:
+    humanities = case == "humanities"
+    return {
+        "research_type": "interpretive",
+        "primary_question": (
+            "How do the frozen opening excerpts of Wollstonecraft's Vindication and Burke's Reflections construct "
+            "authority, reason, and political change?" if humanities else
+            "How do the frozen opening excerpts of Douglass's Narrative and Jacobs's Incidents construct agency, "
+            "constraint, and counterexamples to dominant accounts of enslavement?"
+        ),
+        "objective": (
+            "Produce a source-critical comparative interpretation bounded to two public-domain primary-text excerpts."
+            if humanities else
+            "Conduct a transparent qualitative coding comparison of two public-domain autobiographical excerpts."
+        ),
+        "subquestions": [
+            {"id": "sq1", "question": "What recurring concepts are grounded in each frozen excerpt?"},
+            {"id": "sq2", "question": "Which counterexamples or alternative readings limit the comparison?"},
+        ],
+        "scope_in": ["First 10,000 post-header characters of each hash-frozen Project Gutenberg text", "Comparative close reading" if humanities else "Qualitative thematic coding"],
+        "scope_out": ["Claims about each complete book", "Claims about authorial intention not grounded in the excerpts", "Population generalisation"],
+        "target_domain": "comparative political rhetoric" if humanities else "qualitative analysis of public-domain autobiographical narratives",
+        "constraints": ["Two independently sourced texts", "Stable segment/source IDs", "Negative or counter-reading required"],
+        "expected_contribution": "A bounded, reproducible comparison with explicit interpretive alternatives.",
+        "novelty_criteria": ["Hash-linked source-to-interpretation audit trail"],
+        "data_availability": "Downloaded public-domain sources, extraction boundaries, URLs, and hashes are stored with the run.",
+        "ethics_risks": [],
+        "success_criteria": ["All interpretations trace to supplied sources", "Independent review covers every analyzed unit"],
+        "failure_criteria": ["Unknown source IDs", "Unreviewed coding or interpretation", "Whole-book overgeneralisation"],
+        "discipline": {
+            "broad_field": "humanities" if humanities else "social_science",
+            "field": "intellectual_history" if humanities else "qualitative_historical_sociology",
+            "subfield": "political_rhetoric" if humanities else "narrative_agency",
+        },
+        "methodology_profile": {
+            "family": "humanities" if humanities else "qualitative", "epistemic_mode": "interpretation",
+            "study_design": "comparative source-critical close reading" if humanities else "comparative qualitative document analysis",
+            "unit_of_analysis": "primary-text excerpt" if humanities else "hashed text segment",
+            "evidence_types": ["public-domain primary text", "verified scholarship passages"],
+            "data_collection_methods": ["identity-checked Project Gutenberg download", "deterministic bounded extraction"],
+            "analysis_methods": ["source criticism", "contextual interpretation", "counter-reading"] if humanities else
+            ["codebook development", "segment coding", "negative-case analysis"],
+            "quality_criteria": ["source traceability", "triangulation", "independent interpretive review"] if humanities else
+            ["codebook coverage", "audit trail", "negative cases", "independent coding review"],
+            "component_methods": [],
+        },
+        "resource_plan": [{
+            "resource_type": "public_domain_primary_texts", "description": "Two identity-checked Project Gutenberg editions",
+            "required": True, "status": "available", "owner": "Project Gutenberg and benchmark runner",
+            "evidence": GUTENBERG_LICENSE + "; " + "; ".join(item["url"] for item in PUBLIC_TEXT_SOURCES[case]),
+            "resolution": "Fail download if title/author markers do not match",
+        }],
+        "ethics_plan": {
+            "required": False, "status": "not_required", "review_body": "", "approval_reference": "",
+            "data_sensitivity": "Public-domain historical texts; no recruited participants or private records", "participant_risks": [],
+        },
+        "thesis_requirements": _thesis_requirements(
+            "MSc Social Research", 14000, 13000, 15000,
+            "https://www.sps.ed.ac.uk/sites/default/files/assets/doc/PGT%20Dissertation/Taught%20MSc%20Student%20Dissertation%20Handbook%202025-26.pdf",
+        ),
+        "hypotheses": [],
+    }
+
+
+def humanities_contract() -> dict:
+    return _public_text_contract("humanities")
+
+
+def qualitative_contract() -> dict:
+    return _public_text_contract("qualitative")
+
+
+def case_payload(case: str) -> tuple[list[dict], dict, list[dict]]:
     if case == "engineering":
         validate_dataset(ENGINEERING_DATASET)
-        return "retrieval_benchmark.json", ENGINEERING_DATASET, engineering_contract()
-    indicator = fetch_json(WORLD_BANK_INDICATOR_URL)
-    countries = fetch_json(WORLD_BANK_COUNTRIES_URL)
-    return "world_bank_education_2022.json", build_social_dataset(indicator, countries), social_contract()
+        return [{
+            "name": "retrieval_benchmark.json", "mime_type": "application/json",
+            "content": json.dumps(ENGINEERING_DATASET, ensure_ascii=False),
+            "provenance": "user_owned_for_research frozen benchmark",
+        }], engineering_contract(), ENGINEERING_SEED_SOURCES
+    if case == "social":
+        indicator = fetch_json(WORLD_BANK_INDICATOR_URL)
+        countries = fetch_json(WORLD_BANK_COUNTRIES_URL)
+        dataset = build_social_dataset(indicator, countries)
+        return [{
+            "name": "world_bank_education_2022.json", "mime_type": "application/json",
+            "content": json.dumps(dataset, ensure_ascii=False), "source_url": WORLD_BANK_INDICATOR_URL,
+            "license": dataset["license"], "provenance": WORLD_BANK_INDICATOR_URL,
+        }], social_contract(), []
+    if case == "systematic":
+        protocol = {
+            "schema_version": "systematic-review-protocol-v1",
+            "inclusion": ["verified full text", "reports passage segmentation and retrieval evaluation"],
+            "exclusion": ["metadata only", "no retrieval evaluation"],
+            "screening": "two independent full-text decisions; disagreements excluded and disclosed",
+        }
+        return [{
+            "name": "systematic_review_protocol.json", "mime_type": "application/json",
+            "content": json.dumps(protocol, ensure_ascii=False), "provenance": "benchmark preregistration",
+        }], systematic_review_contract(), ENGINEERING_SEED_SOURCES
+    records = build_public_text_corpus(case)
+    contract = humanities_contract() if case == "humanities" else qualitative_contract()
+    seeds = [
+        {key: item[key] for key in ("title", "authors", "url")} | {
+            "venue": "Project Gutenberg", "source_type": "primary_source",
+        }
+        for item in PUBLIC_TEXT_SOURCES[case]
+    ]
+    return records, contract, seeds
 
 
 def create_case(base_url: str, case: str) -> str:
-    name, dataset, contract = case_payload(case)
-    raw = json.dumps(dataset, ensure_ascii=False).encode("utf-8")
-    encoded = base64.b64encode(raw).decode("ascii")
+    records, contract, seeds = case_payload(case)
+    attachments = []
+    for record in records:
+        raw = record.pop("content").encode("utf-8")
+        attachments.append({
+            **record, "size": len(raw),
+            "data_url": f"data:{record['mime_type']};base64," + base64.b64encode(raw).decode("ascii"),
+        })
     goal = contract["primary_question"] + " Produce the complete dissertation only within the frozen contract and attached data."
     created = request(base_url, "POST", "/runs", {
         "research_goal": goal,
-        "seed_sources": ENGINEERING_SEED_SOURCES if case == "engineering" else [],
-        "attachments": [{
-            "name": name, "mime_type": "application/json", "size": len(raw),
-            "data_url": "data:application/json;base64," + encoded,
-        }],
+        "seed_sources": seeds,
+        "attachments": attachments,
     })
     run_id = created["run_id"]
     revised = request(base_url, "PATCH", f"/runs/{run_id}/research-contract", contract)
@@ -299,7 +522,9 @@ def monitor(base_url: str, run_id: str, timeout: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a real, contract-frozen master dissertation acceptance case.")
-    parser.add_argument("--case", choices=["engineering", "social"], required=True)
+    parser.add_argument(
+        "--case", choices=["engineering", "social", "systematic", "humanities", "qualitative"], required=True,
+    )
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/api")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--timeout", type=int, default=7200)
