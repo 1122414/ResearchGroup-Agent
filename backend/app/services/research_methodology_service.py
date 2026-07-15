@@ -87,10 +87,23 @@ class ResearchMethodologyService:
         if not isinstance(thesis.get("required_chapters"), list) or not thesis.get("required_chapters"):
             errors.append("thesis_requirements.required_chapters 不能为空")
         try:
-            if int(thesis.get("target_word_count") or 0) < 1000:
+            target_words = int(thesis.get("target_word_count") or 0)
+            if target_words < 1000:
                 errors.append("thesis_requirements.target_word_count 必须至少为 1000")
         except (TypeError, ValueError):
             errors.append("thesis_requirements.target_word_count 必须是整数")
+            target_words = 0
+        try:
+            minimum_words = int(thesis.get("minimum_word_count") or target_words)
+            maximum_words = int(thesis.get("maximum_word_count") or 0)
+            if minimum_words < 1000:
+                errors.append("thesis_requirements.minimum_word_count 必须至少为 1000")
+            if maximum_words and maximum_words < minimum_words:
+                errors.append("thesis_requirements.maximum_word_count 不能小于 minimum_word_count")
+            if target_words and not minimum_words <= target_words <= (maximum_words or target_words):
+                errors.append("thesis_requirements.target_word_count 必须位于字数上下界内")
+        except (TypeError, ValueError):
+            errors.append("thesis_requirements 字数上下界必须是整数")
         for field, minimum in (("minimum_references", 5), ("minimum_supported_claims", 1)):
             try:
                 if int(thesis.get(field) or 0) < minimum:

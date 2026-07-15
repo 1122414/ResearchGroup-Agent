@@ -135,6 +135,7 @@ class ResearchContractService:
                     "degree_level": {"type": "string"}, "institution": {"type": "string"},
                     "programme": {"type": "string"}, "language": {"type": "string"},
                     "citation_style": {"type": "string"}, "target_word_count": {"type": "integer"},
+                    "minimum_word_count": {"type": "integer"}, "maximum_word_count": {"type": "integer"},
                     "minimum_references": {"type": "integer"},
                     "minimum_supported_claims": {"type": "integer"},
                     "required_chapters": {"type": "array", "items": {"type": "string"}},

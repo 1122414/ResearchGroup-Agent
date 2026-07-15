@@ -108,6 +108,13 @@ class ThesisChapterService:
                 "objective": brief.get("objective"),
                 "scope_in": brief.get("scope_in"), "scope_out": brief.get("scope_out"),
                 "methodology_profile": brief.get("methodology_profile"),
+                "writing_requirements": {
+                    "language": (brief.get("thesis_requirements") or {}).get("language"),
+                    "citation_style": (brief.get("thesis_requirements") or {}).get("citation_style"),
+                    "minimum_word_count": (brief.get("thesis_requirements") or {}).get("minimum_word_count"),
+                    "target_word_count": (brief.get("thesis_requirements") or {}).get("target_word_count"),
+                    "maximum_word_count": (brief.get("thesis_requirements") or {}).get("maximum_word_count"),
+                },
                 "allowed_support": allowed,
                 "allowed_contract_support": [
                     "brief:research_question", "brief:objective", "brief:scope", "brief:methodology",

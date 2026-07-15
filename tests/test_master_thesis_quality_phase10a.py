@@ -112,3 +112,20 @@ def test_unconfirmed_institutional_rules_keep_thesis_gate_closed():
         _report(), brief, _claims(), _tasks(), {"sources": [{"id": "s1"}]}, [],
     )
     assert result["checks"]["institutional_requirements"]["passed"] is False
+
+
+def test_institutional_word_count_range_is_enforced():
+    brief = _brief()
+    measured = thesis_quality_service._word_count(_report(), "zh-CN")
+    brief["thesis_requirements"].update({
+        "minimum_word_count": 1000,
+        "target_word_count": measured,
+        "maximum_word_count": measured - 1,
+    })
+
+    result = thesis_quality_service.evaluate(
+        _report(), brief, _claims(), _tasks(), {"sources": [{"id": "s1"}]}, [],
+    )
+
+    assert result["checks"]["length"]["passed"] is False
+    assert result["maximum_word_count"] == measured - 1

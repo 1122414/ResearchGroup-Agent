@@ -23,9 +23,13 @@ class ThesisQualityService:
         )
         measured_words = self._word_count(report, str(requirements.get("language") or ""))
         target_words = int(requirements.get("target_word_count") or 0)
+        minimum_words = int(requirements.get("minimum_word_count") or target_words)
+        maximum_words = int(requirements.get("maximum_word_count") or 0)
         checks["length"] = self._check(
-            target_words > 0 and measured_words >= target_words,
-            f"有效篇幅 {measured_words}，要求至少 {target_words}",
+            target_words > 0 and measured_words >= minimum_words
+            and (not maximum_words or measured_words <= maximum_words),
+            f"有效篇幅 {measured_words}，目标 {target_words}，允许范围 "
+            f"{minimum_words}–{maximum_words or '不限上限'}",
         )
 
         headings = self._headings(report)
@@ -98,6 +102,8 @@ class ThesisQualityService:
             "issues": issues,
             "measured_word_count": measured_words,
             "target_word_count": target_words,
+            "minimum_word_count": minimum_words,
+            "maximum_word_count": maximum_words or None,
             "reference_count": reference_count,
             "required_chapter_count": len(required_chapters),
             "policy": "all_thesis_checks_required",
