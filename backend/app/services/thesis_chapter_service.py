@@ -239,17 +239,34 @@ class ThesisChapterService:
 
     def can_assemble(self, run_id: str) -> bool:
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
-        chapters = [item for item in TaskRepository.get_all(run_id=run_id) if item.get("task_type") == "thesis_chapter"]
+        chapters = self.resolved_chapters(run_id)
         return (
             (brief.get("thesis_requirements") or {}).get("status") == "confirmed"
             and bool(chapters)
             and all(item.get("status") == "completed" and not self.validate_output(item, (item.get("outputs") or [{}])[-1]) for item in chapters)
         )
 
+    @staticmethod
+    def resolved_chapters(run_id: str) -> list[dict]:
+        tasks = [
+            item for item in TaskRepository.get_all(run_id=run_id)
+            if item.get("task_type") == "thesis_chapter"
+        ]
+        roots = [item for item in tasks if not item.get("revision_of_task_id")]
+        resolved = []
+        for root in roots:
+            approved = [
+                item for item in tasks
+                if item.get("revision_of_task_id") == root["id"]
+                and item.get("status") == "completed"
+            ]
+            resolved.append(max(approved, key=lambda item: str(item.get("created_at") or ""), default=root))
+        return resolved
+
     def assemble(self, run: dict, title: str) -> str:
         run_id = run["id"]
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
-        tasks = [item for item in TaskRepository.get_all(run_id=run_id) if item.get("task_type") == "thesis_chapter"]
+        tasks = self.resolved_chapters(run_id)
         tasks.sort(key=lambda item: self.spec_from_task(item).get("chapter_index", 999))
         claims = {item["id"]: item for item in ResearchClaimRepository.get_by_run(run_id) if item.get("status") == "supported"}
         evidence = EvidenceRepository.get_by_run(run_id)

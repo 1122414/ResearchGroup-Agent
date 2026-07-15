@@ -157,6 +157,7 @@ def test_completed_revision_archives_older_failed_drafts(monkeypatch):
 def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_not():
     tasks = [
         {"id": "chapter_method", "title": "Methodology", "task_type": "thesis_chapter", "status": "failed"},
+        {"id": "chapter_discussion", "title": "Discussion", "task_type": "thesis_chapter", "status": "blocked"},
         {
             "id": "old_revision", "task_type": "thesis_chapter", "status": "failed",
             "revision_of_task_id": "chapter_results",
@@ -166,4 +167,4 @@ def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_
 
     failed = run_execution_service._failed_required_chapters(tasks)
 
-    assert [task["id"] for task in failed] == ["chapter_method"]
+    assert [task["id"] for task in failed] == ["chapter_method", "chapter_discussion"]

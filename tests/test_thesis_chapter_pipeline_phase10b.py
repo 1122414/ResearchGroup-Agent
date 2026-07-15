@@ -275,6 +275,41 @@ def test_experiment_support_includes_frozen_protocol(monkeypatch):
     assert support[0]["protocol"]["baselines"][0]["overlap"] == 0
 
 
+def test_assembly_uses_latest_approved_revision_and_ignores_failed_drafts(tmp_path):
+    run_id, run = _run_with_thesis(tmp_path, ["Analysis"])
+    claim_id = f"claim_revision_{uuid.uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    ResearchClaimRepository.insert({
+        "id": claim_id, "run_id": run_id, "statement": "A frozen artifact supports the analysis",
+        "status": "supported", "evidence_ids": ["artifact"], "confidence": 0.9,
+        "created_at": now, "updated_at": now,
+    })
+    root = thesis_chapter_service.ensure_tasks(run_id)[0]
+    budget = thesis_chapter_service.spec_from_task(root)["word_budget"]
+    old_output = _chapter_output("Analysis", budget, claim_id)
+    old_output["chapter"]["sections"][0]["paragraphs"][0]["text"] += " OLD_ROOT_MARKER"
+    TaskRepository.update_status(root["id"], "completed", outputs=[old_output])
+    approved_output = _chapter_output("Analysis", budget, claim_id)
+    approved_output["chapter"]["sections"][0]["paragraphs"][0]["text"] += " APPROVED_REVISION_MARKER"
+    approved = {
+        **root, "id": f"revision_approved_{uuid.uuid4().hex[:8]}", "title": "approved revision",
+        "status": "completed", "outputs": [approved_output], "revision_of_task_id": root["id"],
+        "created_at": "9999-01-01T00:00:00", "updated_at": "9999-01-01T00:00:00",
+    }
+    failed = {
+        **root, "id": f"revision_failed_{uuid.uuid4().hex[:8]}", "title": "failed revision",
+        "status": "failed", "outputs": [], "revision_of_task_id": root["id"],
+        "created_at": "9999-01-02T00:00:00", "updated_at": "9999-01-02T00:00:00",
+    }
+    TaskRepository.insert(approved)
+    TaskRepository.insert(failed)
+
+    assert thesis_chapter_service.can_assemble(run_id) is True
+    report = thesis_chapter_service.assemble(run, "Revision Thesis")
+    assert "APPROVED_REVISION_MARKER" in report
+    assert "OLD_ROOT_MARKER" not in report
+
+
 def test_deterministic_thesis_assembly_adds_verified_citations_and_traceability(tmp_path):
     run_id, run = _run_with_thesis(tmp_path, ["分析"])
     claim_id = f"claim_grounded_{uuid.uuid4().hex[:8]}"

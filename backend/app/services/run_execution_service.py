@@ -398,7 +398,7 @@ class RunExecutionService:
             task for task in tasks
             if task.get("task_type") == "thesis_chapter"
             and not task.get("revision_of_task_id")
-            and task.get("status") == "failed"
+            and task.get("status") != "completed"
         ]
 
     @staticmethod
