@@ -21,7 +21,10 @@ class ThesisQualityService:
             requirements.get("status") == "confirmed",
             "目标院校与专业论文规范尚未确认",
         )
-        measured_words = self._word_count(report, str(requirements.get("language") or ""))
+        required_chapters = [str(item).strip() for item in requirements.get("required_chapters") or [] if str(item).strip()]
+        measured_words = self._main_text_word_count(
+            report, required_chapters, str(requirements.get("language") or "")
+        )
         target_words = int(requirements.get("target_word_count") or 0)
         minimum_words = int(requirements.get("minimum_word_count") or target_words)
         maximum_words = int(requirements.get("maximum_word_count") or 0)
@@ -33,7 +36,6 @@ class ThesisQualityService:
         )
 
         headings = self._headings(report)
-        required_chapters = [str(item).strip() for item in requirements.get("required_chapters") or [] if str(item).strip()]
         missing_chapters = [chapter for chapter in required_chapters if not self._chapter_present(chapter, headings)]
         checks["required_chapters"] = self._check(
             bool(required_chapters) and not missing_chapters,
@@ -45,6 +47,19 @@ class ThesisQualityService:
         )
 
         lowered = report.lower()
+        front_matter = self._front_matter(report, required_chapters)
+        checks["title_page"] = self._check(
+            all(str(requirements.get(field) or "").lower() in front_matter.lower() for field in ("institution", "programme"))
+            and any(marker in front_matter.lower() for marker in ("master", "硕士")),
+            "标题页缺少院校、专业或学位层级",
+        )
+        contents = any(marker in lowered for marker in ("## 目录", "## table of contents"))
+        checks["table_of_contents"] = self._check(contents, "目录缺失")
+        checks["research_ai_provenance"] = self._check(
+            any(marker in lowered for marker in ("人工智能来源声明", "ai provenance statement"))
+            and "researchgroup-agent" in lowered,
+            "研究与人工智能来源声明缺失",
+        )
         checks["front_matter"] = self._check(
             any(marker in lowered for marker in ("## 摘要", "## abstract"))
             and any(marker in lowered for marker in ("关键词", "keywords")),
@@ -130,7 +145,7 @@ class ThesisQualityService:
 
     def _thin_chapters(self, report: str, required: list[str], minimum: int) -> list[str]:
         lines = report.splitlines()
-        positions = [(index, line) for index, line in enumerate(lines) if re.match(r"^#{1,3}\s+", line)]
+        positions = [(index, line) for index, line in enumerate(lines) if re.match(r"^#{1,2}\s+", line)]
         thin = []
         for chapter in required:
             match = next(((index, line) for index, line in positions if self._chapter_present(chapter, [line])), None)
@@ -141,6 +156,30 @@ class ThesisQualityService:
             if self._word_count("\n".join(lines[start:end]), "zh") < minimum:
                 thin.append(chapter)
         return thin
+
+    def _main_text_word_count(self, report: str, required: list[str], language: str) -> int:
+        lines = report.splitlines()
+        positions = [(index, line) for index, line in enumerate(lines) if re.match(r"^#{1,2}\s+", line)]
+        bodies = []
+        for chapter in required:
+            match = next(((index, line) for index, line in positions if self._chapter_present(chapter, [line])), None)
+            if not match:
+                continue
+            end = next((index for index, _ in positions if index > match[0]), len(lines))
+            bodies.append("\n".join(lines[match[0] + 1:end]))
+        return self._word_count("\n".join(bodies), language)
+
+    def _front_matter(self, report: str, required: list[str]) -> str:
+        lines = report.splitlines()
+        first = next(
+            (
+                index for index, line in enumerate(lines)
+                if re.match(r"^#{1,2}\s+", line)
+                and any(self._chapter_present(chapter, [line]) for chapter in required)
+            ),
+            len(lines),
+        )
+        return "\n".join(lines[:first])
 
     @staticmethod
     def _reference_stats(report: str) -> tuple[int, set[int], set[int]]:

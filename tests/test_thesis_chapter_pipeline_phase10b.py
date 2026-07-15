@@ -82,7 +82,7 @@ def test_chapter_plan_allocates_declared_total_across_required_chapters():
         "required_chapters": ["引言", "文献综述", "方法", "结果", "讨论", "结论"],
     })
     assert len(plan) == 6
-    assert sum(item["word_budget"] for item in plan) == pytest.approx(26400, abs=3)
+    assert sum(item["word_budget"] for item in plan) == pytest.approx(30000, abs=3)
     assert next(item for item in plan if item["chapter_name"] == "文献综述")["word_budget"] > next(
         item for item in plan if item["chapter_name"] == "结论"
     )["word_budget"]
@@ -155,6 +155,9 @@ def test_deterministic_thesis_assembly_adds_verified_citations_and_traceability(
     assert "Verified Source" in report
     assert f"`{claim_id}`" in report
     assert "## 可追溯附录" in report
+    assert "**测试大学**" in report
+    assert "## 目录" in report
+    assert "## 研究与人工智能来源声明" in report
 
 
 def test_delivery_status_promotes_only_after_master_thesis_gate():

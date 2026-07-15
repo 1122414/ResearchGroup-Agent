@@ -22,11 +22,28 @@ def _report() -> str:
     )
     return f"""# 完整硕士论文测试
 
+**测试大学**
+
+**测试专业 — 硕士学位论文**
+
+## 研究与人工智能来源声明
+
+本文档由 ResearchGroup-Agent 自动生成，并须由责任作者复核。
+
 ## 摘要
 
 {paragraph}
 
 关键词：跨学科；可追溯；研究方法
+
+## 目录
+
+- 引言
+- 文献综述
+- 方法
+- 结果
+- 讨论
+- 结论
 
 {chapters}
 
@@ -116,7 +133,9 @@ def test_unconfirmed_institutional_rules_keep_thesis_gate_closed():
 
 def test_institutional_word_count_range_is_enforced():
     brief = _brief()
-    measured = thesis_quality_service._word_count(_report(), "zh-CN")
+    measured = thesis_quality_service._main_text_word_count(
+        _report(), brief["thesis_requirements"]["required_chapters"], "zh-CN",
+    )
     brief["thesis_requirements"].update({
         "minimum_word_count": 1000,
         "target_word_count": measured,
@@ -129,3 +148,23 @@ def test_institutional_word_count_range_is_enforced():
 
     assert result["checks"]["length"]["passed"] is False
     assert result["maximum_word_count"] == measured - 1
+
+
+def test_references_and_traceability_appendix_do_not_inflate_thesis_word_count():
+    brief = _brief()
+    base = thesis_quality_service.evaluate(_report(), brief, _claims(), _tasks(), {"sources": [{}]}, [])
+    inflated = thesis_quality_service.evaluate(
+        _report() + "\n## 可追溯附录\n\n" + ("附录内容 " * 5000),
+        brief, _claims(), _tasks(), {"sources": [{}]}, [],
+    )
+
+    assert inflated["measured_word_count"] == base["measured_word_count"]
+
+
+def test_subheadings_do_not_make_substantive_chapter_look_empty():
+    report = _report().replace("## 4. 结果\n\n", "## 4. 结果\n\n### 查询级结果\n\n")
+    result = thesis_quality_service.evaluate(
+        report, _brief(), _claims(), _tasks(), {"sources": [{"id": "s1"}]}, [],
+    )
+
+    assert result["checks"]["chapter_substance"]["passed"] is True
