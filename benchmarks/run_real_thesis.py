@@ -29,7 +29,7 @@ ENGINEERING_SEED_SOURCES = [
         "year": 2024, "venue": "arXiv", "url": "https://arxiv.org/abs/2409.04701",
     },
     {
-        "title": "Document Segmentation Matters for Long-Document Retrieval",
+        "title": "Document Segmentation Matters for Retrieval-Augmented Generation",
         "year": 2025, "venue": "Findings of ACL", "doi": "10.18653/v1/2025.findings-acl.422",
         "url": "https://aclanthology.org/2025.findings-acl.422/",
     },

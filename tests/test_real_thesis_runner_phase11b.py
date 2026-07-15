@@ -44,3 +44,5 @@ def test_engineering_case_has_traceable_real_seed_sources():
     assert len(ENGINEERING_SEED_SOURCES) == 5
     assert all(item.get("doi") or "arxiv.org/abs/" in item.get("url", "") for item in ENGINEERING_SEED_SOURCES)
     assert all(item.get("url", "").startswith("https://") for item in ENGINEERING_SEED_SOURCES)
+    acl_source = next(item for item in ENGINEERING_SEED_SOURCES if item.get("doi", "").endswith("findings-acl.422"))
+    assert acl_source["title"] == "Document Segmentation Matters for Retrieval-Augmented Generation"
