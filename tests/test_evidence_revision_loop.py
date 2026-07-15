@@ -148,6 +148,32 @@ def test_revision_description_drops_bulky_evidence_objects():
     assert len(description) < 7000
 
 
+def test_thesis_revision_description_keeps_complete_previous_chapter():
+    root = {
+        "title": "论文结果章", "description": "修订结果章",
+        "task_type": "thesis_chapter",
+    }
+    latest = {"outputs": [{
+        "summary": "上一版",
+        "chapter": {
+            "name": "Results",
+            "sections": [{
+                "heading": "最后一节",
+                "paragraphs": [{
+                    "id": "p-last", "text": "需要定点修改的末尾段落",
+                    "paragraph_type": "claim", "support_ids": ["claim-1"],
+                }],
+            }],
+        },
+    }]}
+
+    description = task_recovery_service._revision_description(root, latest, "修改末尾段落")
+
+    assert '"chapter"' in description
+    assert "p-last" in description
+    assert "需要定点修改的末尾段落" in description
+
+
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):
     monkeypatch.setattr(settings, "literature_require_grounded_sources", True)
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)

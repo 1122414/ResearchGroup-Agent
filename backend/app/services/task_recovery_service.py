@@ -190,10 +190,14 @@ class TaskRecoveryService:
             feedback_text = str(feedback or "").strip()
         outputs = latest_task.get("outputs") or []
         previous = outputs[-1] if outputs else None
-        compact_previous = TaskRecoveryService._compact_previous(previous)
+        is_thesis_chapter = root_task.get("task_type") == "thesis_chapter"
+        compact_previous = TaskRecoveryService._compact_previous(
+            previous, include_chapter=is_thesis_chapter,
+        )
+        serialized_previous = json.dumps(compact_previous, ensure_ascii=False, indent=2)
         previous_text = (
             "\n上一版交付物（必须在此基础上修改，不得只复述缺口）：\n"
-            + json.dumps(compact_previous, ensure_ascii=False, indent=2)[:6000]
+            + (serialized_previous if is_thesis_chapter else serialized_previous[:6000])
             if compact_previous
             else ""
         )
@@ -208,7 +212,7 @@ class TaskRecoveryService:
         return f"原始任务：{original}\n返工要求：{feedback_text}{previous_text}{instruction}"
 
     @staticmethod
-    def _compact_previous(previous) -> dict | list | None:
+    def _compact_previous(previous, include_chapter: bool = False) -> dict | list | None:
         if isinstance(previous, list):
             return previous[:10]
         if not isinstance(previous, dict):
@@ -222,6 +226,8 @@ class TaskRecoveryService:
             )
             if previous.get(key) is not None
         }
+        if include_chapter and isinstance(previous.get("chapter"), dict):
+            compact["chapter"] = previous["chapter"]
         experiment = previous.get("reproducible_experiment")
         if isinstance(experiment, dict):
             metrics = experiment.get("metrics") or {}
