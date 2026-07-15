@@ -91,9 +91,11 @@ def test_chapter_plan_allocates_declared_total_across_required_chapters():
 def test_chapter_tasks_are_created_once_and_depend_on_completed_research(tmp_path):
     run_id, _ = _run_with_thesis(tmp_path)
     research = _insert_task(run_id, f"research_{uuid.uuid4().hex[:8]}", "result_analysis")
+    archived = _insert_task(run_id, f"archived_{uuid.uuid4().hex[:8]}", "research_design", "archived")
     report = _insert_task(run_id, f"report_{uuid.uuid4().hex[:8]}", "report_writing", "pending")
 
     created = thesis_chapter_service.ensure_tasks(run_id)
+    TaskDependencyRepository.replace_for_task(created[0]["id"], [archived["id"]])
     repeated = thesis_chapter_service.ensure_tasks(run_id)
 
     assert len(created) == len(repeated) == 4

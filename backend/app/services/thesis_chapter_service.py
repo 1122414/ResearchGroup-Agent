@@ -22,14 +22,16 @@ class ThesisChapterService:
         if requirements.get("status") != "confirmed":
             return []
         existing = [item for item in TaskRepository.get_all(run_id=run_id) if item.get("task_type") == "thesis_chapter"]
+        research_tasks = [
+            item for item in TaskRepository.get_all(run_id=run_id)
+            if item.get("task_type") not in self.WRITING_TYPES and item.get("status") == "completed"
+        ]
         if existing:
+            for task in existing:
+                TaskDependencyRepository.replace_for_task(task["id"], [row["id"] for row in research_tasks])
             return existing
         plan = self.chapter_plan(requirements)
         now = datetime.now().isoformat()
-        research_tasks = [
-            item for item in TaskRepository.get_all(run_id=run_id)
-            if item.get("task_type") not in self.WRITING_TYPES
-        ]
         milestone = next(
             (item for item in ResearchMilestoneRepository.get_by_run(run_id) if item["milestone_key"] == "report_verified"),
             None,
