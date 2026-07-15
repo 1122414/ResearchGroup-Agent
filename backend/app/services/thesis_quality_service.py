@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from .citation_style_service import citation_style_service
+
 
 class ThesisQualityService:
     """Fail-closed checks for labeling an artifact as a complete master's thesis."""
@@ -76,15 +78,17 @@ class ThesisQualityService:
             "伦理声明或数据/材料可用性声明缺失",
         )
 
-        reference_count, cited_numbers, reference_numbers = self._reference_stats(report)
+        citation_style = str(requirements.get("citation_style") or "")
+        reference_count, citations_consistent, citation_detail = citation_style_service.audit(
+            report, citation_style,
+        )
         minimum_references = max(1, int(requirements.get("minimum_references") or 20))
         checks["references"] = self._check(
             reference_count >= minimum_references,
             f"参考文献 {reference_count}，要求至少 {minimum_references}",
         )
         checks["citation_consistency"] = self._check(
-            bool(cited_numbers) and cited_numbers <= reference_numbers,
-            f"正文引用={sorted(cited_numbers)}，参考文献编号={sorted(reference_numbers)}",
+            citations_consistent, citation_detail,
         )
 
         supported = [item for item in claims if item.get("status") == "supported"]

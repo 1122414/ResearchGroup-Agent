@@ -10,6 +10,7 @@ from ..storage.repositories import (
     ResearchMilestoneRepository, TaskDependencyRepository, TaskRepository,
 )
 from .thesis_quality_service import thesis_quality_service
+from .citation_style_service import citation_style_service
 
 
 class ThesisChapterService:
@@ -214,6 +215,7 @@ class ThesisChapterService:
         discipline = brief.get("discipline") or {}
         profile = brief.get("methodology_profile") or {}
         requirements = brief.get("thesis_requirements") or {}
+        citation_style = str(requirements.get("citation_style") or "")
         language = str(requirements.get("language") or "").lower()
         chinese = any(marker in language for marker in ("zh", "中文", "chinese"))
         institution = str(requirements.get("institution") or "")
@@ -252,16 +254,19 @@ class ThesisChapterService:
                 lines.extend([f"### {section.get('heading')}", ""])
                 for paragraph in section.get("paragraphs") or []:
                     support_ids = paragraph.get("support_ids") or []
-                    citations = sorted({
-                        citation_index[link["source_id"]]
+                    cited_sources = [
+                        sources[link["source_id"]]
                         for support_id in support_ids for link in links_by_claim.get(support_id, [])
                         if link["source_id"] in citation_index
-                    })
+                    ]
                     artifact_support = [
                         support_id for support_id in support_ids
                         if support_id in claims and claims[support_id].get("evidence_ids") and not links_by_claim.get(support_id)
                     ]
-                    suffix = f" [{', '.join(map(str, citations))}]" if citations else ""
+                    rendered_citation = citation_style_service.in_text(
+                        cited_sources, citation_index, citation_style,
+                    )
+                    suffix = f" {rendered_citation}" if rendered_citation else ""
                     if artifact_support:
                         suffix += " " + " ".join(f"〔工件结论:{item}〕" for item in artifact_support)
                     lines.extend([str(paragraph.get("text") or "").strip() + suffix, ""])
@@ -278,13 +283,9 @@ class ThesisChapterService:
         ])
         for source_id in used_source_ids:
             source = sources[source_id]
-            authors = source.get("authors") or ""
-            year = source.get("year") or "n.d."
-            venue = source.get("venue") or source.get("source_type") or ""
-            locator = source.get("doi") or source.get("url") or ""
-            lines.append(
-                f"[{citation_index[source_id]}] {authors} ({year}). {source.get('title', '')}. {venue}. {locator}".strip()
-            )
+            lines.append(citation_style_service.bibliography_entry(
+                source, citation_index[source_id], citation_style,
+            ))
         lines.extend(["", "## 可追溯附录", "", "| Paragraph | Task | Support IDs |", "| --- | --- | --- |"]) 
         for paragraph_id, task_id, support_ids in trace_rows:
             lines.append(f"| `{paragraph_id}` | `{task_id}` | {', '.join(f'`{item}`' for item in support_ids)} |")

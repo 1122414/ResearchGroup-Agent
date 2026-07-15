@@ -29,7 +29,7 @@ def _insert_task(run_id: str, task_id: str, task_type: str, status: str = "compl
     return task
 
 
-def _run_with_thesis(tmp_path, chapters=None) -> tuple[str, dict]:
+def _run_with_thesis(tmp_path, chapters=None, citation_style="Chicago") -> tuple[str, dict]:
     now = datetime.now().isoformat()
     run_id = f"run_chapters_{uuid.uuid4().hex[:8]}"
     run = {
@@ -50,7 +50,7 @@ def _run_with_thesis(tmp_path, chapters=None) -> tuple[str, dict]:
         ethics_plan={"required": False, "status": "not_required"},
         thesis_requirements={
             "status": "confirmed", "degree_level": "master", "institution": "测试大学",
-            "programme": "历史学", "language": "zh-CN", "citation_style": "Chicago",
+            "programme": "历史学", "language": "zh-CN", "citation_style": citation_style,
             "target_word_count": 3000, "minimum_references": 5, "minimum_supported_claims": 1,
             "required_chapters": chapters or ["引言", "方法", "分析", "结论"],
         },
@@ -168,3 +168,34 @@ def test_delivery_status_promotes_only_after_master_thesis_gate():
     assert "`master_thesis_candidate`" in ReportService._promote_delivery_status(
         report, {"master_thesis_ready": False}
     )
+
+
+def test_harvard_contract_renders_author_date_citations(tmp_path):
+    run_id, run = _run_with_thesis(tmp_path, ["Analysis"], citation_style="Harvard")
+    claim_id = f"claim_harvard_{uuid.uuid4().hex[:8]}"
+    source_id = f"source_harvard_{uuid.uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    ResearchClaimRepository.insert({
+        "id": claim_id, "run_id": run_id, "statement": "Grounded result", "status": "supported",
+        "evidence_ids": [source_id], "confidence": 0.9, "created_at": now, "updated_at": now,
+    })
+    EvidenceRepository.upsert_source({
+        "id": source_id, "run_id": run_id, "title": "Verified Paper", "authors": "Smith, Jane; Lee, Ann",
+        "year": 2024, "venue": "Journal", "doi": "10.1000/verified", "source_type": "paper",
+        "metadata": {"citation_eligible": True}, "created_at": now,
+    })
+    EvidenceRepository.insert_link({
+        "id": f"link_{uuid.uuid4().hex[:8]}", "run_id": run_id, "claim_id": claim_id,
+        "source_id": source_id, "excerpt_id": None, "relation_type": "supports", "confidence": 0.9,
+        "rationale": "verified", "created_at": now,
+    })
+    task = thesis_chapter_service.ensure_tasks(run_id)[0]
+    TaskRepository.update_status(
+        task["id"], "completed", outputs=[_chapter_output("Analysis", thesis_chapter_service.spec_from_task(task)["word_budget"], claim_id)],
+    )
+
+    report = thesis_chapter_service.assemble(run, "Harvard Thesis")
+
+    assert "(Smith et al., 2024)" in report
+    assert "- Smith, Jane; Lee, Ann (2024). Verified Paper." in report
+    assert "[1]" not in report

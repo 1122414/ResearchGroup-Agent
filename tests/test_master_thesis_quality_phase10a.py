@@ -168,3 +168,13 @@ def test_subheadings_do_not_make_substantive_chapter_look_empty():
     )
 
     assert result["checks"]["chapter_substance"]["passed"] is True
+
+
+def test_harvard_quality_gate_rejects_numeric_citations():
+    brief = _brief()
+    brief["thesis_requirements"]["citation_style"] = "Harvard"
+    result = thesis_quality_service.evaluate(
+        _report(), brief, _claims(), _tasks(), {"sources": [{"id": "s1"}]}, [],
+    )
+
+    assert result["checks"]["citation_consistency"]["passed"] is False
