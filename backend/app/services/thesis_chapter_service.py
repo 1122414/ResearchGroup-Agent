@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from datetime import datetime
@@ -101,6 +102,7 @@ class ThesisChapterService:
         claims = [item for item in ResearchClaimRepository.get_by_run(task.get("run_id")) if item.get("status") == "supported"]
         spec = self.spec_from_task(task)
         word_budget = int(spec.get("word_budget") or 0)
+        minimum_words = self.minimum_word_count(task)
         allowed = [
             {"id": item["id"], "statement": item["statement"], "evidence_ids": item.get("evidence_ids") or []}
             for item in claims
@@ -109,7 +111,7 @@ class ThesisChapterService:
         return "【论文章节写作契约】\n" + json.dumps(
             {
                 "chapter_spec": spec,
-                "minimum_required_words": int(word_budget * 0.7),
+                "minimum_required_words": minimum_words,
                 "research_question": brief.get("research_question"),
                 "objective": brief.get("objective"),
                 "scope_in": brief.get("scope_in"), "scope_out": brief.get("scope_out"),
@@ -140,7 +142,7 @@ class ThesisChapterService:
                     }
                 },
                 "hard_constraints": [
-                    f"chapter 正文必须至少达到 {int(word_budget * 0.7)} 词",
+                    f"chapter 正文必须至少达到 {minimum_words} 词",
                     "扩展分析深度、方法解释和边界讨论，不得用重复句填充篇幅",
                 ],
             }, ensure_ascii=False, indent=2,
@@ -185,11 +187,21 @@ class ThesisChapterService:
                         issues.append(f"{prefix}:unknown_support:{','.join(unknown)}")
         measured = thesis_quality_service._word_count("\n".join(text_parts), str((brief.get("thesis_requirements") or {}).get("language") or ""))
         budget = int(spec.get("word_budget") or 0)
-        if measured < int(budget * 0.7):
-            issues.append(f"chapter_word_count_below_70_percent:{measured}/{budget}")
+        minimum = self.minimum_word_count(task)
+        if measured < minimum:
+            issues.append(f"chapter_word_count_below_contract_minimum:{measured}/{minimum}/{budget}")
         if paragraph_count < 3:
             issues.append("chapter_paragraph_count_insufficient")
         return issues
+
+    def minimum_word_count(self, task: dict) -> int:
+        budget = int(self.spec_from_task(task).get("word_budget") or 0)
+        brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+        requirements = brief.get("thesis_requirements") or {}
+        target = int(requirements.get("target_word_count") or 0)
+        institutional_minimum = int(requirements.get("minimum_word_count") or 0)
+        ratio = max(0.7, institutional_minimum / target) if target > 0 else 0.7
+        return math.ceil(budget * min(ratio, 1.0))
 
     @staticmethod
     def word_count(task: dict, latest: dict) -> int:

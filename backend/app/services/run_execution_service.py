@@ -207,6 +207,10 @@ class RunExecutionService:
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
                 return self.get_summary(run_id)
             failed_chapters = self._failed_required_chapters(tasks)
+            failed_chapters.extend(
+                task for task in self._invalid_required_chapters(run_id)
+                if task["id"] not in {item["id"] for item in failed_chapters}
+            )
             if failed_chapters:
                 names = "、".join(task.get("title") or task["id"] for task in failed_chapters)
                 reason = f"必需论文章节未通过科学质量门：{names}"
@@ -399,6 +403,14 @@ class RunExecutionService:
             if task.get("task_type") == "thesis_chapter"
             and not task.get("revision_of_task_id")
             and task.get("status") != "completed"
+        ]
+
+    @staticmethod
+    def _invalid_required_chapters(run_id: str) -> list[dict]:
+        return [
+            task for task in thesis_chapter_service.resolved_chapters(run_id)
+            if task.get("status") != "completed"
+            or thesis_chapter_service.validate_output(task, (task.get("outputs") or [{}])[-1])
         ]
 
     @staticmethod

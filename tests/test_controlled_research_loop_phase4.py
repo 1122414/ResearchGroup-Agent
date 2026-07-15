@@ -185,3 +185,17 @@ def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_
     failed = run_execution_service._failed_required_chapters(tasks)
 
     assert [task["id"] for task in failed] == ["chapter_method", "chapter_discussion"]
+
+
+def test_completed_chapter_with_invalid_resolved_output_still_blocks_assembly(monkeypatch):
+    chapter = {"id": "chapter_short", "status": "completed", "outputs": [{"chapter": {}}]}
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.resolved_chapters",
+        lambda _run_id: [chapter],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.validate_output",
+        lambda *_args: ["chapter_word_count_below_contract_minimum:600/900/1000"],
+    )
+
+    assert run_execution_service._invalid_required_chapters("run_loop") == [chapter]

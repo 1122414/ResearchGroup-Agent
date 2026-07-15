@@ -286,7 +286,7 @@ class TaskExecutor:
 
     async def _expand_short_chapter(self, llm, prompt: str, task: dict, owner_id: str, result: dict) -> dict:
         budget = int(thesis_chapter_service.spec_from_task(task).get("word_budget") or 0)
-        minimum = int(budget * 0.7)
+        minimum = thesis_chapter_service.minimum_word_count(task)
         best = result
         best_issues = thesis_chapter_service.validate_output(task, best)
         best_count = thesis_chapter_service.word_count(task, best)
@@ -315,8 +315,8 @@ class TaskExecutor:
             candidate = {**best, "chapter": expanded.get("chapter")}
             candidate_issues = thesis_chapter_service.validate_output(task, candidate)
             candidate_count = thesis_chapter_service.word_count(task, candidate)
-            old_non_length = {item for item in best_issues if not item.startswith("chapter_word_count_below_70_percent:")}
-            new_non_length = {item for item in candidate_issues if not item.startswith("chapter_word_count_below_70_percent:")}
+            old_non_length = {item for item in best_issues if not item.startswith("chapter_word_count_below_contract_minimum:")}
+            new_non_length = {item for item in candidate_issues if not item.startswith("chapter_word_count_below_contract_minimum:")}
             if candidate_count > best_count and new_non_length.issubset(old_non_length):
                 best, best_count, best_issues = candidate, candidate_count, candidate_issues
             else:

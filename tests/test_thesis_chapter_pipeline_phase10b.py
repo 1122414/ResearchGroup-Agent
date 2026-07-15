@@ -237,6 +237,17 @@ def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):
     assert "chapter_paragraph_count_insufficient" in issues
 
 
+def test_chapter_minimum_tracks_frozen_institutional_word_floor(tmp_path):
+    run_id, _ = _run_with_thesis(tmp_path, ["Analysis"])
+    brief = ResearchBriefRepository.get_by_run(run_id)
+    requirements = dict(brief["thesis_requirements"])
+    requirements.update({"target_word_count": 3000, "minimum_word_count": 2800})
+    ResearchBriefRepository.update(run_id, thesis_requirements=requirements)
+    task = thesis_chapter_service.ensure_tasks(run_id)[0]
+
+    assert thesis_chapter_service.minimum_word_count(task) == 2800
+
+
 def test_chapter_gate_accepts_frozen_experiment_support(tmp_path, monkeypatch):
     run_id, _ = _run_with_thesis(tmp_path, ["Results"])
     task = thesis_chapter_service.ensure_tasks(run_id)[0]
