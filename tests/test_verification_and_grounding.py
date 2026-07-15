@@ -48,6 +48,30 @@ def test_doi_mismatch_is_not_citation_eligible(monkeypatch):
     assert verified["metadata"]["citation_eligible"] is False
 
 
+def test_verified_doi_enriches_missing_authors_without_overwriting_claimed_metadata(monkeypatch):
+    monkeypatch.setattr(settings, "doi_verification_enabled", True)
+    monkeypatch.setattr(
+        source_verification_service,
+        "_fetch_crossref",
+        lambda _doi: {
+            "title": "Verified Paper", "year": 2024,
+            "authors": "Jane Smith; Ann Lee", "venue": "Verified Journal",
+        },
+    )
+    missing = {
+        "title": "Verified Paper", "year": 2024, "authors": "", "venue": "",
+        "doi": "10.1000/verified", "metadata": {},
+    }
+    claimed = {**missing, "authors": "Declared Author"}
+
+    enriched, preserved = source_verification_service.verify_sources([missing, claimed])
+
+    assert enriched["authors"] == "Jane Smith; Ann Lee"
+    assert enriched["venue"] == "Verified Journal"
+    assert enriched["metadata"]["bibliographic_enrichment_source"] == "crossref_doi_resolution"
+    assert preserved["authors"] == "Declared Author"
+
+
 def test_verify_sources_respects_flag(monkeypatch):
     monkeypatch.setattr(settings, "doi_verification_enabled", False)
     sources = [{"title": "x", "doi": None}]

@@ -24,6 +24,9 @@ class SourceVerificationService:
             verdict = self._verify_one(source) if settings.doi_verification_enabled else None
             if verdict is not None:
                 metadata["doi_verification"] = verdict
+                if verdict.get("verified"):
+                    self._enrich_verified_bibliography(source, verdict)
+                    metadata["bibliographic_enrichment_source"] = "crossref_doi_resolution"
             status, eligible = self._citation_status(source, metadata, verdict)
             metadata["verification_status"] = status
             metadata["citation_eligible"] = eligible
@@ -73,7 +76,19 @@ class SourceVerificationService:
             "year_match": year_ok,
             "resolved_title": fetched.get("title", ""),
             "resolved_year": fetched.get("year"),
+            "resolved_authors": fetched.get("authors", ""),
+            "resolved_venue": fetched.get("venue", ""),
         }
+
+    @staticmethod
+    def _enrich_verified_bibliography(source: dict, verdict: dict) -> None:
+        for field, resolved in (
+            ("authors", verdict.get("resolved_authors")),
+            ("year", verdict.get("resolved_year")),
+            ("venue", verdict.get("resolved_venue")),
+        ):
+            if source.get(field) in (None, "") and resolved not in (None, ""):
+                source[field] = resolved
 
     @staticmethod
     def _title_matches(claimed: str, resolved: str) -> bool:
@@ -109,7 +124,15 @@ class SourceVerificationService:
             or []
         )
         year = published[0][0] if published and published[0] else None
-        return {"title": (message.get("title") or [""])[0], "year": year}
+        authors = "; ".join(
+            " ".join(filter(None, (author.get("given"), author.get("family"))))
+            for author in message.get("author") or []
+            if author.get("given") or author.get("family")
+        )
+        return {
+            "title": (message.get("title") or [""])[0], "year": year,
+            "authors": authors, "venue": (message.get("container-title") or [""])[0],
+        }
 
     @staticmethod
     def _normalize_doi(value) -> str | None:
