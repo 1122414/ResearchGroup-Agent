@@ -256,9 +256,13 @@ class ResearchAnalysisService:
         input_count = int(dedup.get("input_count") or 0) if isinstance(dedup, dict) else 0
         deduplicated_count = int(dedup.get("deduplicated_count") or 0) if isinstance(dedup, dict) else 0
         duplicates = (dedup.get("duplicate_ids") or []) if isinstance(dedup, dict) else []
+        decisions_by_study: dict[str, set[str]] = {}
+        for item in records:
+            decisions_by_study.setdefault(str(item.get("study_id")), set()).add(
+                str(item.get("decision") or "").lower()
+            )
         included_ids = {
-            str(item.get("study_id")) for item in records
-            if str(item.get("decision") or "").lower() == "include"
+            study_id for study_id, values in decisions_by_study.items() if values == {"include"}
         }
         appraisal_ids = {
             str(item.get("study_id")) for item in package.get("quality_appraisals") or []
@@ -276,7 +280,7 @@ class ResearchAnalysisService:
                 f"输入={input_count}，去重后={deduplicated_count}，重复={len(duplicates)}",
             ),
             "screening_integrity": self._check(
-                bool(records) and set(decisions) <= study_ids,
+                bool(records) and set(decisions) == study_ids,
                 f"筛选研究={len(decisions)}，已登记研究={len(study_ids)}",
             ),
             "dual_screening": self._check(dual, f"双人记录覆盖={sum(len(v - {''}) >= 2 for v in decisions.values())}/{len(decisions)}"),

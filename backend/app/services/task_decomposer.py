@@ -381,7 +381,8 @@ class TaskDecomposer:
                 "依据 Research Contract 冻结研究设计、材料、分析方法、质量控制、停止规则和偏离处理。",
                 {"experiment": 7, "data_analysis": 7, "academic_writing": 5},
             )
-        if mode != "survey" and not present.intersection({"data_acquisition", "experiment_design"}):
+        needs_material_task = mode != "survey" or family == "systematic_review"
+        if needs_material_task and not present.intersection({"data_acquisition", "experiment_design"}):
             task_type = "experiment_design" if family == "computational" else "data_acquisition"
             add(
                 task_type,

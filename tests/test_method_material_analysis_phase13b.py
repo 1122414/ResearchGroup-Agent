@@ -1,4 +1,5 @@
 import hashlib
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -125,3 +126,45 @@ async def test_sensitive_material_is_not_sent_to_external_model_without_explicit
     monkeypatch.setattr(method_material_analysis_service, "_ask", forbidden)
 
     assert await method_material_analysis_service.build_for_task(task, manifest) is None
+
+
+@pytest.mark.asyncio
+async def test_systematic_review_pool_is_independently_screened_and_grounded(tmp_path, monkeypatch):
+    task, manifest = _run(tmp_path, "systematic_review", [])
+    run = RunRepository.get_by_id(task["run_id"])
+    pool_path = Path(run["artifact_dir"]) / "review_pool.json"
+    pool_path.write_text(json.dumps({
+        "schema_version": "systematic-review-pool-v1",
+        "studies": [
+            {"id": "p1", "title": "Included", "doi": "10.1000/p1", "passages": [{"text": "results"}]},
+            {"id": "p2", "title": "Excluded", "doi": "10.1000/p2", "passages": [{"text": "methods"}]},
+        ],
+        "deduplication_log": {"input_count": 2, "deduplicated_count": 2, "duplicate_ids": []},
+    }), encoding="utf-8")
+    manifest["source_records"].append({
+        "id": "systematic_review_pool", "path": str(pool_path),
+        "sha256": hashlib.sha256(pool_path.read_bytes()).hexdigest(),
+    })
+
+    async def fake_ask(stage, _family, payload, _task):
+        assert {item["id"] for item in payload["studies"]} == {"p1", "p2"}
+        return {
+            "decisions": [
+                {"study_id": "p1", "decision": "include", "reason": f"{stage} eligible"},
+                {"study_id": "p2", "decision": "exclude", "reason": f"{stage} ineligible"},
+                {"study_id": "invented", "decision": "include", "reason": "must be dropped"},
+            ],
+            "quality_appraisals": [{"study_id": "p1", "rating": "low risk", "rationale": "checked"}],
+            "synthesis_method": "narrative synthesis", "feedback": f"{stage} completed independently",
+        }
+
+    monkeypatch.setattr(method_material_analysis_service, "_ask", fake_ask)
+    package = await method_material_analysis_service.build_for_task(task, manifest)
+    artifact = research_analysis_service.analyze_package(
+        package, "systematic_review", [manifest["source_records"][0]["sha256"]]
+    )
+
+    assert len(package["screening_records"]) == 4
+    assert {item["study_id"] for item in package["screening_records"]} == {"p1", "p2"}
+    assert package["screening_conflicts"] == []
+    assert all(item["status"] == "passed" for item in artifact["method_checks"].values())

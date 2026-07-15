@@ -207,6 +207,20 @@ def test_systematic_review_rejects_screening_of_unregistered_study():
     assert artifact["method_checks"]["appraisal_coverage"]["status"] == "failed"
 
 
+def test_systematic_review_rejects_registered_study_that_was_never_screened():
+    package = {
+        **_packages()["systematic_review"],
+        "studies": [
+            {"id": "p1", "title": "First Study", "doi": "10.1000/p1"},
+            {"id": "p2", "title": "Omitted Study", "doi": "10.1000/p2"},
+        ],
+    }
+
+    artifact = research_analysis_service.analyze_package(package, "systematic_review", ["b" * 64])
+
+    assert artifact["method_checks"]["screening_integrity"]["status"] == "failed"
+
+
 def test_humanities_adapter_rejects_untraceable_interpretation():
     package = {
         **_packages()["humanities"],

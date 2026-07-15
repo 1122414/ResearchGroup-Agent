@@ -113,6 +113,15 @@ def test_complete_workflow_adds_only_missing_thesis_roles():
     assert all(item.get("subquestion_id") == "sq1" for item in result[1:])
 
 
+def test_systematic_review_workflow_always_includes_real_study_pool_acquisition():
+    result = task_decomposer._ensure_complete_workflow(
+        [{"task_type": "literature_survey"}],
+        {"methodology_profile": {"family": "systematic_review"}}, "survey",
+    )
+
+    assert "data_acquisition" in {item["task_type"] for item in result}
+
+
 @pytest.mark.asyncio
 async def test_survey_decomposition_drops_experiments_and_seeds_hypothesis():
     run_id = f"run_dec_{uuid.uuid4().hex[:6]}"

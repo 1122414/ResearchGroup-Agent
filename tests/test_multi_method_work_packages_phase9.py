@@ -2,6 +2,7 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +14,7 @@ from backend.app.services.research_state_service import research_state_service
 from backend.app.services.scientific_quality_gate_service import scientific_quality_gate_service
 from backend.app.services.task_decomposer import task_decomposer
 from backend.app.storage import init_db
-from backend.app.storage.repositories import ResearchBriefRepository, RunRepository
+from backend.app.storage.repositories import EvidenceRepository, ResearchBriefRepository, RunRepository
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +130,53 @@ def test_user_materials_are_hashed_and_registered_without_llm_generated_raw_data
     assert manifest["artifact"] in {
         item["path"] for item in artifact_manifest_service.read(run_dir)["artifacts"]
     }
+
+
+def test_systematic_review_freezes_only_verified_fulltext_evidence(tmp_path):
+    now = datetime.now().isoformat()
+    run_id = f"run_review_pool_{uuid.uuid4().hex[:8]}"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    artifact_manifest_service.initialize(run_dir, run_id=run_id, display_name="review pool")
+    RunRepository.insert({
+        "id": run_id, "research_goal": "系统综述", "artifact_dir": str(run_dir),
+        "status": "created", "created_at": now, "updated_at": now,
+    })
+    research_state_service.ensure_initialized(RunRepository.get_by_id(run_id))
+    ResearchBriefRepository.update(
+        run_id, resource_plan=_brief("systematic_review")["resource_plan"],
+        ethics_plan=_brief("systematic_review")["ethics_plan"], methodology_family="systematic_review",
+        methodology_profile={"family": "systematic_review", "epistemic_mode": "evidence_synthesis"},
+    )
+    for source_id, eligible in (("verified", True), ("metadata_only", True), ("unverified", False)):
+        EvidenceRepository.upsert_source({
+            "id": source_id, "run_id": run_id, "task_id": "literature", "title": source_id,
+            "doi": f"10.1000/{source_id}", "url": f"https://example.org/{source_id}",
+            "metadata": {"citation_eligible": eligible}, "created_at": now,
+        })
+    EvidenceRepository.insert_excerpt({
+        "id": "excerpt_verified", "run_id": run_id, "source_id": "verified",
+        "excerpt": "Full text methods and results.", "locator": "page 2", "excerpt_type": "full_text",
+        "captured_at": now,
+    })
+    EvidenceRepository.insert_excerpt({
+        "id": "excerpt_metadata", "run_id": run_id, "source_id": "metadata_only",
+        "excerpt": "Abstract-like metadata.", "locator": "record", "excerpt_type": "metadata_only",
+        "captured_at": now,
+    })
+    EvidenceRepository.insert_excerpt({
+        "id": "excerpt_unverified", "run_id": run_id, "source_id": "unverified",
+        "excerpt": "Unverified full text.", "locator": "page 1", "excerpt_type": "full_text",
+        "captured_at": now,
+    })
+
+    manifest = research_material_service.ingest_for_task({"id": "acquire", "run_id": run_id})
+    pool_record = next(item for item in manifest["source_records"] if item["id"] == "systematic_review_pool")
+    pool = json.loads(Path(pool_record["path"]).read_text(encoding="utf-8"))
+
+    assert manifest["completeness"] == "complete"
+    assert [item["id"] for item in pool["studies"]] == ["verified"]
+    assert pool_record["sha256"] == hashlib.sha256(Path(pool_record["path"]).read_bytes()).hexdigest()
 
 
 def test_data_acquisition_quality_gate_rejects_unregistered_or_tampered_material(tmp_path, monkeypatch):

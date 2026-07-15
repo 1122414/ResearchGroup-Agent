@@ -12,9 +12,9 @@ from .run_artifact_service import run_artifact_service
 
 
 class MethodMaterialAnalysisService:
-    """Create traceable qualitative/humanities packages from hashed raw materials."""
+    """Create traceable qualitative, humanities, and review packages from hashed materials."""
 
-    SUPPORTED = {"qualitative", "humanities"}
+    SUPPORTED = {"qualitative", "humanities", "systematic_review"}
 
     async def build_for_task(self, task: dict, manifest: dict) -> dict | None:
         run_id = task.get("run_id")
@@ -25,7 +25,20 @@ class MethodMaterialAnalysisService:
         run = RunRepository.get_by_id(run_id) or {}
         run_dir = run_artifact_service.run_dir(run, run_id).resolve()
         materials, segments = self._materials(manifest, run_dir)
-        if not materials or not segments or self._contains_prebuilt_package(manifest, run_dir):
+        review_pool = self._review_pool(manifest, run_dir) if family == "systematic_review" else None
+        if self._contains_prebuilt_package(manifest, run_dir):
+            return None
+        if family == "systematic_review":
+            if not review_pool:
+                return None
+            payload = {
+                "family": family, "research_question": brief.get("research_question"),
+                "methodology_profile": brief.get("methodology_profile"), **review_pool,
+            }
+            first = await self._ask("analyst", family, payload, task)
+            second = await self._ask("reviewer", family, payload, task)
+            return self._systematic_review_package(first, second, review_pool, brief)
+        if not materials or not segments:
             return None
         payload = {
             "family": family,
@@ -61,6 +74,8 @@ class MethodMaterialAnalysisService:
     @staticmethod
     def _schema(family: str, stage: str) -> dict:
         if stage == "reviewer":
+            if family == "systematic_review":
+                return MethodMaterialAnalysisService._systematic_schema()
             return {
                 "type": "object", "properties": {
                     "approved": {"type": "boolean"}, "feedback": {"type": "string"},
@@ -81,18 +96,30 @@ class MethodMaterialAnalysisService:
                     "saturation_assessment", "limitations",
                 ],
             }
+        if family == "humanities":
+            return {
+                "type": "object", "properties": {
+                    "source_criticisms": {"type": "array", "items": {"type": "object"}},
+                    "historical_or_textual_context": {"type": "string"},
+                    "interpretive_framework": {"type": "string"},
+                    "interpretations": {"type": "array", "items": {"type": "object"}},
+                    "counterarguments": {"type": "array", "items": {"type": "object"}},
+                    "limitations": {"type": "array", "items": {"type": "string"}},
+                }, "required": [
+                    "source_criticisms", "historical_or_textual_context", "interpretive_framework",
+                    "interpretations", "counterarguments", "limitations",
+                ],
+            }
+        return MethodMaterialAnalysisService._systematic_schema()
+
+    @staticmethod
+    def _systematic_schema() -> dict:
         return {
             "type": "object", "properties": {
-                "source_criticisms": {"type": "array", "items": {"type": "object"}},
-                "historical_or_textual_context": {"type": "string"},
-                "interpretive_framework": {"type": "string"},
-                "interpretations": {"type": "array", "items": {"type": "object"}},
-                "counterarguments": {"type": "array", "items": {"type": "object"}},
-                "limitations": {"type": "array", "items": {"type": "string"}},
-            }, "required": [
-                "source_criticisms", "historical_or_textual_context", "interpretive_framework",
-                "interpretations", "counterarguments", "limitations",
-            ],
+                "decisions": {"type": "array", "items": {"type": "object"}},
+                "quality_appraisals": {"type": "array", "items": {"type": "object"}},
+                "synthesis_method": {"type": "string"}, "feedback": {"type": "string"},
+            }, "required": ["decisions", "quality_appraisals", "synthesis_method", "feedback"],
         }
 
     def _qualitative_package(
@@ -169,6 +196,57 @@ class MethodMaterialAnalysisService:
             "limitations": candidate.get("limitations") or ["模型辅助解释需由责任研究者复核"],
         }
 
+    @staticmethod
+    def _systematic_review_package(first: dict, second: dict, pool: dict, brief: dict) -> dict:
+        studies = pool.get("studies") or []
+        study_ids = {str(item.get("id")) for item in studies if item.get("id")}
+        records = []
+        decisions_by_reviewer = []
+        for reviewer, result in (("screener_a", first), ("screener_b", second)):
+            reviewer_decisions = {}
+            for item in result.get("decisions") or []:
+                study_id = str(item.get("study_id") or "") if isinstance(item, dict) else ""
+                decision = str(item.get("decision") or "").lower() if isinstance(item, dict) else ""
+                if study_id in study_ids and decision in {"include", "exclude"}:
+                    reviewer_decisions[study_id] = decision
+                    records.append({
+                        "study_id": study_id, "reviewer": reviewer, "stage": "full_text",
+                        "decision": decision, "reason": str(item.get("reason") or ""),
+                    })
+            decisions_by_reviewer.append(reviewer_decisions)
+        included = {
+            study_id for study_id in study_ids
+            if all(decisions.get(study_id) == "include" for decisions in decisions_by_reviewer)
+        }
+        conflicts = sorted(
+            study_id for study_id in study_ids
+            if len({decisions.get(study_id) for decisions in decisions_by_reviewer}) > 1
+        )
+        appraisals = {}
+        for result in (first, second):
+            for item in result.get("quality_appraisals") or []:
+                study_id = str(item.get("study_id") or "") if isinstance(item, dict) else ""
+                if study_id in included and item.get("rating"):
+                    appraisals.setdefault(study_id, {
+                        "study_id": study_id, "rating": str(item.get("rating")),
+                        "rationale": str(item.get("rationale") or ""),
+                    })
+        profile = brief.get("methodology_profile") or {}
+        return {
+            "schema_version": "research-method-data-v1", "family": "systematic_review",
+            "studies": [{key: item.get(key) for key in ("id", "title", "doi", "url")} for item in studies],
+            "screening_records": records,
+            "deduplication_log": pool.get("deduplication_log") or {},
+            "quality_appraisals": list(appraisals.values()),
+            "screening_conflicts": conflicts,
+            "synthesis_method": first.get("synthesis_method") or second.get("synthesis_method")
+            or "; ".join(map(str, profile.get("analysis_methods") or [])),
+            "limitations": [
+                f"仅综合冻结检索池；双筛分歧 {conflicts} 保守不纳入并单独披露。",
+                str(first.get("feedback") or ""), str(second.get("feedback") or ""),
+            ],
+        }
+
     def _materials(self, manifest: dict, run_dir: Path) -> tuple[list[dict], list[dict]]:
         materials, segments = [], []
         for record in manifest.get("source_records") or []:
@@ -217,6 +295,23 @@ class MethodMaterialAnalysisService:
             except (OSError, RuntimeError, json.JSONDecodeError):
                 continue
         return False
+
+    @staticmethod
+    def _review_pool(manifest: dict, run_dir: Path) -> dict | None:
+        for record in manifest.get("source_records") or []:
+            try:
+                path = Path(str(record.get("path") or "")).resolve()
+                if not path.is_file() or not path.is_relative_to(run_dir):
+                    continue
+                raw = path.read_bytes()
+                if hashlib.sha256(raw).hexdigest() != record.get("sha256"):
+                    continue
+                value = json.loads(raw.decode("utf-8"))
+                if value.get("schema_version") == "systematic-review-pool-v1" and value.get("studies"):
+                    return value
+            except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                continue
+        return None
 
     @staticmethod
     def _processing_allowed(brief: dict) -> bool:
