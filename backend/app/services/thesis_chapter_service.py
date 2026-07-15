@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from ..storage.repositories import (
-    EvidenceRepository, ResearchBriefRepository, ResearchClaimRepository,
+    EvidenceRepository, ExperimentResultRepository, ResearchBriefRepository, ResearchClaimRepository,
     ResearchMilestoneRepository, TaskDependencyRepository, TaskRepository,
 )
 from .thesis_quality_service import thesis_quality_service
@@ -105,6 +105,7 @@ class ThesisChapterService:
             {"id": item["id"], "statement": item["statement"], "evidence_ids": item.get("evidence_ids") or []}
             for item in claims
         ]
+        artifact_support = self.artifact_support(task.get("run_id"))
         return "【论文章节写作契约】\n" + json.dumps(
             {
                 "chapter_spec": spec,
@@ -121,6 +122,7 @@ class ThesisChapterService:
                     "maximum_word_count": (brief.get("thesis_requirements") or {}).get("maximum_word_count"),
                 },
                 "allowed_support": allowed,
+                "allowed_artifact_support": artifact_support,
                 "allowed_contract_support": [
                     "brief:research_question", "brief:objective", "brief:scope", "brief:methodology",
                 ],
@@ -132,7 +134,7 @@ class ThesisChapterService:
                             "paragraphs": [{
                                 "id": "稳定段落ID", "text": "段落正文",
                                 "paragraph_type": "claim|interpretation|method|transition|limitation",
-                                "support_ids": ["claim ID 或 brief:* ID"],
+                                "support_ids": ["claim ID、experiment:* ID 或 brief:* ID"],
                             }],
                         }],
                     }
@@ -158,6 +160,7 @@ class ThesisChapterService:
         brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
         claims = ResearchClaimRepository.get_by_run(task.get("run_id"))
         allowed = {item["id"] for item in claims if item.get("status") == "supported"}
+        allowed.update(item["id"] for item in self.artifact_support(task.get("run_id")))
         allowed.update({"brief:research_question", "brief:objective", "brief:scope", "brief:methodology"})
         text_parts = []
         paragraph_count = 0
@@ -187,6 +190,27 @@ class ThesisChapterService:
         if paragraph_count < 3:
             issues.append("chapter_paragraph_count_insufficient")
         return issues
+
+    @staticmethod
+    def artifact_support(run_id: str | None) -> list[dict]:
+        support = []
+        for result in ExperimentResultRepository.get_by_run(run_id) if run_id else []:
+            if result.get("status") != "completed":
+                continue
+            metrics = result.get("metrics") or {}
+            support.append({
+                "id": f"experiment:{result['id']}",
+                "protocol_id": result.get("protocol_id"),
+                "summary": result.get("summary"),
+                "retrieval_configuration": metrics.get("retrieval_configuration"),
+                "benchmark_design": metrics.get("benchmark_design"),
+                "rows": metrics.get("rows"),
+                "statistical_analysis": metrics.get("statistical_analysis"),
+                "preregistration_trace": metrics.get("preregistration_trace"),
+                "reproduction": metrics.get("reproduction"),
+                "publishable": metrics.get("publishable"),
+            })
+        return support
 
     def can_assemble(self, run_id: str) -> bool:
         brief = ResearchBriefRepository.get_by_run(run_id) or {}

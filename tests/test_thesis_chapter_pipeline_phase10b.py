@@ -195,6 +195,21 @@ def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):
     assert "chapter_paragraph_count_insufficient" in issues
 
 
+def test_chapter_gate_accepts_frozen_experiment_support(tmp_path, monkeypatch):
+    run_id, _ = _run_with_thesis(tmp_path, ["Results"])
+    task = thesis_chapter_service.ensure_tasks(run_id)[0]
+    monkeypatch.setattr(
+        thesis_chapter_service, "artifact_support",
+        lambda _run_id: [{"id": "experiment:verified_result", "rows": [{"mrr_at_10": 1.0}]}],
+    )
+    output = _chapter_output(
+        "Results", thesis_chapter_service.spec_from_task(task)["word_budget"],
+        "experiment:verified_result",
+    )
+
+    assert thesis_chapter_service.validate_output(task, output) == []
+
+
 def test_deterministic_thesis_assembly_adds_verified_citations_and_traceability(tmp_path):
     run_id, run = _run_with_thesis(tmp_path, ["分析"])
     claim_id = f"claim_grounded_{uuid.uuid4().hex[:8]}"

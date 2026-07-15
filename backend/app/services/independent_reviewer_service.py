@@ -5,6 +5,7 @@ import json
 from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
 from ..storage.repositories import ResearchBriefRepository, ResearchClaimRepository
+from .thesis_chapter_service import thesis_chapter_service
 
 
 class IndependentReviewerService:
@@ -122,6 +123,7 @@ class IndependentReviewerService:
                     },
                     {"id": "brief:methodology", "value": brief.get("methodology_profile")},
                 ],
+                "allowed_artifact_support": thesis_chapter_service.artifact_support(task.get("run_id")),
             }
             review_scope = self._thesis_chapter_review_scope()
         elif not claims and not experiment:
@@ -260,9 +262,11 @@ class IndependentReviewerService:
     def _thesis_chapter_review_scope() -> str:
         return (
             "这是单章论文写作审查。实际完整正文位于 deliverable.chapter，allowed_support 是已由上游"
-            "科学硬门核验并冻结的结论，allowed_contract_support 是可直接引用的研究合同字段；不得声称章节正文"
+            "科学硬门核验并冻结的结论，allowed_contract_support 是可直接引用的研究合同字段，"
+            "allowed_artifact_support 是已执行并冻结的实验工件；不得声称章节正文"
             "或原始依据未提供，也不得把 brief:* ID 判为无效。逐段检查其 support_ids 所支撑的表述是否超出"
-            "这些允许项，及结构、论证连贯性、方法解释、结果边界和局限是否与章节职责相称。"
+            "这些允许项。实验方法和数值若与 allowed_artifact_support 精确一致即可引用；若出现工件中没有的"
+            "算法、参数或数值必须拒绝。还应检查结构、论证连贯性、方法解释、结果边界和局限是否与章节职责相称。"
             "字数、support ID 存在性和来源资格已经由确定性门校验，不得要求正文自报 word_count 或重复"
             "粘贴原始文献。引言、文献综述和结论不必重复逐 query 数据；方法与结果章节才应提供与职责相称的"
             "统计和复现细节。冻结受控 pilot 只要明确禁止开放域外推，就不得要求擅自扩大样本或增加新基线。"

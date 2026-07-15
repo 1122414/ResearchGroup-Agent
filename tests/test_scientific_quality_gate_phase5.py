@@ -270,6 +270,12 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
             "methodology_profile": {"family": "controlled_experiment"},
         },
     )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.thesis_chapter_service.artifact_support",
+        lambda _run_id: [{
+            "id": "experiment:verified", "rows": [{"strategy": "overlap", "mrr_at_10": 1.0}],
+        }],
+    )
     result = await independent_reviewer_service.review_task(
         {"id": "chapter_1", "run_id": "run_1", "task_type": "thesis_chapter"},
         {
@@ -287,10 +293,13 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     assert '"chapter"' in prompts[0]
     assert '"allowed_support"' in prompts[0]
     assert '"allowed_contract_support"' in prompts[0]
+    assert '"allowed_artifact_support"' in prompts[0]
+    assert "experiment:verified" in prompts[0]
     assert "frozen question" in prompts[0]
     assert "bounded pilot result" in prompts[0]
     assert "不得声称章节正文或原始依据未提供" in prompts[0]
     assert "不得把 brief:* ID 判为无效" in prompts[0]
+    assert "工件中没有的" in prompts[0]
 
 
 @pytest.mark.asyncio
