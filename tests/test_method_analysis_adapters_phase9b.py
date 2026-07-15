@@ -67,6 +67,7 @@ def _packages() -> dict[str, dict]:
             ], "negative_cases": ["s3"],
             "reflexivity_statement": "researcher position declared",
             "saturation_assessment": "information power assessed",
+            "independent_review": {"approved": True, "checked_ids": ["s1", "s2", "s3"]},
         },
         "systematic_review": {
             **_base("systematic_review"),
@@ -89,6 +90,7 @@ def _packages() -> dict[str, dict]:
             "interpretive_framework": "declared hermeneutic framework",
             "counterarguments": [{"statement": "alternative reading", "source_ids": ["b"]}],
             "interpretations": [{"statement": "bounded interpretation", "source_ids": ["a", "b"]}],
+            "independent_review": {"approved": True, "checked_ids": ["a", "b"]},
         },
         "theoretical": {
             **_base("theoretical"), "definitions": ["D1"], "assumptions": ["A1"],

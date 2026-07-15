@@ -10,7 +10,7 @@ class ResearchMethodRegistryService:
         "experimental": {"controls", "protocol_deviations", "effect_size", "uncertainty", "raw_record_audit"},
         "qualitative": {
             "material_traceability", "codebook", "coding_coverage", "audit_trail",
-            "negative_cases", "reflexivity", "saturation_or_information_power",
+            "negative_cases", "reflexivity", "saturation_or_information_power", "independent_coding_review",
         },
         "systematic_review": {
             "study_identity", "deduplication", "screening_integrity", "dual_screening",
@@ -19,6 +19,7 @@ class ResearchMethodRegistryService:
         "humanities": {
             "material_integrity", "primary_source_criticism", "contextualization",
             "interpretive_framework", "interpretation_traceability", "counterarguments", "source_triangulation",
+            "independent_interpretive_review",
         },
         "theoretical": {"definitions", "assumptions", "dependency_graph", "proof_or_derivation_check", "counterexample_search"},
         "design_science": {"requirements_traceability", "artifact_description", "evaluation", "alternatives", "limitations"},

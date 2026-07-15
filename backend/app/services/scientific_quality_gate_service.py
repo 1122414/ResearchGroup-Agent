@@ -318,6 +318,21 @@ class ScientificQualityGateService:
                 return ["method_artifact_family_mismatch"]
             if payload.get("input_hashes") != input_hashes:
                 return ["method_artifact_input_hash_mismatch"]
+            package_path = payload.get("method_package_artifact")
+            package_hash = payload.get("method_package_artifact_sha256")
+            if bool(package_path) != bool(package_hash):
+                return ["method_package_artifact_provenance_incomplete"]
+            if package_path:
+                package = Path(str(package_path)).resolve()
+                package_entry = next(
+                    (item for item in manifest.get("artifacts") or [] if item.get("path") == str(package)), None,
+                )
+                if (
+                    not package.is_file() or not package.is_relative_to(run_dir) or not package_entry
+                    or (package_entry.get("metadata") or {}).get("sha256") != package_hash
+                    or hashlib.sha256(package.read_bytes()).hexdigest() != package_hash
+                ):
+                    return ["method_package_artifact_hash_mismatch"]
         except (OSError, json.JSONDecodeError, RuntimeError):
             return ["method_artifact_unreadable"]
         return []

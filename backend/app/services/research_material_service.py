@@ -35,6 +35,7 @@ class ResearchMaterialService:
                 "path": str(path), "sha256": hashlib.sha256(content).hexdigest(),
                 "size_bytes": len(content), "mime_type": item.get("mime_type") or "application/octet-stream",
                 "provenance": "user_supplied_run_attachment",
+                "declared_provenance": item.get("provenance") or item.get("source_url") or item.get("name") or path.name,
                 "authorization_evidence": authorization,
             })
         manifest = {

@@ -24,6 +24,7 @@ from .knowledge_graph_service import knowledge_graph_service
 from .literature_source_service import literature_source_service
 from .research_integrity_service import research_integrity_service
 from .research_analysis_service import research_analysis_service
+from .method_material_analysis_service import method_material_analysis_service
 from .research_material_service import research_material_service
 from .research_method_registry_service import research_method_registry_service
 from .thesis_chapter_service import thesis_chapter_service
@@ -194,8 +195,11 @@ class TaskExecutor:
                 ).get("data_acquisition", {})
                 material_manifest = method_inputs.get("material_manifest") or {}
                 if material_manifest:
+                    generated_package = await method_material_analysis_service.build_for_task(
+                        task, material_manifest,
+                    )
                     analysis_artifact = research_analysis_service.analyze_for_task(
-                        task, material_manifest
+                        task, material_manifest, generated_package,
                     )
                     result["analysis_artifact"] = analysis_artifact
                     result["claims"] = research_analysis_service.claims_for_artifact(analysis_artifact)

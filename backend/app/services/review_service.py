@@ -133,6 +133,10 @@ class ReviewService:
             evidence_ids = experiment_evidence if experiment_claim else [
                 provenance["analysis_artifact"], provenance["analysis_artifact_sha256"],
                 *provenance["input_hashes"],
+                *filter(None, (
+                    provenance.get("method_package_artifact"),
+                    provenance.get("method_package_artifact_sha256"),
+                )),
             ]
             ResearchClaimRepository.update(
                 claim["id"], status="supported", confidence=float(item.get("confidence") or 0.8),

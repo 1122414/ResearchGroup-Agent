@@ -17,18 +17,26 @@ class ResearchAnalysisService:
 
     SCHEMA_VERSION = "research-method-data-v1"
 
-    def analyze_for_task(self, task: dict, material_manifest: dict) -> dict:
+    def analyze_for_task(self, task: dict, material_manifest: dict, package_override: dict | None = None) -> dict:
         run_id = task.get("run_id")
         run = RunRepository.get_by_id(run_id) or {}
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
         run_dir = run_artifact_service.run_dir(run, run_id).resolve()
-        package = self._load_package(material_manifest, run_dir)
+        package = package_override or self._load_package(material_manifest, run_dir)
         family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family") or ""
         artifact = self.analyze_package(package, family, [
             record.get("sha256") for record in material_manifest.get("source_records") or [] if record.get("sha256")
         ])
         output_dir = run_dir / "analysis"
         output_dir.mkdir(parents=True, exist_ok=True)
+        if package_override:
+            package_path = output_dir / f"{task.get('id', 'task')}_generated_method_package.json"
+            package_path.write_text(json.dumps(package_override, ensure_ascii=False, indent=2), encoding="utf-8")
+            package_entry = artifact_manifest_service.register(
+                run_dir, kind="method_data_package", path=str(package_path),
+            )
+            artifact["method_package_artifact"] = str(package_path)
+            artifact["method_package_artifact_sha256"] = (package_entry.get("metadata") or {}).get("sha256")
         path = output_dir / f"{task.get('id', 'task')}_analysis.json"
         path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
         entry = artifact_manifest_service.register(run_dir, kind="method_analysis", path=str(path))
@@ -57,6 +65,8 @@ class ResearchAnalysisService:
                 "method_family": family, "input_hashes": artifact.get("input_hashes") or [],
                 "analysis_artifact": artifact.get("artifact"),
                 "analysis_artifact_sha256": artifact.get("artifact_sha256"),
+                "method_package_artifact": artifact.get("method_package_artifact"),
+                "method_package_artifact_sha256": artifact.get("method_package_artifact_sha256"),
             },
         }]
 
@@ -221,6 +231,11 @@ class ResearchAnalysisService:
             ),
             "reflexivity": self._check(bool(package.get("reflexivity_statement")), str(package.get("reflexivity_statement") or "")),
             "saturation_or_information_power": self._check(bool(package.get("saturation_assessment")), str(package.get("saturation_assessment") or "")),
+            "independent_coding_review": self._check(
+                (package.get("independent_review") or {}).get("approved") is True
+                and segment_ids <= set(map(str, (package.get("independent_review") or {}).get("checked_ids") or [])),
+                str(package.get("independent_review") or {}),
+            ),
         }
         findings = [{"code_frequencies": counts, "coded_segment_count": len(segments), "source_count": len(source_ids - {""})}]
         return findings, checks, list(package.get("limitations") or []), "对用户提供的编码片段做确定性计数并审计质性质量记录"
@@ -306,6 +321,11 @@ class ResearchAnalysisService:
                 ), f"反论证数={len(counterarguments)}",
             ),
             "source_triangulation": self._check(len({item.get("provenance") for item in sources if item.get("provenance")}) >= 2, "独立出处至少2类"),
+            "independent_interpretive_review": self._check(
+                (package.get("independent_review") or {}).get("approved") is True
+                and source_ids <= set(map(str, (package.get("independent_review") or {}).get("checked_ids") or [])),
+                str(package.get("independent_review") or {}),
+            ),
         }
         findings = [{"primary_source_count": len(sources), "interpretations": interpretations}]
         return findings, checks, list(package.get("limitations") or []), "核对一手来源批判、语境、解释框架、反论证和多出处互证"
