@@ -1,4 +1,5 @@
 import uuid
+import json
 from datetime import datetime
 
 import pytest
@@ -144,6 +145,34 @@ async def test_chapter_generation_uses_longform_token_budget():
         FakeLLM(), "prompt", {"task_type": "literature_survey"}, "researcher",
     )
     assert calls[0]["max_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_short_chapter_gets_one_grounded_expansion(monkeypatch):
+    calls = []
+    expanded = {"summary": "expanded", "claims": [], "chapter": {"sections": []}}
+
+    class FakeLLM:
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            return json.dumps(expanded)
+
+    task = {
+        "id": "chapter", "task_type": "thesis_chapter",
+        "description": '【thesis_chapter_spec】{"chapter_name":"Results","word_budget":1000}\n',
+    }
+    monkeypatch.setattr(
+        thesis_chapter_service, "validate_output",
+        lambda *_args: ["chapter_word_count_below_70_percent:400/1000"],
+    )
+    result = await TaskExecutor()._expand_short_chapter(
+        FakeLLM(), "original prompt", task, "writer", {"summary": "short", "claims": []},
+    )
+
+    assert result == expanded
+    assert len(calls) == 1
+    assert "至少 700 词" in calls[0]["prompt"]
+    assert calls[0]["max_tokens"] == 8192
 
 
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):

@@ -100,6 +100,7 @@ class ThesisChapterService:
         brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
         claims = [item for item in ResearchClaimRepository.get_by_run(task.get("run_id")) if item.get("status") == "supported"]
         spec = self.spec_from_task(task)
+        word_budget = int(spec.get("word_budget") or 0)
         allowed = [
             {"id": item["id"], "statement": item["statement"], "evidence_ids": item.get("evidence_ids") or []}
             for item in claims
@@ -107,6 +108,7 @@ class ThesisChapterService:
         return "【论文章节写作契约】\n" + json.dumps(
             {
                 "chapter_spec": spec,
+                "minimum_required_words": int(word_budget * 0.7),
                 "research_question": brief.get("research_question"),
                 "objective": brief.get("objective"),
                 "scope_in": brief.get("scope_in"), "scope_out": brief.get("scope_out"),
@@ -135,6 +137,10 @@ class ThesisChapterService:
                         }],
                     }
                 },
+                "hard_constraints": [
+                    f"chapter 正文必须至少达到 {int(word_budget * 0.7)} 词",
+                    "扩展分析深度、方法解释和边界讨论，不得用重复句填充篇幅",
+                ],
             }, ensure_ascii=False, indent=2,
         )
 

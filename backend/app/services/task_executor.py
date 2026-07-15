@@ -153,6 +153,8 @@ class TaskExecutor:
         prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
         try:
             result = await self._generate_structured(llm, prompt, task, owner_id)
+            if task_type == "thesis_chapter":
+                result = await self._expand_short_chapter(llm, prompt, task, owner_id, result)
         except Exception:
             agent_skill_service.record_usage(active_skills, success=False)
             raise
@@ -281,6 +283,29 @@ class TaskExecutor:
         )
         logger.info("[TaskExecutor] execute completed | task_id=%s | output_saved=%s", task.get("id"), f"out_{task['id']}")
         return result
+
+    async def _expand_short_chapter(self, llm, prompt: str, task: dict, owner_id: str, result: dict) -> dict:
+        issues = thesis_chapter_service.validate_output(task, result)
+        if not any(issue.startswith("chapter_word_count_below_70_percent:") for issue in issues):
+            return result
+        budget = int(thesis_chapter_service.spec_from_task(task).get("word_budget") or 0)
+        minimum = int(budget * 0.7)
+        expansion_prompt = (
+            f"{prompt}\n\n【章节长度有界补全】\n"
+            f"现有章节未达到硬性最低长度。请把 chapter 正文扩展到至少 {minimum} 词。"
+            "必须保留原有事实边界与 support_ids，只能深化论证、解释方法选择、分析结果含义、"
+            "讨论内部/外部效度与局限；禁止新增来源、实验结果或无依据事实，禁止重复句凑字数。"
+            "只返回补全后的完整 JSON 对象。\n现有 JSON：\n"
+            + json.dumps(result, ensure_ascii=False)
+        )
+        try:
+            return await self._generate_structured(llm, expansion_prompt, task, owner_id)
+        except Exception as exc:
+            logger.warning(
+                "[TaskExecutor] bounded chapter expansion failed; keeping original | task_id=%s | error=%s",
+                task.get("id"), exc,
+            )
+            return result
 
     @staticmethod
     def _ground_material_output(result: dict, material_manifest: dict) -> dict:
