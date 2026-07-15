@@ -18,6 +18,7 @@ from .independent_reviewer_service import independent_reviewer_service
 from .research_methodology_service import research_methodology_service
 from .research_method_registry_service import research_method_registry_service
 from .thesis_quality_service import thesis_quality_service
+from .thesis_chapter_service import thesis_chapter_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -140,6 +141,8 @@ class ScientificQualityGateService:
             errors.append("claims_not_array")
         if task.get("task_type") == "experiment_design" and not isinstance(latest.get("reproducible_experiment"), dict):
             errors.append("experiment_result_missing")
+        if task.get("task_type") == "thesis_chapter":
+            errors.extend(thesis_chapter_service.validate_output(task, latest))
         return {"passed": not errors, "issues": errors, "verifier": "schema_gate_v1"}
 
     def _provenance_gate(self, task: dict, latest: dict, evidence: dict) -> dict:

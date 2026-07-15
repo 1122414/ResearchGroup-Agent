@@ -223,7 +223,22 @@ class MockLLMProvider(LLMProvider):
         )
 
     def _mock_graduate_result(self, prompt: str) -> str:
-        if "research_design" in prompt or "研究设计" in prompt:
+        if "thesis_chapter" in prompt or "论文章节写作契约" in prompt:
+            result = {
+                "summary": "Mock 仅演示章节结构；篇幅和证据门应保持 fail-closed。",
+                "chapter": {
+                    "name": "Mock章节", "word_budget": 1000,
+                    "sections": [{
+                        "heading": "结构演示",
+                        "paragraphs": [{
+                            "id": "mock_p1", "text": "该段仅用于结构测试，不构成真实学位论文内容。" * 3,
+                            "paragraph_type": "limitation", "support_ids": [],
+                        }],
+                    }],
+                },
+                "claims": [],
+            }
+        elif "research_design" in prompt or "研究设计" in prompt:
             family = next((item for item in (
                 "quantitative", "qualitative", "computational", "experimental", "systematic_review",
                 "humanities", "theoretical", "design_science", "mixed_methods",

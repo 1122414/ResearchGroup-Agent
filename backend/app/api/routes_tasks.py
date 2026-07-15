@@ -28,6 +28,7 @@ DEFAULT_REQUIRED_SKILLS = {
     "system_design": {"literature_review": 2, "coding": 8, "experiment": 4, "data_analysis": 4, "academic_writing": 2, "mentoring": 2},
     "experiment_design": {"literature_review": 3, "coding": 3, "experiment": 8, "data_analysis": 5, "academic_writing": 4, "mentoring": 2},
     "result_analysis": {"literature_review": 2, "coding": 4, "experiment": 3, "data_analysis": 9, "academic_writing": 5, "mentoring": 2},
+    "thesis_chapter": {"literature_review": 6, "coding": 1, "experiment": 2, "data_analysis": 5, "academic_writing": 10, "mentoring": 4},
     "report_writing": {"literature_review": 5, "coding": 1, "experiment": 2, "data_analysis": 4, "academic_writing": 9, "mentoring": 3},
 }
 

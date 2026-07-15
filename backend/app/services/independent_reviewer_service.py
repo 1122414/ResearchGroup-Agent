@@ -83,6 +83,7 @@ class IndependentReviewerService:
                 "summary", "findings", "deliverables", "risks", "risks_or_next_steps",
                 "next_steps", "hypotheses", "uncertainties", "method_package",
                 "material_manifest", "analysis_artifact",
+                "chapter",
             )
             if latest.get(key) is not None
         }

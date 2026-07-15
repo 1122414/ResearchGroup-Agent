@@ -526,6 +526,7 @@ export const TASK_TYPE_LABELS: Record<string, string> = {
   system_design: "系统设计",
   experiment_design: "实验设计",
   result_analysis: "结果分析",
+  thesis_chapter: "论文章节写作",
   report_writing: "报告写作",
 }
 

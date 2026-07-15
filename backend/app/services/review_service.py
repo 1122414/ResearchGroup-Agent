@@ -327,6 +327,7 @@ class ReviewService:
             "system_design": {"feasibility": 0.35, "interfaces": 0.25, "risk_control": 0.2, "clarity": 0.2},
             "experiment_design": {"reproducibility": 0.35, "baseline": 0.2, "metrics": 0.25, "safety": 0.2},
             "result_analysis": {"completeness": 0.3, "interpretation": 0.3, "evidence": 0.2, "clarity": 0.2},
+            "thesis_chapter": {"structure": 0.2, "evidence": 0.35, "completeness": 0.25, "clarity": 0.2},
             "report_writing": {"structure": 0.25, "evidence": 0.3, "completeness": 0.25, "clarity": 0.2},
         }.get(task_type, {"quality": 1.0})
         return {"dimensions": dimensions, "threshold": settings.review_pass_threshold}
@@ -369,6 +370,16 @@ class ReviewService:
             elif dimension == "evidence":
                 if task.get("task_type") == "report_writing":
                     score = settings.review_report_evidence_score if latest else settings.review_default_rejected_score
+                elif task.get("task_type") == "thesis_chapter":
+                    chapter = latest.get("chapter") or {}
+                    paragraphs = [
+                        paragraph for section in chapter.get("sections") or []
+                        for paragraph in section.get("paragraphs") or []
+                    ]
+                    score = 1.0 if paragraphs and all(
+                        item.get("support_ids") or item.get("paragraph_type") in {"transition", "limitation"}
+                        for item in paragraphs
+                    ) else settings.review_default_rejected_score
                 elif task.get("task_type") == "result_analysis":
                     experiment_metrics = latest.get("reproducible_experiment", {}).get("metrics", {})
                     score = 1.0 if (

@@ -26,6 +26,7 @@ from .research_integrity_service import research_integrity_service
 from .research_analysis_service import research_analysis_service
 from .research_material_service import research_material_service
 from .research_method_registry_service import research_method_registry_service
+from .thesis_chapter_service import thesis_chapter_service
 from .reproducible_experiment_service import reproducible_experiment_service
 from .run_event_service import run_event_service
 
@@ -80,6 +81,7 @@ class TaskExecutor:
             + json.dumps(method_requirement, ensure_ascii=False, indent=2)
             if method_requirement else ""
         )
+        thesis_chapter_context = thesis_chapter_service.context_for_task(task) if task_type == "thesis_chapter" else ""
         upstream_context = self._upstream_context(task)
         experiment_protocol = (
             experiment_protocol_service.ensure_for_task(task)
@@ -120,6 +122,7 @@ class TaskExecutor:
 {collaboration_context}
 {contract_context}
 {method_work_package}
+{thesis_chapter_context}
 {upstream_context}
 {protocol_context}
 {literature_grounding}
@@ -134,6 +137,7 @@ class TaskExecutor:
 6. 给出 uncertainties（可选）：数组，每个元素 {{"description": 仍未解决的问题, "severity": "low"|"medium"|"high"}}。
 7. 不要输出 Markdown，只返回 JSON。
 8. 若存在“方法专用工作包”，必须按 required_object 输出对应对象和全部字段；不得用 summary 代替。
+9. 若存在“论文章节写作契约”，必须输出 chapter 对象；不得自行添加 allowed_support 之外的事实或引用。
 """
 
         llm = create_llm_provider()
@@ -350,7 +354,7 @@ class TaskExecutor:
             "result_analysis": {"research_design", "data_acquisition", "experiment_design"},
             "report_writing": {
                 "literature_survey", "research_design", "data_acquisition",
-                "system_design", "experiment_design", "result_analysis",
+                "system_design", "experiment_design", "result_analysis", "thesis_chapter",
             },
         }.get(task_type)
         if not run_id or not wanted:
@@ -430,6 +434,7 @@ class TaskExecutor:
                 "summary", "findings", "deliverables", "claims", "risks", "next_steps",
                 "uncertainties", "references_used", "academic_integrity", "experiment_protocol",
                 "method_package", "material_manifest", "analysis_artifact",
+                "chapter",
             )
             if value.get(key) is not None
         }

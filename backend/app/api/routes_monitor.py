@@ -22,6 +22,7 @@ _TASK_TYPE_TO_ACTIVITY = {
     "system_design": "coding",
     "experiment_design": "experimenting",
     "result_analysis": "analyzing",
+    "thesis_chapter": "writing",
     "report_writing": "writing",
 }
 

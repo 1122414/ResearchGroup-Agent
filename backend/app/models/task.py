@@ -26,6 +26,7 @@ class TaskType(str, Enum):
     system_design = "system_design"
     experiment_design = "experiment_design"
     result_analysis = "result_analysis"
+    thesis_chapter = "thesis_chapter"
     report_writing = "report_writing"
 
 

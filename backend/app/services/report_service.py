@@ -14,6 +14,7 @@ from ..storage.repositories import (
     ExperimentResultRepository,
     OutputRepository,
     ResearchClaimRepository,
+    ResearchBriefRepository,
     ResearchMilestoneRepository,
     RunRepository,
     TaskRepository,
@@ -24,6 +25,7 @@ from .grounding_audit_service import grounding_audit_service
 from .paper_assembly_service import paper_assembly_service
 from .run_event_service import run_event_service
 from .scientific_quality_gate_service import scientific_quality_gate_service
+from .thesis_chapter_service import thesis_chapter_service
 
 
 class ReportGroundingError(RuntimeError):
@@ -86,7 +88,11 @@ class ReportService:
         # retained as an artifact, but cannot enter the publishable report until it
         # has sentence-level evidence bindings.
         mode = paper_assembly_service.detect_mode(run, tasks)
-        report = paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
+        report = (
+            thesis_chapter_service.assemble(run, title)
+            if thesis_chapter_service.can_assemble(run["id"])
+            else paper_assembly_service.assemble(run, mode=mode, narrative="", title=title)
+        )
 
         grounding_audit = self._run_grounding_audit(run["id"], report)
         scientific_quality = self._run_scientific_quality_gate(run["id"], report, grounding_audit)
@@ -108,6 +114,8 @@ class ReportService:
 
     @staticmethod
     def _promote_delivery_status(report: str, quality: dict) -> str:
+        if quality.get("master_thesis_ready") and "`master_thesis_candidate`" in report:
+            return report.replace("`master_thesis_candidate`", "`master_thesis`", 1)
         if quality.get("publication_ready") and "`thesis_draft`" in report:
             return report.replace("`thesis_draft`", "`publishable_manuscript`", 1)
         return report
@@ -129,6 +137,14 @@ class ReportService:
         if not quality["passed"]:
             failed = [name for name, result in quality["layers"].items() if not result["passed"]]
             raise ReportQualityError("报告科学质量门未通过：" + "、".join(failed))
+        brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        if (brief.get("thesis_requirements") or {}).get("status") == "confirmed" and not quality.get(
+            "master_thesis_ready"
+        ):
+            issues = (quality.get("thesis_quality") or {}).get("issues") or [
+                item.get("description") for item in quality.get("master_thesis_blockers") or []
+            ]
+            raise ReportQualityError("完整硕士论文门未通过：" + "；".join(filter(None, issues[:8])))
         return quality
 
     def _run_grounding_audit(self, run_id: str, report: str) -> dict:

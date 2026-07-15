@@ -30,6 +30,7 @@ from .task_executor import task_executor
 from .task_graph_service import task_graph_service
 from .task_recovery_service import task_recovery_service
 from .task_scheduler import task_scheduler
+from .thesis_chapter_service import thesis_chapter_service
 
 
 class RunCancelled(Exception):
@@ -109,7 +110,7 @@ class RunExecutionService:
                 return self._pause_for_confirmation(run_id)
 
             tasks = TaskRepository.get_all(run_id=run_id)
-            research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
+            research_tasks = [task for task in tasks if not thesis_chapter_service.is_writing_task(task)]
             if not self._research_settled(research_tasks):
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待研究任务完成或返工")
                 return self.get_summary(run_id)
@@ -132,7 +133,7 @@ class RunExecutionService:
                 if self._has_pending_approval(run_id):
                     return self._pause_for_confirmation(run_id)
                 tasks = TaskRepository.get_all(run_id=run_id)
-                research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
+                research_tasks = [task for task in tasks if not thesis_chapter_service.is_writing_task(task)]
                 if not self._research_settled(research_tasks):
                     RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待下一轮研究任务完成")
                     return self.get_summary(run_id)
@@ -173,7 +174,7 @@ class RunExecutionService:
             # report or stalling.
             settled_research = [
                 task for task in TaskRepository.get_all(run_id=run_id)
-                if task.get("task_type") != "report_writing"
+                if not thesis_chapter_service.is_writing_task(task)
             ]
             if settled_research and all(task.get("status") == "failed" for task in settled_research):
                 RunRepository.update_status(
@@ -186,12 +187,20 @@ class RunExecutionService:
                 run_event_service.emit(run_id, "run.failed", "error", "运行失败", "所有研究任务均未通过审核或执行失败")
                 return self.get_summary(run_id)
 
+            chapter_tasks = thesis_chapter_service.ensure_tasks(run_id)
+            if chapter_tasks:
+                self._ensure_scheduling(TaskRepository.get_all(run_id=run_id), run_id)
+                run_event_service.emit(
+                    run_id, "thesis.chapters_created", "writing", "硕士论文章节任务已创建",
+                    f"按冻结院校规范创建 {len(chapter_tasks)} 个章节任务",
+                    payload={"task_ids": [item["id"] for item in chapter_tasks]},
+                )
             await self._execute_writing_flow(run_id)
             if self._has_pending_approval(run_id):
                 return self._pause_for_confirmation(run_id)
 
             tasks = TaskRepository.get_all(run_id=run_id)
-            writing_tasks = [task for task in tasks if task.get("task_type") == "report_writing"]
+            writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
             if writing_tasks and not self._research_settled(writing_tasks):
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待写作任务完成或返工")
                 return self.get_summary(run_id)
@@ -389,7 +398,7 @@ class RunExecutionService:
     async def _execute_research_flow(self, run_id: str) -> None:
         while True:
             tasks = TaskRepository.get_all(run_id=run_id)
-            research_tasks = [task for task in tasks if task.get("task_type") != "report_writing"]
+            research_tasks = [task for task in tasks if not thesis_chapter_service.is_writing_task(task)]
             if not research_tasks:
                 return
             before = [(task["id"], task.get("status")) for task in research_tasks]
@@ -399,7 +408,7 @@ class RunExecutionService:
             if self._has_pending_approval(run_id):
                 return
             refreshed = TaskRepository.get_all(run_id=run_id)
-            latest_research = [task for task in refreshed if task.get("task_type") != "report_writing"]
+            latest_research = [task for task in refreshed if not thesis_chapter_service.is_writing_task(task)]
             if all(task.get("status") in {"completed", "failed"} for task in latest_research):
                 return
             after = [(task["id"], task.get("status")) for task in latest_research]
@@ -484,13 +493,27 @@ class RunExecutionService:
                 )
 
     async def _execute_writing_flow(self, run_id: str) -> None:
-        tasks = TaskRepository.get_all(run_id=run_id)
-        writing_tasks = [task for task in tasks if task.get("task_type") == "report_writing"]
-        if not writing_tasks:
-            return
-        RunRepository.update_status(run_id, RunStatus.executing.value, current_step="写作任务执行中")
-        await self._execute_ready_tasks(run_id, writing_tasks)
-        await self._review_task_batch(run_id, writing_tasks)
+        while True:
+            tasks = TaskRepository.get_all(run_id=run_id)
+            writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
+            if not writing_tasks:
+                return
+            before = [(task["id"], task.get("status")) for task in writing_tasks]
+            RunRepository.update_status(run_id, RunStatus.executing.value, current_step="论文章节与总稿写作中")
+            await self._execute_ready_tasks(run_id, writing_tasks)
+            await self._review_task_batch(run_id, writing_tasks)
+            if self._has_pending_approval(run_id):
+                return
+            refreshed = [
+                task for task in TaskRepository.get_all(run_id=run_id)
+                if thesis_chapter_service.is_writing_task(task)
+            ]
+            if all(task.get("status") in {"completed", "failed", "archived"} for task in refreshed):
+                return
+            after = [(task["id"], task.get("status")) for task in refreshed]
+            if after == before:
+                self._finalize_stuck_revisions(run_id, refreshed)
+                return
 
     async def _execute_ready_tasks(self, run_id: str, tasks: list[dict]) -> None:
         ordered = task_graph_service.topological_order(TaskRepository.get_all(run_id=run_id))
