@@ -12,7 +12,8 @@ from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.services.thesis_chapter_service import thesis_chapter_service
 from backend.app.storage import init_db
 from backend.app.storage.repositories import (
-    EvidenceRepository, ResearchBriefRepository, ResearchClaimRepository,
+    EvidenceRepository, ExperimentProtocolRepository, ExperimentResultRepository,
+    ResearchBriefRepository, ResearchClaimRepository,
     RunRepository, TaskDependencyRepository, TaskRepository,
 )
 
@@ -249,6 +250,29 @@ def test_chapter_gate_accepts_frozen_experiment_support(tmp_path, monkeypatch):
     )
 
     assert thesis_chapter_service.validate_output(task, output) == []
+
+
+def test_experiment_support_includes_frozen_protocol(monkeypatch):
+    monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
+        "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",
+        "summary": "verified", "metrics": {"rows": []},
+    }])
+    monkeypatch.setattr(ExperimentProtocolRepository, "get_by_id", lambda _protocol_id: {
+        "research_question": "Does overlap improve retrieval?",
+        "independent_variables": ["window_size", "overlap"],
+        "dependent_variables": ["mrr_at_10"],
+        "datasets": [{"name": "frozen benchmark"}],
+        "metrics": ["mrr_at_10"],
+        "baselines": [{"window_size": 100, "overlap": 0}],
+        "method_details": {"unit": "character", "window_size": 100, "overlap": 30},
+        "stopping_conditions": ["all queries evaluated"],
+        "expected_risks": ["character boundaries may split semantics"],
+    })
+
+    support = thesis_chapter_service.artifact_support("run_verified")
+
+    assert support[0]["protocol"]["method_details"]["unit"] == "character"
+    assert support[0]["protocol"]["baselines"][0]["overlap"] == 0
 
 
 def test_deterministic_thesis_assembly_adds_verified_citations_and_traceability(tmp_path):

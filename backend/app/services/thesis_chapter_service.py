@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from ..storage.repositories import (
-    EvidenceRepository, ExperimentResultRepository, ResearchBriefRepository, ResearchClaimRepository,
+    EvidenceRepository, ExperimentProtocolRepository, ExperimentResultRepository, ResearchBriefRepository, ResearchClaimRepository,
     ResearchMilestoneRepository, TaskDependencyRepository, TaskRepository,
 )
 from .thesis_quality_service import thesis_quality_service
@@ -214,9 +214,18 @@ class ThesisChapterService:
             if result.get("status") != "completed":
                 continue
             metrics = result.get("metrics") or {}
+            protocol = ExperimentProtocolRepository.get_by_id(result.get("protocol_id")) or {}
             support.append({
                 "id": f"experiment:{result['id']}",
                 "protocol_id": result.get("protocol_id"),
+                "protocol": {
+                    key: protocol.get(key)
+                    for key in (
+                        "research_question", "independent_variables", "dependent_variables",
+                        "datasets", "metrics", "baselines", "method_details",
+                        "stopping_conditions", "expected_risks",
+                    )
+                },
                 "summary": result.get("summary"),
                 "retrieval_configuration": metrics.get("retrieval_configuration"),
                 "benchmark_design": metrics.get("benchmark_design"),
