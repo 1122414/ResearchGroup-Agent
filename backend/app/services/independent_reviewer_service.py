@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from ..core.config import settings
 from ..core.llm_provider import create_llm_provider
@@ -89,6 +90,7 @@ class IndependentReviewerService:
             )
             if latest.get(key) is not None
         }
+        verified_support_ids: set[str] = set()
         if task.get("task_type") == "report_writing":
             payload = {
                 "task": payload["task"], "deliverable": deliverable,
@@ -104,17 +106,15 @@ class IndependentReviewerService:
                 for support_id in paragraph.get("support_ids") or []
                 if not str(support_id).startswith("brief:")
             }
-            payload = {
-                "task": payload["task"], "deliverable": deliverable,
-                "allowed_support": [
+            allowed_support = [
                     {
                         "id": claim["id"], "statement": claim.get("statement"),
                         "evidence_ids": claim.get("evidence_ids") or [],
                     }
                     for claim in ResearchClaimRepository.get_by_run(task.get("run_id"))
                     if claim.get("status") == "supported" and claim["id"] in support_ids
-                ],
-                "allowed_contract_support": [
+                ]
+            contract_support = [
                     {"id": "brief:research_question", "value": brief.get("research_question")},
                     {"id": "brief:objective", "value": brief.get("objective")},
                     {
@@ -122,8 +122,22 @@ class IndependentReviewerService:
                         "value": {"scope_in": brief.get("scope_in"), "scope_out": brief.get("scope_out")},
                     },
                     {"id": "brief:methodology", "value": brief.get("methodology_profile")},
-                ],
-                "allowed_artifact_support": thesis_chapter_service.artifact_support(task.get("run_id")),
+                ]
+            artifact_support = thesis_chapter_service.artifact_support(task.get("run_id"))
+            verified_support_ids = {
+                *(item["id"] for item in allowed_support),
+                *(item["id"] for item in contract_support),
+                *(item["id"] for item in artifact_support),
+            }
+            # Evidence precedes the long chapter so a context cap can never
+            # turn present support into a false "missing support" verdict.
+            payload = {
+                "task": payload["task"],
+                "support_ids_verified_by_schema": sorted(verified_support_ids),
+                "allowed_support": allowed_support,
+                "allowed_contract_support": contract_support,
+                "allowed_artifact_support": artifact_support,
+                "deliverable": deliverable,
             }
             review_scope = self._thesis_chapter_review_scope()
         elif not claims and not experiment:
@@ -152,12 +166,13 @@ class IndependentReviewerService:
                 "不得仅因样本小而要求擅自扩大用户冻结的数据边界。"
                 "预注册文件路径、冻结哈希、方法参数、固定种子和预期产物均属于可核验预注册证据。"
             )
+        payload_limit = 48000 if task.get("task_type") == "thesis_chapter" else 24000
         base_prompt = (
             "你是独立反方审稿人，未参与生成。" + review_scope
             + "只返回紧凑 JSON：approved、issues、summary。"
             "issues 最多 6 条，每条 target 不超过 60 字、reason 和 required_change 各不超过 180 字，"
             "summary 不超过 240 字；不要复述 passage、任务或实验数据。\n"
-            + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:24000]
+            + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:payload_limit]
         )
         try:
             llm = create_llm_provider()
@@ -172,6 +187,8 @@ class IndependentReviewerService:
                 try:
                     value = self._parse_json(raw)
                     value = self._compact_review(value)
+                    if verified_support_ids:
+                        value = self._filter_verified_support_issues(value, verified_support_ids)
                     if not self._valid_review(value):
                         raise ValueError("invalid independent review schema")
                     return {**value, "reviewer": "independent_reviewer_model", "simulation": False}
@@ -367,6 +384,26 @@ class IndependentReviewerService:
                 "required_change": summary or "request the reviewer to specify required changes",
             })
         return {"approved": approved, "issues": compacted, "summary": summary}
+
+    @staticmethod
+    def _filter_verified_support_issues(value: dict, verified_ids: set[str]) -> dict:
+        """Drop only claims that a schema-verified support ID does not exist."""
+        invalid_markers = (
+            "无效", "未在 allowed", "不在 allowed", "未出现在 allowed",
+            "unknown support", "invalid support", "not in allowed",
+        )
+        kept = []
+        for issue in value.get("issues") or []:
+            text = " ".join(str(issue.get(key) or "") for key in ("target", "reason", "required_change"))
+            mentioned = set(re.findall(
+                r"(?:claim_[A-Za-z0-9]+|experiment:[A-Za-z0-9_]+|brief:[A-Za-z0-9_]+)", text,
+            ))
+            if mentioned and mentioned.issubset(verified_ids) and any(
+                marker in text.lower() for marker in invalid_markers
+            ):
+                continue
+            kept.append(issue)
+        return {**value, "approved": not kept, "issues": kept}
 
     @staticmethod
     def _parse_json(raw: str):

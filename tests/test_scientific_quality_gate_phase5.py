@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from backend.app.core.config import settings
@@ -300,6 +302,53 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     assert "不得声称章节正文或原始依据未提供" in prompts[0]
     assert "不得把 brief:* ID 判为无效" in prompts[0]
     assert "工件中没有的" in prompts[0]
+    assert prompts[0].index('"allowed_artifact_support"') < prompts[0].index('"deliverable"')
+
+
+@pytest.mark.asyncio
+async def test_thesis_reviewer_drops_false_unknown_issue_for_schema_verified_support(monkeypatch):
+    class Reviewer:
+        async def generate(self, **_kwargs):
+            return json.dumps({
+                "approved": False,
+                "issues": [{
+                    "severity": "major",
+                    "target": "claim_verified 无效",
+                    "reason": "claim_verified 未在 allowed_support 中出现",
+                    "required_change": "替换该无效 support ID",
+                }],
+                "summary": "support ID missing",
+            })
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchClaimRepository.get_by_run",
+        lambda _run_id: [{
+            "id": "claim_verified", "statement": "frozen fact",
+            "status": "supported", "evidence_ids": ["source"],
+        }],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {},
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.thesis_chapter_service.artifact_support",
+        lambda _run_id: [],
+    )
+
+    result = await independent_reviewer_service.review_task(
+        {"id": "chapter", "run_id": "run", "task_type": "thesis_chapter"},
+        {"chapter": {"sections": [{"paragraphs": [{"support_ids": ["claim_verified"]}]}]}},
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is True
+    assert result["issues"] == []
 
 
 @pytest.mark.asyncio
