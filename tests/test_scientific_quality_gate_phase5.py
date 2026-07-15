@@ -262,6 +262,14 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
             "status": "supported", "evidence_ids": ["artifact_1"],
         }],
     )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {
+            "research_question": "frozen question", "objective": "frozen objective",
+            "scope_in": ["pilot"], "scope_out": ["open domain"],
+            "methodology_profile": {"family": "controlled_experiment"},
+        },
+    )
     result = await independent_reviewer_service.review_task(
         {"id": "chapter_1", "run_id": "run_1", "task_type": "thesis_chapter"},
         {
@@ -278,8 +286,11 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     assert result["approved"] is True
     assert '"chapter"' in prompts[0]
     assert '"allowed_support"' in prompts[0]
+    assert '"allowed_contract_support"' in prompts[0]
+    assert "frozen question" in prompts[0]
     assert "bounded pilot result" in prompts[0]
     assert "不得声称章节正文或原始依据未提供" in prompts[0]
+    assert "不得把 brief:* ID 判为无效" in prompts[0]
 
 
 @pytest.mark.asyncio
