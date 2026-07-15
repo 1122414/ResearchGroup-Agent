@@ -32,6 +32,15 @@ from .task_graph_service import task_graph_service
 class ResearchLoopService:
     """Bounded observe-plan-act loop driven by explicit research-state changes."""
 
+    SCOPE_BOUNDARY_MARKERS = (
+        "generalizability", "external validity", "other corpora", "other query", "multi-domain",
+        "domain mismatch", "beyond the frozen", "outside the frozen", "cannot generalize",
+        "外部效度", "泛化", "其他语料", "其他查询", "多领域", "领域迁移", "冻结范围外",
+    )
+    EXPERIMENT_QUESTION_MARKERS = (
+        "mrr", "ranking", "retrieval", "segmentation", "chunk", "排序", "检索", "分割", "切分", "重叠",
+    )
+
     def snapshot(self, run_id: str) -> dict:
         state = self._state(run_id)
         events = RunEventRepository.get_by_run(run_id, limit=500, phase="research_loop")
@@ -188,15 +197,14 @@ class ResearchLoopService:
         supported = [item for item in auditable_claims if item["status"] == "supported"]
         coverage = len(supported) / len(auditable_claims) if auditable_claims else 0.0
         publishable = [item for item in results if (item.get("metrics") or {}).get("publishable") is True]
+        actionable_high = self._actionable_high_uncertainties(uncertainties, bool(publishable))
         values = {
             "source_count": len(evidence["sources"]), "passage_count": len(evidence["excerpts"]),
             "claim_count": len(auditable_claims), "supported_claim_count": len(supported),
             "contested_claim_count": len([item for item in claims if item["status"] == "contested"]),
             "active_hypothesis_count": len([item for item in hypotheses if item["status"] in {"active", "proposed"}]),
             "publishable_experiment_count": len(publishable),
-            "high_uncertainty_count": len([
-                item for item in uncertainties if item["status"] == "open" and item["severity"] == "high"
-            ]),
+            "high_uncertainty_count": len(actionable_high),
             "claim_coverage": round(coverage, 4), "total_tokens": usage["total_tokens"],
             "total_cost_usd": round(usage["total_cost_usd"], 6),
             "minimum_information_gain": settings.research_loop_min_information_gain,
@@ -235,8 +243,12 @@ class ResearchLoopService:
                     "contested_claim" if claim["status"] == "contested" else "unsupported_claim",
                     claim["id"], f"核验 claim：{claim['statement']}", "literature_survey", 0.85,
                 ))
+        publishable_exists = any((item.get("metrics") or {}).get("publishable") is True for item in results)
+        actionable_uncertainty_ids = {
+            item["id"] for item in self._actionable_high_uncertainties(uncertainties, publishable_exists)
+        }
         for uncertainty in uncertainties:
-            if uncertainty["status"] == "open" and uncertainty["severity"] == "high":
+            if uncertainty["id"] in actionable_uncertainty_ids:
                 gaps.append(self._gap(
                     "high_uncertainty", uncertainty["id"], uncertainty["description"], "literature_survey", 0.8,
                 ))
@@ -254,6 +266,8 @@ class ResearchLoopService:
                 results_by_protocol.setdefault(result.get("protocol_id"), []).append(result)
             for hypothesis in hypotheses:
                 if hypothesis["status"] not in {"active", "proposed"}:
+                    continue
+                if self._is_scope_boundary(str(hypothesis.get("statement") or "")):
                     continue
                 if hypothesis["id"] in finding_hypothesis_ids:
                     continue
@@ -284,6 +298,25 @@ class ResearchLoopService:
         if state["source_count"] and not claims:
             gaps.append(self._gap("claim_synthesis", "run", "已有证据但尚未形成可核验 claim", "literature_survey", 0.75))
         return self._dedupe_gaps(gaps), list(dict.fromkeys(human))
+
+    def _actionable_high_uncertainties(self, uncertainties: list[dict], publishable_exists: bool) -> list[dict]:
+        return [
+            item for item in uncertainties
+            if item.get("status") == "open"
+            and item.get("severity") == "high"
+            and not self._is_scope_boundary(str(item.get("description") or ""))
+            and not (
+                publishable_exists
+                and any(
+                    marker in str(item.get("description") or "").lower()
+                    for marker in self.EXPERIMENT_QUESTION_MARKERS
+                )
+            )
+        ]
+
+    def _is_scope_boundary(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in self.SCOPE_BOUNDARY_MARKERS)
 
     @staticmethod
     def _gap(kind: str, target_id: str, reason: str, task_type: str, gain: float, dataset_ready: bool = False) -> dict:

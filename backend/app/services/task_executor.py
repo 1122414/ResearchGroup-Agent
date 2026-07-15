@@ -183,6 +183,10 @@ class TaskExecutor:
                 "evidence_assessments": evidence_bundle["assessments"],
                 "source_artifacts": artifacts,
             }
+            if str(task_title).startswith("[循环R"):
+                # A verification action may add evidence, but must not silently
+                # expand the frozen project with new hypotheses.
+                result["hypotheses"] = []
         if task_type in {"result_analysis", "report_writing"}:
             experiment = self._approved_task_results(
                 task.get("run_id"), {"experiment_design"}, task.get("id")

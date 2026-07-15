@@ -14,6 +14,7 @@ from ..storage.repositories import (
     LiteratureSearchRepository,
     ResearchBriefRepository,
     ResearchMilestoneRepository,
+    RunRepository,
     TaskRepository,
 )
 from .evidence_provider import evidence_provider
@@ -452,10 +453,13 @@ class EvidencePipelineService:
 
     def _query_for_task(self, task: dict) -> str:
         root_task = self._root_task(task)
+        run = RunRepository.get_by_id(task.get("run_id")) or {}
+        research_question = primary_goal(str(run.get("research_goal") or ""))
         description = str(root_task.get("description") or "").split("## 研究动作契约（非检索词）", 1)[0]
         return " ".join(
             item
             for item in [
+                research_question,
                 primary_goal(description),
                 str(root_task.get("title") or ""),
             ]

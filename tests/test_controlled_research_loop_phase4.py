@@ -3,7 +3,7 @@ from backend.app.services.evidence_pipeline_service import evidence_pipeline_ser
 from backend.app.services.research_loop_critic_service import research_loop_critic_service
 from backend.app.services.research_loop_service import research_loop_service
 from backend.app.services.run_execution_service import run_execution_service
-from backend.app.storage.repositories import ApprovalRequestRepository, RunEventRepository, TaskRepository
+from backend.app.storage.repositories import ApprovalRequestRepository, RunEventRepository, RunRepository, TaskRepository
 
 
 def _state(**updates):
@@ -69,7 +69,8 @@ def test_completed_bounded_negative_result_counts_as_small_information_gain():
     assert gain == 0.05
 
 
-def test_action_contract_is_not_mixed_into_search_query():
+def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
+    monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     action = {
         "id": "action_1", "round": 1, "objective": "核验目标 claim", "target": {"type": "claim", "id": "c1"},
         "selected_tool": "evidence_search", "arguments": {}, "expected_observation": "new passage",
@@ -84,6 +85,31 @@ def test_action_contract_is_not_mixed_into_search_query():
     assert "核验目标 claim" in query
     assert "max_tokens" not in query
     assert "fingerprint" not in query
+
+
+def test_search_query_keeps_original_research_question(monkeypatch):
+    monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: {
+        "research_goal": "Compare overlapping passage segmentation on MRR.\n\n## 用户上传的多模态附件上下文\nattachment context",
+    })
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda _task_id: None)
+    query = evidence_pipeline_service._query_for_task({
+        "id": "task_lit", "run_id": "run_1", "title": "核验文献",
+        "description": "检索全文并验证来源",
+    })
+
+    assert "Compare overlapping passage segmentation on MRR" in query
+    assert "attachment context" not in query
+
+
+def test_frozen_scope_limitations_do_not_trigger_research_loop():
+    uncertainties = [
+        {"id": "u1", "status": "open", "severity": "high", "description": "Generalizability to other corpora is unknown."},
+        {"id": "u2", "status": "open", "severity": "high", "description": "当前来源未直接测试重叠分割对 MRR 的影响。"},
+        {"id": "u3", "status": "open", "severity": "high", "description": "输入文件哈希尚未核验。"},
+    ]
+
+    assert research_loop_service._actionable_high_uncertainties(uncertainties, True) == [uncertainties[2]]
+    assert research_loop_service._is_scope_boundary("multi-domain benchmark domain mismatch") is True
 
 
 def test_approved_research_loop_intervention_is_reused(monkeypatch):
