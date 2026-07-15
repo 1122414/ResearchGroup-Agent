@@ -198,7 +198,7 @@ class ResearchLoopService:
         evidence = EvidenceRepository.get_by_run(run_id)
         results = ExperimentResultRepository.get_by_run(run_id)
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
-        usage = LLMUsageRepository.get_summary(run_id)
+        usage = self._loop_usage_summary(run_id)
         auditable_claims = [item for item in claims if item["status"] != "retracted"]
         supported = [item for item in auditable_claims if item["status"] == "supported"]
         supported_ids = {item["id"] for item in supported}
@@ -243,6 +243,26 @@ class ResearchLoopService:
             )
         )
         return values
+
+    @staticmethod
+    def _loop_usage_summary(run_id: str) -> dict:
+        tasks = TaskRepository.get_all(run_id=run_id)
+        loop_roots = {
+            item["id"] for item in tasks
+            if str(item.get("title") or "").startswith("[循环R")
+        }
+        loop_task_ids = {
+            item["id"] for item in tasks
+            if item["id"] in loop_roots or item.get("revision_of_task_id") in loop_roots
+        }
+        usage = [
+            item for item in LLMUsageRepository.get_by_run(run_id)
+            if item.get("task_id") in loop_task_ids
+        ]
+        return {
+            "total_tokens": sum(int(item.get("total_tokens") or 0) for item in usage),
+            "total_cost_usd": sum(float(item.get("cost_usd") or 0) for item in usage),
+        }
 
     def _gaps(self, run_id: str, state: dict) -> tuple[list[dict], list[str]]:
         claims = ResearchClaimRepository.get_by_run(run_id)

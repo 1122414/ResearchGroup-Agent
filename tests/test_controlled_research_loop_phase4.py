@@ -3,7 +3,9 @@ from backend.app.services.evidence_pipeline_service import evidence_pipeline_ser
 from backend.app.services.research_loop_critic_service import research_loop_critic_service
 from backend.app.services.research_loop_service import research_loop_service
 from backend.app.services.run_execution_service import run_execution_service
-from backend.app.storage.repositories import ApprovalRequestRepository, RunEventRepository, RunRepository, TaskRepository
+from backend.app.storage.repositories import (
+    ApprovalRequestRepository, LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository,
+)
 
 
 def _state(**updates):
@@ -84,6 +86,25 @@ def test_thesis_contract_creates_evidence_coverage_gap_without_lowering_threshol
     assert research_loop_service._thesis_evidence_gap(
         brief, _state(supported_claim_count=5, citation_source_count=5),
     ) is None
+
+
+def test_research_loop_budget_excludes_writing_and_includes_loop_revisions(monkeypatch):
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [
+        {"id": "research", "title": "initial research", "revision_of_task_id": None},
+        {"id": "loop", "title": "[循环R1] evidence coverage", "revision_of_task_id": None},
+        {"id": "loop_revision", "title": "返工 loop", "revision_of_task_id": "loop"},
+        {"id": "chapter", "title": "thesis chapter", "revision_of_task_id": None},
+    ])
+    monkeypatch.setattr(LLMUsageRepository, "get_by_run", lambda _run_id: [
+        {"task_id": "research", "total_tokens": 100, "cost_usd": 1.0},
+        {"task_id": "loop", "total_tokens": 20, "cost_usd": 0.2},
+        {"task_id": "loop_revision", "total_tokens": 30, "cost_usd": 0.3},
+        {"task_id": "chapter", "total_tokens": 1000, "cost_usd": 10.0},
+    ])
+
+    assert research_loop_service._loop_usage_summary("run_loop") == {
+        "total_tokens": 50, "total_cost_usd": 0.5,
+    }
 
 
 def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
