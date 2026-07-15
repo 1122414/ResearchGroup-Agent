@@ -152,3 +152,18 @@ def test_completed_revision_archives_older_failed_drafts(monkeypatch):
     run_execution_service._archive_superseded_revisions("run_loop")
 
     assert [(task_id, status) for task_id, status, _fields in updates] == [("old", "archived")]
+
+
+def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_not():
+    tasks = [
+        {"id": "chapter_method", "title": "Methodology", "task_type": "thesis_chapter", "status": "failed"},
+        {
+            "id": "old_revision", "task_type": "thesis_chapter", "status": "failed",
+            "revision_of_task_id": "chapter_results",
+        },
+        {"id": "chapter_results", "task_type": "thesis_chapter", "status": "completed"},
+    ]
+
+    failed = run_execution_service._failed_required_chapters(tasks)
+
+    assert [task["id"] for task in failed] == ["chapter_method"]
