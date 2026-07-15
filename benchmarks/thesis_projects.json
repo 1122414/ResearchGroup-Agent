@@ -1,0 +1,35 @@
+{
+  "name": "five_paradigm_real_master_thesis_acceptance_v1",
+  "projects": [
+    {
+      "id": "engineering_project",
+      "paradigm": "computational_engineering",
+      "allowed_method_families": ["computational", "experimental", "design_science"],
+      "run_id": null
+    },
+    {
+      "id": "social_quantitative_project",
+      "paradigm": "social_science_quantitative",
+      "allowed_method_families": ["quantitative", "experimental"],
+      "run_id": null
+    },
+    {
+      "id": "systematic_review_project",
+      "paradigm": "systematic_review",
+      "allowed_method_families": ["systematic_review"],
+      "run_id": null
+    },
+    {
+      "id": "humanities_theory_project",
+      "paradigm": "humanities_or_theoretical",
+      "allowed_method_families": ["humanities", "theoretical"],
+      "run_id": null
+    },
+    {
+      "id": "qualitative_mixed_project",
+      "paradigm": "qualitative_or_mixed",
+      "allowed_method_families": ["qualitative", "mixed_methods"],
+      "run_id": null
+    }
+  ]
+}
