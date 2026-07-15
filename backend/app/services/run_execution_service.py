@@ -600,7 +600,7 @@ class RunExecutionService:
         if not owner:
             return
         if str(task.get("title") or "").startswith("[循环R"):
-            usage = LLMUsageRepository.get_summary(run_id)
+            usage = research_loop_service._loop_usage_summary(run_id)
             if (
                 usage["total_tokens"] >= settings.research_loop_max_tokens
                 or usage["total_cost_usd"] >= settings.research_loop_max_cost_usd

@@ -107,6 +107,15 @@ def test_research_loop_budget_excludes_writing_and_includes_loop_revisions(monke
     }
 
 
+def test_run_executor_uses_isolated_research_loop_budget():
+    assert "get_summary" not in __import__("inspect").getsource(
+        run_execution_service._execute_one_task
+    )
+    assert "_loop_usage_summary" in __import__("inspect").getsource(
+        run_execution_service._execute_one_task
+    )
+
+
 def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
     monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     action = {
