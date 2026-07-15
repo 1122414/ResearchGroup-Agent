@@ -135,12 +135,15 @@ class ResearchContractService:
                     "degree_level": {"type": "string"}, "institution": {"type": "string"},
                     "programme": {"type": "string"}, "language": {"type": "string"},
                     "citation_style": {"type": "string"}, "target_word_count": {"type": "integer"},
+                    "minimum_references": {"type": "integer"},
+                    "minimum_supported_claims": {"type": "integer"},
                     "required_chapters": {"type": "array", "items": {"type": "string"}},
                     "status": {"type": "string", "enum": ["confirmed", "pending", "not_provided"]},
                 },
                 "required": [
                     "degree_level", "institution", "programme", "language", "citation_style",
-                    "target_word_count", "required_chapters", "status",
+                    "target_word_count", "minimum_references", "minimum_supported_claims",
+                    "required_chapters", "status",
                 ],
             },
             "hypotheses": {
@@ -286,7 +289,7 @@ artifact evaluation 适用时给出假设；解释性、人文、理论证明和
             "thesis_requirements": {
                 "degree_level": "master", "institution": "", "programme": "",
                 "language": "zh-CN", "citation_style": "GB/T 7714",
-                "target_word_count": 30000,
+                "target_word_count": 30000, "minimum_references": 30, "minimum_supported_claims": 8,
                 "required_chapters": ["引言", "相关工作", "方法", "实验", "结果", "讨论", "结论"],
                 "status": "not_provided",
             },

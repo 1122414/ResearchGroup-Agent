@@ -124,6 +124,7 @@
         "thesis_requirements": {
           "degree_level": "master", "institution": "benchmark", "programme": "benchmark",
           "language": "en", "citation_style": "APA", "target_word_count": 30000,
+          "minimum_references": 20, "minimum_supported_claims": 5,
           "required_chapters": ["Introduction", "Methods", "Results", "Discussion"], "status": "confirmed"
         }
       },

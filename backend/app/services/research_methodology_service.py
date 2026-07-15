@@ -91,6 +91,12 @@ class ResearchMethodologyService:
                 errors.append("thesis_requirements.target_word_count 必须至少为 1000")
         except (TypeError, ValueError):
             errors.append("thesis_requirements.target_word_count 必须是整数")
+        for field, minimum in (("minimum_references", 5), ("minimum_supported_claims", 1)):
+            try:
+                if int(thesis.get(field) or 0) < minimum:
+                    errors.append(f"thesis_requirements.{field} 必须至少为 {minimum}")
+            except (TypeError, ValueError):
+                errors.append(f"thesis_requirements.{field} 必须是整数")
         return errors
 
     def assess(self, contract: dict) -> dict:

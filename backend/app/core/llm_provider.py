@@ -203,6 +203,7 @@ class MockLLMProvider(LLMProvider):
                 "thesis_requirements": {
                     "degree_level": "master", "institution": "", "programme": "",
                     "language": "zh-CN", "citation_style": "GB/T 7714", "target_word_count": 30000,
+                    "minimum_references": 30, "minimum_supported_claims": 8,
                     "required_chapters": ["引言", "文献综述", "方法", "结果", "讨论", "结论"],
                     "status": "not_provided",
                 },

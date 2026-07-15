@@ -77,6 +77,7 @@ def _contract(
         "thesis_requirements": {
             "degree_level": "master", "institution": "test university", "programme": "test programme",
             "language": "zh-CN", "citation_style": "Chicago", "target_word_count": 30000,
+            "minimum_references": 20, "minimum_supported_claims": 5,
             "required_chapters": ["引言", "文献综述", "方法", "分析", "讨论", "结论"],
             "status": thesis_status,
         },

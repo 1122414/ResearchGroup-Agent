@@ -17,6 +17,7 @@ from .artifact_manifest_service import artifact_manifest_service
 from .independent_reviewer_service import independent_reviewer_service
 from .research_methodology_service import research_methodology_service
 from .research_method_registry_service import research_method_registry_service
+from .thesis_quality_service import thesis_quality_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -103,13 +104,26 @@ class ScientificQualityGateService:
             for task in tasks if task.get("status") == "completed"
         )
         feasibility = research_methodology_service.assess(brief)
+        thesis_quality = thesis_quality_service.evaluate(report, brief, claims, tasks, evidence, results)
+        thesis_blockers = [
+            *feasibility["thesis_blockers"],
+            *[
+                {
+                    "code": "thesis_quality_failed", "description": issue,
+                    "resolution": "补齐论文内容或研究工件后重新运行完整论文门",
+                }
+                for issue in thesis_quality["issues"]
+            ],
+        ]
+        master_thesis_ready = passed and not simulated_reviews and feasibility["thesis_ready"] and thesis_quality["passed"]
         return {
             "passed": passed,
             "publication_ready": passed and not simulated_reviews,
             "publication_blockers": ["mock_or_simulated_independent_review"] if passed and simulated_reviews else [],
-            "master_thesis_ready": passed and not simulated_reviews and feasibility["thesis_ready"],
-            "master_thesis_blockers": feasibility["thesis_blockers"],
-            "deliverable_level": "master_thesis" if passed and not simulated_reviews and feasibility["thesis_ready"]
+            "master_thesis_ready": master_thesis_ready,
+            "master_thesis_blockers": thesis_blockers,
+            "thesis_quality": thesis_quality,
+            "deliverable_level": "master_thesis" if master_thesis_ready
             else ("research_report" if passed else "blocked"),
             "layers": layers, "revision_plan": self._revision_plan(layers),
             "hard_gate_policy": "all_layers_required",
