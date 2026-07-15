@@ -170,6 +170,12 @@ def test_subheadings_do_not_make_substantive_chapter_look_empty():
     assert result["checks"]["chapter_substance"]["passed"] is True
 
 
+def test_english_chapter_matching_is_case_insensitive_for_word_count():
+    report = "# Thesis\n\n## Introduction\n\nAlpha beta gamma.\n\n## References\n\nNone."
+
+    assert thesis_quality_service._main_text_word_count(report, ["Introduction"], "en-GB") == 3
+
+
 def test_harvard_quality_gate_rejects_numeric_citations():
     brief = _brief()
     brief["thesis_requirements"]["citation_style"] = "Harvard"

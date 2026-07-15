@@ -69,6 +69,23 @@ def test_completed_bounded_negative_result_counts_as_small_information_gain():
     assert gain == 0.05
 
 
+def test_thesis_contract_creates_evidence_coverage_gap_without_lowering_thresholds():
+    brief = {"thesis_requirements": {
+        "status": "confirmed", "minimum_supported_claims": 5, "minimum_references": 5,
+    }}
+
+    gap = research_loop_service._thesis_evidence_gap(
+        brief, _state(supported_claim_count=3, citation_source_count=2),
+    )
+
+    assert gap["kind"] == "thesis_evidence_coverage"
+    assert "3/5" in gap["reason"]
+    assert "2/5" in gap["reason"]
+    assert research_loop_service._thesis_evidence_gap(
+        brief, _state(supported_claim_count=5, citation_source_count=5),
+    ) is None
+
+
 def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
     monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     action = {

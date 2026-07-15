@@ -145,7 +145,7 @@ class ThesisQualityService:
     @staticmethod
     def _chapter_present(chapter: str, headings: list[str]) -> bool:
         normalized = re.sub(r"[\s\d.、:_-]+", "", chapter).lower()
-        return any(normalized in re.sub(r"[\s\d.、:_-]+", "", heading) for heading in headings)
+        return any(normalized in re.sub(r"[\s\d.、:_-]+", "", heading).lower() for heading in headings)
 
     def _thin_chapters(self, report: str, required: list[str], minimum: int) -> list[str]:
         lines = report.splitlines()

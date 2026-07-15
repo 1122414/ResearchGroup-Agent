@@ -201,9 +201,18 @@ class ResearchLoopService:
         usage = LLMUsageRepository.get_summary(run_id)
         auditable_claims = [item for item in claims if item["status"] != "retracted"]
         supported = [item for item in auditable_claims if item["status"] == "supported"]
+        supported_ids = {item["id"] for item in supported}
+        citation_source_count = len({
+            item["source_id"] for item in evidence["links"]
+            if item.get("claim_id") in supported_ids and item.get("relation_type") == "supports"
+        })
         coverage = len(supported) / len(auditable_claims) if auditable_claims else 0.0
         publishable = [item for item in results if (item.get("metrics") or {}).get("publishable") is True]
         actionable_high = self._actionable_high_uncertainties(uncertainties, bool(publishable))
+        thesis_requirements = brief.get("thesis_requirements") or {}
+        thesis_confirmed = thesis_requirements.get("status") == "confirmed"
+        required_claims = max(1, int(thesis_requirements.get("minimum_supported_claims") or 1))
+        required_references = max(1, int(thesis_requirements.get("minimum_references") or 1))
         values = {
             "source_count": len(evidence["sources"]), "passage_count": len(evidence["excerpts"]),
             "claim_count": len(auditable_claims), "supported_claim_count": len(supported),
@@ -211,6 +220,9 @@ class ResearchLoopService:
             "active_hypothesis_count": len([item for item in hypotheses if item["status"] in {"active", "proposed"}]),
             "publishable_experiment_count": len(publishable),
             "high_uncertainty_count": len(actionable_high),
+            "citation_source_count": citation_source_count,
+            "required_supported_claim_count": required_claims,
+            "required_reference_count": required_references,
             "claim_coverage": round(coverage, 4), "total_tokens": usage["total_tokens"],
             "total_cost_usd": round(usage["total_cost_usd"], 6),
             "minimum_information_gain": settings.research_loop_min_information_gain,
@@ -223,6 +235,8 @@ class ResearchLoopService:
             auditable_claims and values["passage_count"] > 0
             and coverage >= settings.research_loop_claim_coverage_target
             and values["contested_claim_count"] == 0 and values["high_uncertainty_count"] == 0
+            and (not thesis_confirmed or len(supported) >= required_claims)
+            and (not thesis_confirmed or citation_source_count >= required_references)
             and (
                 brief.get("research_type") not in {"empirical", "mixed"}
                 or values["publishable_experiment_count"] > 0
@@ -306,7 +320,29 @@ class ResearchLoopService:
 
         if state["source_count"] and not claims:
             gaps.append(self._gap("claim_synthesis", "run", "已有证据但尚未形成可核验 claim", "literature_survey", 0.75))
+        thesis_gap = self._thesis_evidence_gap(brief, state)
+        if thesis_gap:
+            gaps.append(thesis_gap)
         return self._dedupe_gaps(gaps), list(dict.fromkeys(human))
+
+    def _thesis_evidence_gap(self, brief: dict, state: dict) -> dict | None:
+        requirements = brief.get("thesis_requirements") or {}
+        if requirements.get("status") != "confirmed":
+            return None
+        required_claims = max(1, int(requirements.get("minimum_supported_claims") or 1))
+        required_references = max(1, int(requirements.get("minimum_references") or 1))
+        actual_claims = int(state.get("supported_claim_count") or 0)
+        actual_references = int(state.get("citation_source_count") or 0)
+        if actual_claims >= required_claims and actual_references >= required_references:
+            return None
+        reason = (
+            f"论文证据契约尚未满足：受支持 claim {actual_claims}/{required_claims}，"
+            f"有 support 链的不同来源 {actual_references}/{required_references}。"
+            "从已核验全文或新增真实全文中综合缺少的、逐来源直接蕴含的原子 claim；"
+            "每条必须使用 relation=supports 并绑定 source ID 与 passage ID，"
+            "来源未比较某设置等缺失性陈述只能作为 context note，不能凑数。"
+        )
+        return self._gap("thesis_evidence_coverage", "run", reason, "literature_survey", 0.9)
 
     def _actionable_high_uncertainties(self, uncertainties: list[dict], publishable_exists: bool) -> list[dict]:
         return [
