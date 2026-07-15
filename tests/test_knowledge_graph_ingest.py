@@ -102,3 +102,24 @@ def test_ingest_creates_claims_links_and_filters_fabricated_sources():
     assert len(ResearchHypothesisRepository.get_by_run(run_id)) == 1
     assert len(ResearchUncertaintyRepository.get_by_run(run_id)) == 1
     assert len(EvidenceRepository.get_by_run(run_id)["links"]) == 1
+
+
+def test_partially_entailed_claim_stays_in_audit_not_knowledge_graph():
+    run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
+    source_id = f"source_{uuid.uuid4().hex[:8]}"
+    passage_id = _seed_source(run_id, source_id)
+    task = {"id": f"task_{uuid.uuid4().hex[:6]}", "run_id": run_id, "task_type": "literature_survey"}
+    result = {
+        "claims": [{
+            "statement": "The passage only supports part of this statement.",
+            "evidence_source_ids": [source_id],
+            "evidence_passage_ids": [passage_id],
+            "entailment_verdict": "partially_entailed",
+            "confidence": 0.5,
+        }],
+    }
+
+    graph = knowledge_graph_service.ingest_task_result(task, result)
+
+    assert graph["claims"] == []
+    assert ResearchClaimRepository.get_by_run(run_id) == []

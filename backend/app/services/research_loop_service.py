@@ -35,7 +35,9 @@ class ResearchLoopService:
     SCOPE_BOUNDARY_MARKERS = (
         "generalizability", "external validity", "other corpora", "other query", "multi-domain",
         "domain mismatch", "beyond the frozen", "outside the frozen", "cannot generalize",
+        "larger scale", "natural corpus", "natural corpora",
         "外部效度", "泛化", "其他语料", "其他查询", "多领域", "领域迁移", "冻结范围外",
+        "更大规模", "扩大样本", "自然语料", "更自然的语料",
     )
     EXPERIMENT_QUESTION_MARKERS = (
         "mrr", "ranking", "retrieval", "segmentation", "chunk", "排序", "检索", "分割", "切分", "重叠",
@@ -254,6 +256,7 @@ class ResearchLoopService:
                 ))
 
         if brief.get("research_type") in {"empirical", "mixed"}:
+            supported_hypotheses = [item for item in hypotheses if item.get("status") == "supported"]
             protocol_hypothesis_ids = {item["hypothesis_id"] for item in protocols}
             publishable_result_ids = {
                 item["id"] for item in results if (item.get("metrics") or {}).get("publishable") is True
@@ -268,6 +271,8 @@ class ResearchLoopService:
                 if hypothesis["status"] not in {"active", "proposed"}:
                     continue
                 if self._is_scope_boundary(str(hypothesis.get("statement") or "")):
+                    continue
+                if any(self._same_hypothesis(hypothesis, item) for item in supported_hypotheses):
                     continue
                 if hypothesis["id"] in finding_hypothesis_ids:
                     continue
@@ -317,6 +322,26 @@ class ResearchLoopService:
     def _is_scope_boundary(self, text: str) -> bool:
         lowered = text.lower()
         return any(marker in lowered for marker in self.SCOPE_BOUNDARY_MARKERS)
+
+    @classmethod
+    def _same_hypothesis(cls, left: dict, right: dict) -> bool:
+        left_concepts = cls._hypothesis_concepts(str(left.get("statement") or ""))
+        right_concepts = cls._hypothesis_concepts(str(right.get("statement") or ""))
+        shared = left_concepts & right_concepts
+        return len(shared) >= 3 and len(shared) / max(len(left_concepts | right_concepts), 1) >= 0.6
+
+    @staticmethod
+    def _hypothesis_concepts(text: str) -> set[str]:
+        lowered = text.lower().replace("_", "-")
+        groups = {
+            "mrr": ("mrr",),
+            "top_k": ("top-k", "topk", "hit@", "hits@"),
+            "overlap": ("overlap", "重叠"),
+            "no_split": ("no-split", "no split", "无分割", "不分割"),
+            "segmentation": ("segment", "split", "chunk", "分割", "切分"),
+            "improvement": ("improv", "outperform", "提升", "优于"),
+        }
+        return {name for name, markers in groups.items() if any(marker in lowered for marker in markers)}
 
     @staticmethod
     def _gap(kind: str, target_id: str, reason: str, task_type: str, gain: float, dataset_ready: bool = False) -> dict:

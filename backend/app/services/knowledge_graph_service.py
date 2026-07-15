@@ -114,6 +114,10 @@ class KnowledgeGraphService:
             for link in existing_links
         }
         for item in self._as_dicts(result.get("claims")):
+            # Keep partially entailed statements in the task audit, but do not
+            # promote them into the reportable knowledge graph as research claims.
+            if item.get("entailment_verdict") == "partially_entailed":
+                continue
             statement = str(item.get("statement") or "").strip()
             key = self._normalize(statement)
             if not key:

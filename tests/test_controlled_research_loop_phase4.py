@@ -110,6 +110,14 @@ def test_frozen_scope_limitations_do_not_trigger_research_loop():
 
     assert research_loop_service._actionable_high_uncertainties(uncertainties, True) == [uncertainties[2]]
     assert research_loop_service._is_scope_boundary("multi-domain benchmark domain mismatch") is True
+    assert research_loop_service._is_scope_boundary("该结论在更大规模、更自然的语料上是否成立仍未知") is True
+
+
+def test_supported_cross_language_hypothesis_is_not_retested():
+    proposed = {"statement": "固定重叠分割相比无分割基线能提升 MRR 至少 5%。"}
+    supported = {"statement": "Fixed overlapping segmentation improves MRR over the no-split baseline by at least 5%."}
+
+    assert research_loop_service._same_hypothesis(proposed, supported) is True
 
 
 def test_approved_research_loop_intervention_is_reused(monkeypatch):
