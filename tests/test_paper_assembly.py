@@ -116,5 +116,27 @@ def test_survey_mode_detected_for_survey_goal():
 
 def test_delivery_status_only_promotes_after_quality_gate():
     report = "# Paper\n\n**交付等级:** `thesis_draft`\n"
-    assert "`thesis_draft`" in ReportService._promote_delivery_status(report, {"passed": False})
-    assert "`publishable_manuscript`" in ReportService._promote_delivery_status(report, {"passed": True})
+    assert "`thesis_draft`" in ReportService._promote_delivery_status(report, {"passed": True, "publication_ready": False})
+    assert "`publishable_manuscript`" in ReportService._promote_delivery_status(report, {"passed": True, "publication_ready": True})
+
+
+def test_paper_helpers_deduplicate_and_summarize_publishable_experiment():
+    records = [
+        {"id": "draft", "statement": "Same claim", "status": "draft"},
+        {"id": "supported", "statement": "  Same   claim ", "status": "supported"},
+    ]
+    assert paper_assembly_service._dedupe_records(records, "statement", "status")[0]["id"] == "supported"
+
+    summary = paper_assembly_service._primary_experiment_summary([{
+        "metrics": {
+            "publishable": True, "evaluated_query_count": 20,
+            "rows": [
+                {"strategy": "no_split", "mrr_at_10": 0.5},
+                {"strategy": "fixed_100_overlap_30", "mrr_at_10": 1.0},
+            ],
+            "statistical_analysis": {"mean_delta": 0.5, "confidence_interval_95": [0.5, 0.5]},
+            "reproduction": {"passed": True},
+        },
+    }])
+    assert "MRR@10=1.0" in summary
+    assert "干净目录复现=通过" in summary

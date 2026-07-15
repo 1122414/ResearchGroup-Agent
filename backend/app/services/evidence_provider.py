@@ -97,7 +97,7 @@ class EvidenceProvider:
             headers={"User-Agent": self._crossref_user_agent()},
         )
         try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             return [], exc.__class__.__name__
@@ -146,7 +146,7 @@ class EvidenceProvider:
             headers={"User-Agent": self._crossref_user_agent()},
         )
         try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             return [], exc.__class__.__name__
@@ -191,7 +191,7 @@ class EvidenceProvider:
             headers={"User-Agent": "ResearchGroup-Agent/1.0"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = response.read()
             root = ET.fromstring(body)
         except (urllib.error.URLError, ET.ParseError, TimeoutError) as exc:
@@ -240,7 +240,7 @@ class EvidenceProvider:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             return [], exc.__class__.__name__

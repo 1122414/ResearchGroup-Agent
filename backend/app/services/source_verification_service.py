@@ -97,7 +97,7 @@ class SourceVerificationService:
         url = f"{settings.crossref_base_url.rstrip('/')}/works/{urllib.parse.quote(doi)}"
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError) as exc:
             logger.debug("[SourceVerification] crossref fetch failed | doi=%s | error=%s", doi, exc)

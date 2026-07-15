@@ -19,6 +19,7 @@ from .claim_entailment_service import claim_entailment_service
 from .collaborator_service import collaborator_service
 from .external_memory import external_memory
 from .evidence_pipeline_service import evidence_pipeline_service
+from .experiment_protocol_service import experiment_protocol_service
 from .knowledge_graph_service import knowledge_graph_service
 from .literature_source_service import literature_source_service
 from .research_integrity_service import research_integrity_service
@@ -69,9 +70,21 @@ class TaskExecutor:
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
         contract_context = self._research_contract_context(task)
+        upstream_context = self._upstream_context(task)
+        experiment_protocol = (
+            experiment_protocol_service.ensure_for_task(task)
+            if task_type == "system_design" and task.get("hypothesis_id")
+            else None
+        )
+        protocol_context = self._experiment_protocol_context(experiment_protocol)
         literature_grounding = ""
         if evidence_bundle is not None:
             required_source_count = research_integrity_service.required_grounded_source_count(task, evidence_bundle["query"])
+            prompt_sources = evidence_bundle["sources"][: max(int(settings.literature_source_limit), 1)]
+            prompt_source_ids = {item["id"] for item in prompt_sources}
+            prompt_excerpts = [
+                item for item in evidence_bundle["excerpts"] if item.get("source_id") in prompt_source_ids
+            ]
             literature_grounding = f"""
 
 【学术诚信与证据边界】
@@ -83,7 +96,7 @@ class TaskExecutor:
 6. 当前检索 query：{evidence_bundle["query"]}
 7. allowed_sources（含可引用 passages）：
 当前任务所需最少可核验来源数：{required_source_count}
-{research_integrity_service.render_allowed_sources(evidence_bundle["sources"], evidence_bundle["excerpts"])}
+{research_integrity_service.render_allowed_sources(prompt_sources, prompt_excerpts)}
 """
         collaborator_results = await collaborator_service.execute_all(task, literature_grounding)
         collaboration_context = self._collaboration_context(task, collaborator_results)
@@ -96,6 +109,8 @@ class TaskExecutor:
 {skill_prompt}
 {collaboration_context}
 {contract_context}
+{upstream_context}
+{protocol_context}
 {literature_grounding}
 
 输出要求：
@@ -103,6 +118,7 @@ class TaskExecutor:
 2. 给出 findings 或 deliverables。
 3. 给出 risks 或 next_steps。
 4. 给出 claims：数组，每个元素 {{"statement": 可单独核验的研究性结论, "evidence_source_ids": [来源ID], "evidence_passage_ids": [该来源下的原文片段ID], "relation": "supports"|"opposes"|"context", "confidence": 0到1}}。没有可定位片段时不要输出该 claim。
+   单一来源的实验结果必须写成“该研究/该论文在其设置下报告或观察到……”，不得改写成无归因的“导致、证明、证实”式普遍结论；只有至少两个独立来源共同支持时才可使用跨来源强结论。
 5. 给出 hypotheses（可选）：数组，每个元素 {{"statement": 可检验的假设, "rationale": 依据}}。
 6. 给出 uncertainties（可选）：数组，每个元素 {{"description": 仍未解决的问题, "severity": "low"|"medium"|"high"}}。
 7. 不要输出 Markdown，只返回 JSON。
@@ -143,9 +159,19 @@ class TaskExecutor:
                 "evidence_assessments": evidence_bundle["assessments"],
                 "source_artifacts": artifacts,
             }
+        if task_type in {"result_analysis", "report_writing"}:
+            experiment = self._approved_task_results(
+                task.get("run_id"), {"experiment_design"}, task.get("id")
+            ).get("experiment_design", {})
+            executed = experiment.get("reproducible_experiment") or {}
+            result["reproducible_experiment"] = executed
+            if task_type == "result_analysis":
+                result["claims"] = executed.get("claims") or experiment.get("claims") or []
         if task_type == "experiment_design":
             experiment_result = await reproducible_experiment_service.run_for_task(task, owner_id)
-            result = {**result, "reproducible_experiment": experiment_result}
+            result = self._ground_experiment_output(experiment_result)
+        if experiment_protocol is not None:
+            result = {**result, "experiment_protocol": experiment_protocol}
         if active_skills:
             result["used_skills"] = [
                 {
@@ -221,7 +247,7 @@ class TaskExecutor:
         collaborators = task.get("collaborator_agents", []) or []
         if not subagent_results and not collaborators and not collaborator_results:
             return ""
-        parts = ["【协作中间结果（必须整合，不得忽略）】"]
+        parts = ["【协作中间结果（用于风险检查，不得覆盖父任务与冻结契约）】"]
         if collaborators:
             parts.append(f"协作 Agent：{', '.join(str(item) for item in collaborators)}")
         if collaborator_results:
@@ -230,8 +256,23 @@ class TaskExecutor:
         if subagent_results:
             parts.append("SubAgent 返回的中间结果：")
             parts.append(json.dumps(subagent_results, ensure_ascii=False, indent=2)[:4000])
-        parts.append("请在 summary 与 claims 中明确说明你如何整合上述协作结果，不要简单复制。")
+        parts.append(
+            "请检查并回应其中合理风险，但必须完成父任务要求的最终交付物；"
+            "不得把协作者的‘缺少/建议补充’原样当作自己的交付结果。"
+        )
         return "\n".join(parts)
+
+    @staticmethod
+    def _experiment_protocol_context(protocol: dict | None) -> str:
+        if not protocol:
+            return ""
+        return (
+            "【系统已冻结的实验协议（权威输入，不得另行编造检索器、指标、参数或种子）】\n"
+            + json.dumps(protocol, ensure_ascii=False, indent=2)
+            + "\n若任务描述出现 BM25/rank_bm25、embedding 等冲突内容，视为拆解漂移并忽略；"
+            "请把本协议整理为完整、可执行、可复现的设计交付物，并明确公式、接口、伪代码、"
+            "目录、哈希、精确数值容差和停止条件。"
+        )
 
     @staticmethod
     def _research_contract_context(task: dict) -> str:
@@ -255,6 +296,135 @@ class TaskExecutor:
             ensure_ascii=False,
             indent=2,
         )
+
+    @staticmethod
+    def _upstream_context(task: dict) -> str:
+        """Pass approved predecessor facts across research stages without raw-context bloat."""
+        run_id = task.get("run_id")
+        task_type = task.get("task_type")
+        wanted = {
+            "result_analysis": {"experiment_design"},
+            "report_writing": {"literature_survey", "system_design", "experiment_design", "result_analysis"},
+        }.get(task_type)
+        if not run_id or not wanted:
+            return ""
+        selected = {
+            predecessor_type: TaskExecutor._compact_upstream(value, predecessor_type)
+            for predecessor_type, value in TaskExecutor._approved_task_results(
+                run_id, wanted, task.get("id")
+            ).items()
+        }
+        if not selected:
+            return ""
+        instruction = (
+            "必须直接使用下列已审核实验数值完成效应量、区间与成功标准判断；不得声称缺少实验数据。"
+            if task_type == "result_analysis"
+            else "必须综合下列已审核产出撰写论文，不得重新猜测数值、来源或适用范围。"
+        )
+        return (
+            "【已审核上游产出（权威只读输入）】\n"
+            + instruction
+            + "\n"
+            + json.dumps(selected, ensure_ascii=False, indent=2)[:16000]
+        )
+
+    @staticmethod
+    def _approved_task_results(run_id: str | None, wanted: set[str], exclude_id: str | None = None) -> dict[str, dict]:
+        if not run_id:
+            return {}
+        tasks = {item["id"]: item for item in TaskRepository.get_all(run_id)}
+        selected: dict[str, dict] = {}
+        for output in reversed(OutputRepository.get_by_run(run_id)):
+            if output.get("output_type") != "task_result":
+                continue
+            predecessor = tasks.get(output.get("task_id"))
+            predecessor_type = (predecessor or {}).get("task_type")
+            if (
+                not predecessor
+                or predecessor_type not in wanted
+                or predecessor_type in selected
+                or predecessor.get("status") != "completed"
+                or predecessor.get("id") == exclude_id
+            ):
+                continue
+            try:
+                selected[predecessor_type] = json.loads(output.get("content") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+        return selected
+
+    @staticmethod
+    def _compact_upstream(value: dict, predecessor_type: str) -> dict:
+        if predecessor_type == "experiment_design":
+            experiment = value.get("reproducible_experiment") or {}
+            metrics = experiment.get("metrics") or {}
+            return {
+                "summary": experiment.get("summary"),
+                "claims": experiment.get("claims") or value.get("claims"),
+                "protocol": {
+                    key: (experiment.get("protocol") or {}).get(key)
+                    for key in ("id", "research_question", "metrics", "baselines", "stopping_conditions", "expected_risks")
+                },
+                "metrics": {
+                    key: metrics.get(key)
+                    for key in (
+                        "benchmark_design", "query_sample_size", "evaluated_query_count", "rows",
+                        "best_strategy", "paired_query_metric_deltas", "statistical_analysis",
+                        "randomness_audit", "preregistration_trace",
+                    )
+                },
+                "reproduction": experiment.get("reproduction"),
+                "publishable": experiment.get("publishable"),
+            }
+        return {
+            key: value.get(key)
+            for key in (
+                "summary", "findings", "deliverables", "claims", "risks", "next_steps",
+                "uncertainties", "references_used", "academic_integrity", "experiment_protocol",
+            )
+            if value.get(key) is not None
+        }
+
+    @staticmethod
+    def _ground_experiment_output(experiment: dict) -> dict:
+        """Build experiment prose only from executed artifacts, never the model draft."""
+        protocol = experiment.get("protocol") or {}
+        metrics = experiment.get("metrics") or {}
+        stats = metrics.get("statistical_analysis") or {}
+        rows = metrics.get("rows") or []
+        values = {
+            row.get("strategy"): row.get("mrr_at_10")
+            for row in rows
+            if isinstance(row, dict)
+        }
+        summary = (
+            f"已实际执行冻结协议 {protocol.get('id', '')}："
+            f"no_split 的 MRR@10={values.get('no_split')}，"
+            f"fixed_100_overlap_30 的 MRR@10={values.get('fixed_100_overlap_30')}；"
+            f"查询级配对均值差={stats.get('mean_delta')}，95% bootstrap 区间="
+            f"{stats.get('confidence_interval_95')}。主实验完成={bool(experiment.get('experiment_ran'))}，"
+            f"干净目录复现通过={bool((experiment.get('reproduction') or {}).get('passed'))}。"
+        )
+        return {
+            "summary": summary,
+            "findings": {
+                "metric_rows": rows,
+                "statistical_analysis": stats,
+                "preregistration_trace": experiment.get("preregistration_trace"),
+                "reproduction": experiment.get("reproduction"),
+                "publishable": experiment.get("publishable"),
+            },
+            "deliverables": experiment.get("artifacts") or [],
+            "risks": protocol.get("expected_risks") or [],
+            "next_steps": experiment.get("next_steps") or [],
+            "claims": experiment.get("claims") or [],
+            "hypotheses": ([{
+                "statement": protocol.get("research_question"),
+                "rationale": "冻结研究协议中的预注册问题",
+            }] if protocol.get("research_question") else []),
+            "uncertainties": [],
+            "reproducible_experiment": experiment,
+        }
 
     async def _generate_structured(self, llm, prompt: str, task: dict, owner_id: str) -> dict:
         attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 2) + 1

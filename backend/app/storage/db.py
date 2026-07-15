@@ -197,6 +197,7 @@ def init_db():
             datasets TEXT DEFAULT '[]',
             metrics TEXT DEFAULT '[]',
             baselines TEXT DEFAULT '[]',
+            method_details TEXT DEFAULT '{}',
             stopping_conditions TEXT DEFAULT '[]',
             expected_risks TEXT DEFAULT '[]',
             status TEXT DEFAULT 'draft',
@@ -591,6 +592,9 @@ def init_db():
         "page_number": "INTEGER",
         "paragraph_index": "INTEGER",
         "content_hash": "TEXT DEFAULT ''",
+    })
+    _ensure_columns(conn, "experiment_protocols", {
+        "method_details": "TEXT DEFAULT '{}'",
     })
 
     conn.commit()

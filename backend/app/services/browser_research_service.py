@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -146,7 +147,12 @@ class BrowserResearchService:
                 return (1, str(source.get("title") or ""))
             return (2, str(source.get("title") or ""))
 
-        return sorted(sources, key=priority)[:limit]
+        # Structured scholarly providers already supply stable identifiers and
+        # are verified again by SourceVerificationService. Sending them through
+        # an autonomous browser adds latency and repeated-tab failure modes
+        # without strengthening citation identity.
+        untrusted = [source for source in sources if not BrowserResearchService._is_trusted_metadata_source(source)]
+        return sorted(untrusted, key=priority)[:limit]
 
     @staticmethod
     def _can_keep_without_browser_acceptance(source: dict, verdict: BrowserVerificationRecord | None, was_verification_candidate: bool) -> bool:
@@ -163,10 +169,17 @@ class BrowserResearchService:
         metadata = source.get("metadata") or {}
         provider = metadata.get("provider")
         has_traceable_id = bool(source.get("doi") or source.get("url"))
+        direct_arxiv = bool(re.match(
+            r"https?://(?:www\.)?arxiv\.org/(?:abs|html|pdf)/\d{4}\.\d{4,5}(?:v\d+)?(?:\.pdf)?(?:[?#].*)?$",
+            str(source.get("url") or "").strip(),
+            re.IGNORECASE,
+        ))
         return bool(
-            source.get("source_type") == "paper"
-            and provider in {"crossref", "openalex", "arxiv", "semantic_scholar"}
-            and has_traceable_id
+            direct_arxiv or (
+                source.get("source_type") == "paper"
+                and provider in {"crossref", "openalex", "arxiv", "semantic_scholar"}
+                and has_traceable_id
+            )
         )
 
     @staticmethod
@@ -231,7 +244,12 @@ class BrowserResearchService:
             f"{schema_text}\n"
         )
         browser = Browser(headless=settings.browser_use_headless)
-        agent = Agent(task=task_with_schema, llm=llm, browser=browser)
+        agent = Agent(
+            task=task_with_schema,
+            llm=llm,
+            browser=browser,
+            output_model_schema=output_model,
+        )
         try:
             return await agent.run(max_steps=settings.browser_use_max_steps)
         finally:
@@ -331,8 +349,7 @@ Instructions:
             for item in sources
         ]
         return f"""
-Verify these candidate sources for the research query:
-{query}
+Verify only the bibliographic identity of these candidate sources.
 
 Candidate sources:
 {json.dumps(compact, ensure_ascii=False, indent=2)}
@@ -344,6 +361,8 @@ Instructions:
 4. evidence must contain the visible page text that supports the decision.
 5. If the page cannot be opened, the title does not match, or the evidence is unclear, set accepted=false and write a reject_reason.
 6. Return one verdict per candidate URL.
+7. Do not research, summarize, or search the article body for topical claims or metrics.
+8. Visit each URL at most once. As soon as all URLs have a metadata verdict, call done with the required JSON object.
 """
 
 

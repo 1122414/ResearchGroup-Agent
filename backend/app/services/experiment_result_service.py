@@ -90,9 +90,10 @@ class ExperimentResultService:
             return "实验使用合成演示数据完成，仅证明执行链路可复现，不构成研究结论"
         if metrics.get("best_strategy"):
             best = metrics.get("best_strategy") or {}
+            mrr = best.get("mrr_at_10", best.get("mrr"))
             return (
                 f"最佳策略={best.get('strategy')}，"
-                f"top3_accuracy={best.get('top3_accuracy')}，mrr={best.get('mrr')}"
+                f"top3_accuracy={best.get('top3_accuracy')}，mrr_at_10={mrr}"
             )
         if "treatment_value" in metrics and "baseline_value" in metrics:
             return (
@@ -114,8 +115,8 @@ class ExperimentResultService:
         best = metrics.get("best_strategy") or {}
         if best:
             baseline = next((item for item in metrics.get("rows", []) if item.get("strategy") == "no_split"), {})
-            best_mrr = float(best.get("mrr") or 0)
-            baseline_mrr = float(baseline.get("mrr") or 0)
+            best_mrr = float(best.get("mrr_at_10", best.get("mrr")) or 0)
+            baseline_mrr = float(baseline.get("mrr_at_10", baseline.get("mrr")) or 0)
             statistics_result = metrics.get("statistical_analysis") or {}
             if (
                 best_mrr > baseline_mrr

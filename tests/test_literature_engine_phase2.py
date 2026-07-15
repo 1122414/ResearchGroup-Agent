@@ -60,6 +60,44 @@ def test_fulltext_is_hashed_and_split_into_locatable_passages(monkeypatch):
     assert all(item["document_id"] == documents[0]["id"] for item in evidence["excerpts"])
 
 
+def test_fulltext_limit_cannot_make_literature_contract_impossible(monkeypatch):
+    run_id = f"run_fulltext_limit_{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(settings, "fulltext_ingest_enabled", True)
+    monkeypatch.setattr(settings, "fulltext_max_sources", 1)
+    monkeypatch.setattr(settings, "literature_source_limit", 3)
+    monkeypatch.setattr(fulltext_ingest_service, "_fetch_text", lambda _url: ("grounded passage", "html"))
+
+    count = fulltext_ingest_service.ingest_sources(
+        run_id,
+        [
+            {"id": f"source_{index}", "url": f"https://example.test/paper-{index}"}
+            for index in range(4)
+        ],
+    )
+
+    assert count == 3
+
+
+def test_source_ids_and_fulltext_ingestion_are_stable_within_run(monkeypatch):
+    run_id = f"run_fulltext_stable_{uuid.uuid4().hex[:8]}"
+    raw = {"id": "arxiv:1234.56789", "title": "Stable Paper", "url": "https://arxiv.org/abs/1234.56789"}
+    first = evidence_pipeline_service._normalize_source(raw, {"id": "task_a", "run_id": run_id})
+    second = evidence_pipeline_service._normalize_source(raw, {"id": "task_revision", "run_id": run_id})
+    assert first["id"] == second["id"]
+
+    calls = []
+    monkeypatch.setattr(settings, "fulltext_ingest_enabled", True)
+    monkeypatch.setattr(settings, "literature_source_limit", 1)
+    monkeypatch.setattr(fulltext_ingest_service, "_fetch_text", lambda url: (calls.append(url) or "paper text", "html"))
+    assert fulltext_ingest_service.ingest_sources(run_id, [first]) == 1
+    initial = EvidenceRepository.get_by_run(run_id)
+    assert fulltext_ingest_service.ingest_sources(run_id, [second]) == 1
+    repeated = EvidenceRepository.get_by_run(run_id)
+
+    assert calls == [raw["url"]]
+    assert len(repeated["excerpts"]) == len(initial["excerpts"])
+
+
 def test_search_protocol_and_runs_are_replayable_snapshots():
     run_id = f"run_search_{uuid.uuid4().hex[:8]}"
     task = {"id": "task_search", "run_id": run_id}

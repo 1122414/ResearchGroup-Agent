@@ -44,7 +44,8 @@ class KnowledgeGraphService:
 
         created_hypotheses = self._ingest_hypotheses(run_id, result)
         created_claims, link_count = self._ingest_claims(
-            run_id, task, result, valid_source_ids, excerpt_by_id, created_hypotheses
+            run_id, task, result, valid_source_ids, excerpt_by_id,
+            created_hypotheses, evidence["links"],
         )
         created_uncertainties = self._ingest_uncertainties(run_id, result)
 
@@ -66,9 +67,14 @@ class KnowledgeGraphService:
     def _ingest_hypotheses(self, run_id: str, result: dict) -> list[dict]:
         now = datetime.now().isoformat()
         created: list[dict] = []
+        existing = {
+            self._normalize(item.get("statement")): item
+            for item in ResearchHypothesisRepository.get_by_run(run_id)
+        }
         for item in self._as_dicts(result.get("hypotheses")):
             statement = str(item.get("statement") or "").strip()
-            if not statement:
+            key = self._normalize(statement)
+            if not key or key in existing:
                 continue
             hypothesis = {
                 "id": f"hypothesis_{uuid.uuid4().hex[:10]}",
@@ -82,6 +88,7 @@ class KnowledgeGraphService:
             }
             ResearchHypothesisRepository.insert(hypothesis)
             created.append(hypothesis)
+            existing[key] = hypothesis
         return created
 
     def _ingest_claims(
@@ -92,18 +99,31 @@ class KnowledgeGraphService:
         valid_source_ids: set[str],
         excerpt_by_id: dict[str, dict],
         created_hypotheses: list[dict],
+        existing_links: list[dict],
     ) -> tuple[list[dict], int]:
         now = datetime.now().isoformat()
         default_hypothesis_id = created_hypotheses[0]["id"] if created_hypotheses else None
         created: list[dict] = []
         link_count = 0
+        existing_claims = {
+            self._normalize(item.get("statement")): item
+            for item in ResearchClaimRepository.get_by_run(run_id)
+        }
+        link_keys = {
+            (link.get("claim_id"), link.get("source_id"), link.get("excerpt_id"), link.get("relation_type"))
+            for link in existing_links
+        }
         for item in self._as_dicts(result.get("claims")):
             statement = str(item.get("statement") or "").strip()
-            if not statement:
+            key = self._normalize(statement)
+            if not key:
                 continue
-            claim_id = f"claim_{uuid.uuid4().hex[:10]}"
-            ResearchClaimRepository.insert(
-                {
+            existing_claim = existing_claims.get(key)
+            if existing_claim:
+                claim_id = existing_claim["id"]
+            else:
+                claim_id = f"claim_{uuid.uuid4().hex[:10]}"
+                claim = {
                     "id": claim_id,
                     "run_id": run_id,
                     "hypothesis_id": item.get("hypothesis_id") or default_hypothesis_id,
@@ -114,7 +134,8 @@ class KnowledgeGraphService:
                     "created_at": now,
                     "updated_at": now,
                 }
-            )
+                ResearchClaimRepository.insert(claim)
+                existing_claims[key] = claim
             relation = str(item.get("relation") or "supports").lower()
             if relation not in {"supports", "opposes", "context"}:
                 relation = "supports"
@@ -126,6 +147,9 @@ class KnowledgeGraphService:
                     continue
                 source_id = excerpt["source_id"]
                 if source_id not in valid_source_ids or source_id not in claimed_source_ids:
+                    continue
+                link_key = (claim_id, source_id, passage_id, relation)
+                if link_key in link_keys:
                     continue
                 EvidenceRepository.insert_link(
                     {
@@ -141,6 +165,7 @@ class KnowledgeGraphService:
                     }
                 )
                 link_count += 1
+                link_keys.add(link_key)
             evaluated = claim_evaluation_service.evaluate(claim_id) or ResearchClaimRepository.get_by_id(claim_id)
             created.append(evaluated)
         return created, link_count
@@ -148,9 +173,14 @@ class KnowledgeGraphService:
     def _ingest_uncertainties(self, run_id: str, result: dict) -> list[dict]:
         now = datetime.now().isoformat()
         created: list[dict] = []
+        existing = {
+            self._normalize(item.get("description"))
+            for item in ResearchUncertaintyRepository.get_by_run(run_id)
+        }
         for item in self._as_dicts(result.get("uncertainties")):
             description = str(item.get("description") or item.get("statement") or "").strip()
-            if not description:
+            key = self._normalize(description)
+            if not key or key in existing:
                 continue
             severity = str(item.get("severity") or "medium").lower()
             if severity not in {"low", "medium", "high"}:
@@ -167,6 +197,7 @@ class KnowledgeGraphService:
             }
             ResearchUncertaintyRepository.insert(uncertainty)
             created.append(uncertainty)
+            existing.add(key)
         return created
 
     @staticmethod
@@ -196,6 +227,10 @@ class KnowledgeGraphService:
         except (TypeError, ValueError):
             return default
         return max(0.0, min(1.0, result))
+
+    @staticmethod
+    def _normalize(value) -> str:
+        return " ".join(str(value or "").split()).strip().lower()
 
 
 knowledge_graph_service = KnowledgeGraphService()

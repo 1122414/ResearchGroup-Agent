@@ -30,6 +30,16 @@ def test_legacy_rag_contract_still_supported():
     assert relation == "supports"
 
 
+def test_retrieval_summary_uses_mrr_at_10():
+    summary = ExperimentResultService._summary(
+        "completed",
+        {"best_strategy": {"strategy": "overlap", "top3_accuracy": 1.0, "mrr_at_10": 0.75}},
+        {},
+    )
+    assert "mrr_at_10=0.75" in summary
+    assert "None" not in summary
+
+
 def test_failure_is_inconclusive():
     relation, _, _ = ExperimentResultService._interpret({}, "failed")
     assert relation == "inconclusive"

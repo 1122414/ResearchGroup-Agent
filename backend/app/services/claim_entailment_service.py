@@ -11,21 +11,11 @@ class ClaimEntailmentService:
     SCHEMA = {
         "type": "object",
         "properties": {
-            "verdicts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "claim_index": {"type": "integer"},
-                        "verdict": {"type": "string", "enum": sorted(VERDICTS)},
-                        "passage_ids": {"type": "array", "items": {"type": "string"}},
-                        "rationale": {"type": "string"},
-                    },
-                    "required": ["claim_index", "verdict", "passage_ids", "rationale"],
-                },
-            }
+            "verdict": {"type": "string", "enum": sorted(VERDICTS)},
+            "passage_ids": {"type": "array", "items": {"type": "string"}},
+            "rationale": {"type": "string"},
         },
-        "required": ["verdicts"],
+        "required": ["verdict", "passage_ids", "rationale"],
     }
 
     async def verify(self, result: dict, excerpts: list[dict], run_id: str | None, task_id: str | None) -> dict:
@@ -68,40 +58,39 @@ class ClaimEntailmentService:
         }
 
     async def _ask_model(self, claims: list[dict], passage_map: dict[str, dict], run_id: str | None, task_id: str | None) -> list[dict]:
-        payload = []
-        for index, claim in enumerate(claims):
-            payload.append(
-                {
-                    "claim_index": index,
-                    "statement": claim.get("statement", ""),
-                    "passages": [
-                        {"passage_id": pid, "text": passage_map.get(pid, {}).get("excerpt", "")}
-                        for pid in claim.get("evidence_passage_ids") or []
-                    ],
-                }
-            )
-        base_prompt = (
-            "你是独立证据核验员。逐条判断给定 passage 是否蕴含 claim，只返回 JSON。"
-            "不得使用模型记忆或外部常识；证据不完整时用 partially_entailed，找不到时用 not_found。\n"
-            + json.dumps(payload, ensure_ascii=False, indent=2)
-        )
         llm = create_llm_provider()
-        attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 1) + 1
-        prompt = base_prompt
-        for attempt in range(attempts):
-            raw = await llm.generate(
-                prompt=prompt, schema=self.SCHEMA, role="advisor_evidence", run_id=run_id, task_id=task_id
+        verdicts: list[dict] = []
+        for index, claim in enumerate(claims):
+            payload = {
+                "claim_index": index,
+                "statement": claim.get("statement", ""),
+                "passages": [
+                    {"passage_id": pid, "text": str(passage_map.get(pid, {}).get("excerpt", ""))[:5000]}
+                    for pid in claim.get("evidence_passage_ids") or []
+                ],
+            }
+            base_prompt = (
+                "你是独立证据核验员。只判断这一条 claim 是否被给定 passage 蕴含，只返回 JSON。"
+                "不得使用模型记忆或外部常识；证据不完整时用 partially_entailed，找不到时用 not_found。"
+                "返回单个 verdict、passage_ids 和 rationale，不返回数组；程序会绑定 claim_index。\n"
+                + json.dumps(payload, ensure_ascii=False, indent=2)
             )
-            try:
-                parsed = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
-                verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
-                if isinstance(verdicts, list):
-                    return verdicts
-            except json.JSONDecodeError:
-                pass
-            if attempt + 1 < attempts:
-                prompt = f"{base_prompt}\n上次结构非法，只修复 JSON，不改变判定：\n{raw[:4000]}"
-        return []
+            attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 1) + 1
+            prompt = base_prompt
+            for attempt in range(attempts):
+                raw = await llm.generate(
+                    prompt=prompt, schema=self.SCHEMA, role="advisor_evidence", run_id=run_id, task_id=task_id
+                )
+                try:
+                    parsed = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+                    if isinstance(parsed, dict) and parsed.get("verdict") in self.VERDICTS:
+                        verdicts.append({**parsed, "claim_index": index})
+                        break
+                except json.JSONDecodeError:
+                    pass
+                if attempt + 1 < attempts:
+                    prompt = f"{base_prompt}\n上次结构非法，只修复单个 JSON 对象，不改变判定：\n{raw[:2000]}"
+        return verdicts
 
 
 claim_entailment_service = ClaimEntailmentService()

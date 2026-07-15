@@ -58,6 +58,7 @@ class ExperimentProtocol(BaseModel):
     datasets: list[DatasetSpec] = Field(default_factory=list)
     metrics: list[MetricSpec] = Field(default_factory=list)
     baselines: list[BaselineSpec] = Field(default_factory=list)
+    method_details: dict = Field(default_factory=dict)
     stopping_conditions: list[str] = Field(default_factory=list)
     expected_risks: list[str] = Field(default_factory=list)
     status: ProtocolStatus = "draft"

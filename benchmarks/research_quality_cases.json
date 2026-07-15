@@ -1,0 +1,151 @@
+{
+  "name": "researchgroup-agent-offline-quality-v1",
+  "targets": {
+    "citation_precision": 1.0,
+    "citation_completeness": 1.0,
+    "false_accept_rate": 0.0,
+    "planning_accuracy": 1.0,
+    "experiment_gate_accuracy": 1.0
+  },
+  "citation_evidence": {
+    "sources": [
+      {"id": "source_valid", "metadata": {"citation_eligible": true}}
+    ],
+    "excerpts": [
+      {"id": "passage_valid", "source_id": "source_valid", "excerpt": "The evaluated system improves retrieval recall on the frozen benchmark.", "excerpt_type": "fulltext", "locator": "p.1"}
+    ],
+    "claims": [],
+    "assessments": [],
+    "links": []
+  },
+  "citation_cases": [
+    {
+      "id": "valid_grounded_claim",
+      "expected_pass": true,
+      "latest": {
+        "summary": "valid",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "The evaluated system improves retrieval recall on the frozen benchmark.", "evidence_source_ids": ["source_valid"], "evidence_passage_ids": ["passage_valid"], "entailment_verdict": "entailed"}
+        ]
+      }
+    },
+    {
+      "id": "unknown_or_fake_source",
+      "expected_pass": false,
+      "latest": {
+        "summary": "fake source",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "Unsupported source claim.", "evidence_source_ids": ["source_fake"], "evidence_passage_ids": ["passage_valid"], "entailment_verdict": "entailed"}
+        ]
+      }
+    },
+    {
+      "id": "metadata_only_passage",
+      "expected_pass": false,
+      "evidence": {
+        "sources": [{"id": "source_valid", "metadata": {"citation_eligible": true}}],
+        "excerpts": [{"id": "passage_valid", "source_id": "source_valid", "excerpt": "title only", "excerpt_type": "metadata_only"}],
+        "claims": [], "assessments": [], "links": []
+      },
+      "latest": {
+        "summary": "metadata",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "A factual result.", "evidence_source_ids": ["source_valid"], "evidence_passage_ids": ["passage_valid"], "entailment_verdict": "entailed"}
+        ]
+      }
+    },
+    {
+      "id": "wrong_claim_semantics",
+      "expected_pass": false,
+      "latest": {
+        "summary": "wrong attribution",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "The system eliminates all retrieval errors.", "evidence_source_ids": ["source_valid"], "evidence_passage_ids": ["passage_valid"], "entailment_verdict": "not_found"}
+        ]
+      }
+    },
+    {
+      "id": "overextended_causal_claim",
+      "expected_pass": false,
+      "latest": {
+        "summary": "overclaim",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "This proves the method causes significant improvement.", "evidence_source_ids": ["source_valid"], "evidence_passage_ids": ["passage_valid"], "entailment_verdict": "entailed"}
+        ]
+      }
+    },
+    {
+      "id": "missing_passage",
+      "expected_pass": false,
+      "latest": {
+        "summary": "missing passage",
+        "entailment_audit": {"checked": true},
+        "claims": [
+          {"statement": "A claim without passage.", "evidence_source_ids": ["source_valid"], "evidence_passage_ids": [], "entailment_verdict": "not_found"}
+        ]
+      }
+    }
+  ],
+  "planning_cases": [
+    {
+      "id": "valid_falsifiable_contract",
+      "expected_pass": true,
+      "brief": {
+        "primary_question": "重叠切分是否在冻结检索集上提升 MRR？",
+        "subquestions": [{"id": "sq1", "question": "基线表现？"}, {"id": "sq2", "question": "效应是否稳定？"}],
+        "scope_in": ["RAG retrieval"], "scope_out": ["generation quality"],
+        "success_criteria": ["MRR interval"], "failure_criteria": ["effect below 5%"],
+        "novelty_criteria": ["controlled comparison"], "target_domain": "retrieval_rag",
+        "expected_contribution": "reproducible comparison", "data_availability": "labeled qrels uploaded"
+      },
+      "hypotheses": [
+        {"statement": "Overlap improves MRR", "baseline": "no split", "primary_metric": "MRR", "minimum_effect": "5%", "falsification_criterion": "95% CI crosses zero"}
+      ]
+    },
+    {
+      "id": "broad_unfalsifiable_contract",
+      "expected_pass": false,
+      "brief": {"primary_question": "研究 AI", "subquestions": [], "scope_in": [], "scope_out": []},
+      "hypotheses": []
+    }
+  ],
+  "experiment_cases": [
+    {
+      "id": "publishable_reproduced_experiment",
+      "expected_pass": true,
+      "experiment": {
+        "publishable": true,
+        "metrics": {"trusted_evaluator": true, "statistical_analysis": {"passed": true}, "reproduction": {"passed": true}}
+      }
+    },
+    {
+      "id": "single_run_without_statistics",
+      "expected_pass": false,
+      "experiment": {
+        "publishable": false,
+        "metrics": {"trusted_evaluator": true, "statistical_analysis": {"passed": false}, "reproduction": {"passed": true}}
+      }
+    },
+    {
+      "id": "generated_metric_evaluator",
+      "expected_pass": false,
+      "experiment": {
+        "publishable": false,
+        "metrics": {"trusted_evaluator": false, "statistical_analysis": {"passed": true}, "reproduction": {"passed": true}}
+      }
+    },
+    {
+      "id": "reproduction_mismatch",
+      "expected_pass": false,
+      "experiment": {
+        "publishable": false,
+        "metrics": {"trusted_evaluator": true, "statistical_analysis": {"passed": true}, "reproduction": {"passed": false}}
+      }
+    }
+  ]
+}

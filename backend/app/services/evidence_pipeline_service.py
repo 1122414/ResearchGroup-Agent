@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -25,6 +26,8 @@ from .source_verification_service import source_verification_service
 
 _STOPWORDS = {
     "the", "a", "an", "of", "for", "and", "or", "to", "in", "on", "with",
+    "accuracy", "comparison", "evaluation", "evidence", "fulltext", "metric", "metrics",
+    "mrr", "paper", "performance", "result", "results", "source", "top",
     "研究", "分析", "调研", "方法", "如何", "以及",
 }
 
@@ -53,7 +56,7 @@ class EvidencePipelineService:
             queries=queries,
         )
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in raw_sources])
-        normalized = self._rank_by_relevance(normalized, query)
+        normalized = self._rank_by_relevance(normalized, " ".join(queries) or query)
         mode = "remote_provider" if normalized else "curated_fallback"
         if not normalized and settings.literature_curated_fallback_enabled:
             normalized = self._deduplicate_sources(
@@ -69,21 +72,28 @@ class EvidencePipelineService:
             mode = f"{mode}+browser_research"
         if not normalized:
             mode = "no_grounded_source+browser_research" if settings.browser_research_enabled else "no_grounded_source"
-        verified = source_verification_service.verify_sources(normalized)
+        verified = await asyncio.to_thread(source_verification_service.verify_sources, normalized)
         normalized = [source for source in verified if source_verification_service.citation_eligible(source)]
         self._record_screening(task, verified)
         if not normalized:
             mode = "no_citation_eligible_source"
         persisted = self.persist_sources(task, normalized)
-        fulltext_ingested = fulltext_ingest_service.ingest_sources(task.get("run_id"), normalized)
-        persisted["excerpts"] = self._content_excerpts(task.get("run_id"), normalized)
+        fulltext_ingested = await asyncio.to_thread(
+            fulltext_ingest_service.ingest_sources, task.get("run_id"), normalized,
+        )
+        grounded_sources, grounded_excerpts = self._cumulative_grounded_evidence(
+            task.get("run_id"), normalized,
+        )
+        persisted["sources"] = grounded_sources
+        persisted["excerpts"] = grounded_excerpts
         search_metrics = {
             "candidate_count": len(raw_sources),
             "deduplicated_count": before_verification,
             "included_count": len(normalized),
             "duplicate_rate": round(max(len(raw_sources) - before_verification, 0) / max(len(raw_sources), 1), 4),
             "fulltext_acquisition_rate": round(fulltext_ingested / max(len(normalized), 1), 4),
-            "passage_count": len(persisted["excerpts"]),
+            "passage_count": len(grounded_excerpts),
+            "cumulative_grounded_source_count": len(grounded_sources),
         }
         return {
             "mode": mode,
@@ -100,10 +110,11 @@ class EvidencePipelineService:
         sources: list[dict] = []
         attempts: list[dict] = []
         browser_count = 0
+        browser_attempted = False
         for query in queries:
             if not query:
                 continue
-            search_result = evidence_provider.search_with_trace(query)
+            search_result = await asyncio.to_thread(evidence_provider.search_with_trace, query)
             sources.extend(search_result["results"])
             for item in search_result["attempts"]:
                 provider = item.get("provider")
@@ -120,7 +131,10 @@ class EvidencePipelineService:
                         "record_hash": hashlib.sha256(record_snapshot.encode("utf-8")).hexdigest(),
                     }
                 )
-            browser_sources = await browser_research_service.discover(query)
+            browser_sources = []
+            if not search_result["results"] and not browser_attempted:
+                browser_attempted = True
+                browser_sources = await browser_research_service.discover(query)
             sources.extend(browser_sources)
             browser_count += len(browser_sources)
             if settings.browser_research_enabled:
@@ -237,10 +251,25 @@ class EvidencePipelineService:
                 return 0.0
             return len(query_tokens & source_tokens) / (len(query_tokens) ** 0.5)
 
-        return [source for _, source in sorted(enumerate(sources), key=lambda pair: (-score(pair[1]), pair[0]))]
+        scholarly_providers = {"crossref", "openalex", "arxiv", "semantic_scholar"}
+        scored = [(score(source), index, source) for index, source in enumerate(sources)]
+        minimum_two_term_overlap = 2 / (len(query_tokens) ** 0.5)
+        if scored and max(item[0] for item in scored) >= minimum_two_term_overlap:
+            scored = [item for item in scored if item[0] >= minimum_two_term_overlap]
+        return [
+            source
+            for _, _, source in sorted(
+                scored,
+                key=lambda item: (
+                    (item[2].get("metadata") or {}).get("provider") not in scholarly_providers,
+                    -item[0],
+                    item[1],
+                ),
+            )
+        ]
 
     async def collect_for_query(self, run_id: str, query: str) -> dict:
-        search_result = evidence_provider.search_with_trace(query)
+        search_result = await asyncio.to_thread(evidence_provider.search_with_trace, query)
         raw_sources = list(search_result["results"])
         browser_sources = await browser_research_service.discover(query)
         raw_sources.extend(browser_sources)
@@ -255,10 +284,10 @@ class EvidencePipelineService:
         before_verification = len(normalized)
         normalized = await browser_research_service.verify_candidates(query, normalized)
         self._emit_verification_trace({"run_id": run_id, "id": None}, query, before_verification, normalized)
-        normalized = source_verification_service.verify_sources(normalized)
+        normalized = await asyncio.to_thread(source_verification_service.verify_sources, normalized)
         normalized = [source for source in normalized if source_verification_service.citation_eligible(source)]
         persisted = self.persist_sources({"run_id": run_id, "id": None}, normalized)
-        fulltext_ingest_service.ingest_sources(run_id, normalized)
+        await asyncio.to_thread(fulltext_ingest_service.ingest_sources, run_id, normalized)
         persisted["excerpts"] = self._content_excerpts(run_id, normalized)
         return {"query": query, "search_attempts": search_result["attempts"], **persisted}
 
@@ -273,6 +302,41 @@ class EvidencePipelineService:
             if excerpt["source_id"] in source_ids
             and excerpt.get("excerpt_type") not in {"metadata_only", "summary"}
             and str(excerpt.get("excerpt") or "").strip()
+        ]
+
+    @staticmethod
+    def _cumulative_grounded_evidence(
+        run_id: str | None, current_sources: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        if not run_id:
+            return [], []
+        evidence = EvidenceRepository.get_by_run(run_id)
+        excerpts = [
+            item for item in evidence["excerpts"]
+            if item.get("excerpt_type") not in {"metadata_only", "summary"}
+            and str(item.get("excerpt") or "").strip()
+        ]
+        source_ids_with_passages = {item["source_id"] for item in excerpts}
+        eligible = {
+            source["id"]: source for source in evidence["sources"]
+            if source["id"] in source_ids_with_passages
+            and source_verification_service.citation_eligible(source)
+        }
+        ordered_ids = [source["id"] for source in current_sources if source["id"] in eligible]
+        ordered_ids.extend(source_id for source_id in eligible if source_id not in ordered_ids)
+        selected_ids: list[str] = []
+        seen_identities: set[str] = set()
+        for source_id in ordered_ids:
+            identity = EvidencePipelineService._source_identity(eligible[source_id])
+            if identity in seen_identities:
+                continue
+            seen_identities.add(identity)
+            selected_ids.append(source_id)
+            if len(selected_ids) >= max(settings.evidence_search_max_results, settings.literature_source_limit):
+                break
+        selected = set(selected_ids)
+        return [eligible[source_id] for source_id in selected_ids], [
+            item for item in excerpts if item["source_id"] in selected
         ]
 
     def persist_sources(self, task: dict, sources: list[dict]) -> dict:
@@ -333,15 +397,14 @@ class EvidencePipelineService:
 
     def _normalize_source(self, source: dict, task: dict) -> dict:
         raw_id = source.get("id") or ""
-        source_id = f"source_{uuid.uuid4().hex[:10]}"
         metadata = dict(source.get("metadata") or {})
         if raw_id:
             metadata.setdefault("canonical_id", raw_id)
         if source.get("methods"):
             metadata.setdefault("methods", source.get("methods", []))
         metadata.setdefault("query_task_id", task.get("id"))
-        return {
-            "id": source_id,
+        normalized = {
+            "id": "",
             "title": source.get("title") or "untitled source",
             "authors": source.get("authors", ""),
             "year": source.get("year"),
@@ -352,6 +415,11 @@ class EvidencePipelineService:
             "methods": source.get("methods", metadata.get("methods", [])),
             "metadata": metadata,
         }
+        identity = self._source_identity(normalized)
+        run_key = str(task.get("run_id") or "unscoped")
+        digest = hashlib.sha256(f"{run_key}|{identity}".encode()).hexdigest()[:10]
+        normalized["id"] = f"source_{digest}"
+        return normalized
 
     @staticmethod
     def _emit_search_trace(
@@ -425,20 +493,68 @@ class EvidencePipelineService:
 
     @staticmethod
     def _deduplicate_sources(sources: list[dict]) -> list[dict]:
-        seen: set[str] = set()
+        positions: dict[str, int] = {}
+        title_positions: dict[str, int] = {}
         deduped: list[dict] = []
         for source in sources:
-            metadata = source.get("metadata") or {}
-            canonical = metadata.get("canonical_id") or metadata.get("openalex_id") or metadata.get("paper_id")
-            title = re.sub(r"\W+", " ", str(source.get("title") or "").lower()).strip()
-            authors = re.sub(r"\W+", " ", str(source.get("authors") or "").lower()).strip()
-            key = str(source.get("doi") or canonical or source.get("url") or f"{title}|{authors[:80]}").strip().lower()
-            if key and key in seen:
+            key = EvidencePipelineService._source_identity(source)
+            title_key = re.sub(r"\W+", " ", str(source.get("title") or "").lower()).strip()
+            index = positions.get(key) if key else None
+            if index is None and title_key:
+                index = title_positions.get(title_key)
+            if index is not None:
+                if EvidencePipelineService._source_preference(source) > EvidencePipelineService._source_preference(
+                    deduped[index]
+                ):
+                    deduped[index] = source
+                    if key:
+                        positions[key] = index
                 continue
             if key:
-                seen.add(key)
+                positions[key] = len(deduped)
+            if title_key:
+                title_positions[title_key] = len(deduped)
             deduped.append(source)
         return deduped
+
+    @staticmethod
+    def _source_preference(source: dict) -> tuple[int, int]:
+        metadata = source.get("metadata") or {}
+        provider = metadata.get("provider")
+        trusted = provider in {"crossref", "openalex", "arxiv", "semantic_scholar"}
+        return int(trusted), int(bool(metadata.get("content")))
+
+    @staticmethod
+    def _source_identity(source: dict) -> str:
+        metadata = source.get("metadata") or {}
+        doi = str(source.get("doi") or "").strip().lower()
+        doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi)
+        if doi:
+            return f"doi:{doi}"
+
+        identifiers = [
+            metadata.get("canonical_id"), metadata.get("openalex_id"),
+            metadata.get("paper_id"), source.get("url"),
+        ]
+        for value in identifiers:
+            text = str(value or "").strip().lower()
+            arxiv = re.search(r"arxiv\.org/(?:abs|html|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?", text)
+            if arxiv:
+                return f"arxiv:{arxiv.group(1)}"
+            pmc = re.search(r"\bpmc(?:/|id=)?(\d+)\b", text)
+            if pmc:
+                return f"pmc:{pmc.group(1)}"
+            if text:
+                normalized = re.sub(r"^https?://(?:www\.)?", "", text)
+                normalized = normalized.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+                if normalized:
+                    return f"id:{normalized}"
+
+        title = re.sub(r"\W+", " ", str(source.get("title") or "").lower()).strip()
+        authors = re.sub(r"\W+", " ", str(source.get("authors") or "").lower()).strip()
+        if not title and source.get("id"):
+            return f"source:{source['id']}"
+        return f"title:{title}|{authors[:80]}"
 
     def _build_assessment(self, run_id: str, source: dict, excerpt_id: str, now: str) -> dict:
         year = source.get("year")

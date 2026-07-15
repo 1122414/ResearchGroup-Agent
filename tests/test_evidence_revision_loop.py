@@ -88,6 +88,41 @@ def test_revision_task_does_not_reuse_itself_as_next_revision(monkeypatch):
     assert task_recovery_service.create_revision_task(current_revision, "still not enough evidence") is None
 
 
+def test_revision_description_preserves_structured_plan_and_previous_delivery():
+    root = {"title": "冻结实验方案", "description": "提交完整可复现实验协议"}
+    latest = {"outputs": [{"summary": "上一版", "findings": ["seed=42"]}]}
+    review = {
+        "feedback": "独立审稿未通过",
+        "revision_plan": [
+            {"issue": "种子含义不清", "required_change": "固定执行种子并说明 bootstrap 种子"}
+        ],
+    }
+
+    description = task_recovery_service._revision_description(root, latest, review)
+
+    assert "逐项修改清单" in description
+    assert "固定执行种子" in description
+    assert "上一版交付物" in description
+    assert "seed=42" in description
+    assert "不得只复述缺口" in description
+
+
+def test_revision_description_drops_bulky_evidence_objects():
+    root = {"title": "文献综述", "description": "提交有依据的结论"}
+    latest = {"outputs": [{
+        "summary": "上一版", "claims": [{"statement": "c"}],
+        "papers_read": [{"metadata": {"raw": "x" * 20000}}],
+        "evidence_excerpts": [{"excerpt": "y" * 20000}],
+        "evidence_assessments": [{"notes": "z" * 20000}],
+    }]}
+    description = task_recovery_service._revision_description(root, latest, "补齐引用")
+    assert "上一版" in description
+    assert '"claims"' in description
+    assert "papers_read" not in description
+    assert "evidence_excerpts" not in description
+    assert len(description) < 7000
+
+
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):
     monkeypatch.setattr(settings, "literature_require_grounded_sources", True)
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)

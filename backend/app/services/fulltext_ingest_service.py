@@ -26,9 +26,19 @@ class FulltextIngestService:
         if not settings.fulltext_ingest_enabled or not run_id:
             return 0
         ingested = 0
-        for source in sources[: settings.fulltext_max_sources]:
+        existing = {
+            (item["source_id"], item["url"])
+            for item in FullTextDocumentRepository.get_by_run(run_id)
+        }
+        # A resource cap below the configured literature deliverable makes every
+        # revision impossible. Keep the two limits consistent at execution time.
+        source_limit = max(settings.fulltext_max_sources, settings.literature_source_limit)
+        for source in sources[:source_limit]:
             url = source.get("url")
             if not url:
+                continue
+            if (source["id"], url) in existing:
+                ingested += 1
                 continue
             text, parser = self._fetch_text(url)
             if not text:
@@ -44,6 +54,7 @@ class FulltextIngestService:
                     "char_count": len(text), "created_at": now,
                 }
             )
+            existing.add((source["id"], url))
             for index, start in enumerate(range(0, len(text), settings.evidence_excerpt_max_chars)):
                 passage = text[start : start + settings.evidence_excerpt_max_chars].strip()
                 if not passage:

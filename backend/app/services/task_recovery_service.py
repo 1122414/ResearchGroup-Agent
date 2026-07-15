@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 
@@ -86,8 +87,8 @@ class TaskRecoveryService:
 
         Pure check (no side effects): mirrors the gating logic in
         create_revision_task so callers can detect a dead-end without mutating
-        any state. Returns True if either an unfinished sibling revision exists
-        (the chain is still live) or the max revision rounds have not been hit.
+        any state. Only a newer active sibling is reusable; an older rejected
+        round never becomes executable again.
         """
         root_task = self._root_task(task)
         root_task_id = root_task["id"]
@@ -95,17 +96,11 @@ class TaskRecoveryService:
         existing_revisions = [
             item for item in run_tasks if item.get("revision_of_task_id") == root_task_id
         ]
-        unfinished_sibling = any(
-            item.get("revision_of_task_id") == root_task_id
-            and item.get("id") != task.get("id")
-            and item.get("status") not in {"completed", "failed", "archived"}
-            for item in run_tasks
-        )
-        if unfinished_sibling:
+        if self._newer_live_revision(task, existing_revisions):
             return True
         return len(existing_revisions) < settings.task_max_revision_rounds
 
-    def create_revision_task(self, task: dict, feedback: str) -> dict | None:
+    def create_revision_task(self, task: dict, feedback: str | dict) -> dict | None:
         root_task = self._root_task(task)
         root_task_id = root_task["id"]
         existing_revisions = [
@@ -113,16 +108,7 @@ class TaskRecoveryService:
             for item in TaskRepository.get_all(run_id=task["run_id"])
             if item.get("revision_of_task_id") == root_task_id
         ]
-        existing = next(
-            (
-                item
-                for item in TaskRepository.get_all(run_id=task["run_id"])
-                if item.get("revision_of_task_id") == root_task_id
-                and item.get("id") != task.get("id")
-                and item.get("status") not in {"completed", "failed", "archived"}
-            ),
-            None,
-        )
+        existing = self._newer_live_revision(task, existing_revisions)
         if existing:
             return existing
         if len(existing_revisions) >= settings.task_max_revision_rounds:
@@ -132,7 +118,11 @@ class TaskRecoveryService:
         revision_task = {
             "id": f"task_revision_{uuid.uuid4().hex[:8]}",
             "title": f"返工：{root_task['title']}",
-            "description": self._revision_description(root_task, feedback or task.get("review_feedback")),
+            "description": self._revision_description(
+                root_task,
+                task,
+                feedback or task.get("review_result") or task.get("review_feedback"),
+            ),
             "task_type": root_task["task_type"],
             "required_skills": root_task.get("required_skills", {}),
             "priority": min(int(root_task.get("priority", 5)) + 1, 10),
@@ -173,14 +163,85 @@ class TaskRecoveryService:
         return revision_task
 
     @staticmethod
-    def _revision_description(root_task: dict, feedback: str | None) -> str:
+    def _newer_live_revision(task: dict, revisions: list[dict]) -> dict | None:
+        """Return only a genuinely newer active revision for idempotent reuse."""
+        current_created = str(task.get("created_at") or "")
+        is_root = not task.get("revision_of_task_id")
+        live_statuses = {"pending", "assigned", "blocked", "running", "waiting_subagent", "waiting_review"}
+        candidates = [
+            item for item in revisions
+            if item.get("id") != task.get("id")
+            and item.get("status") in live_statuses
+            and (is_root or str(item.get("created_at") or "") > current_created)
+        ]
+        return max(candidates, key=lambda item: str(item.get("created_at") or ""), default=None)
+
+    @staticmethod
+    def _revision_description(root_task: dict, latest_task: dict, feedback: str | dict | None) -> str:
         original = str(root_task.get("description") or "").strip()
-        feedback_text = str(feedback or "").strip()
+        if isinstance(feedback, dict):
+            revision_plan = feedback.get("revision_plan") or []
+            feedback_text = str(feedback.get("feedback") or "").strip()
+            if revision_plan:
+                feedback_text += "\n逐项修改清单：\n" + json.dumps(
+                    revision_plan, ensure_ascii=False, indent=2
+                )
+        else:
+            feedback_text = str(feedback or "").strip()
+        outputs = latest_task.get("outputs") or []
+        previous = outputs[-1] if outputs else None
+        compact_previous = TaskRecoveryService._compact_previous(previous)
+        previous_text = (
+            "\n上一版交付物（必须在此基础上修改，不得只复述缺口）：\n"
+            + json.dumps(compact_previous, ensure_ascii=False, indent=2)[:6000]
+            if compact_previous
+            else ""
+        )
+        instruction = (
+            "\n返工交付规则：逐项落实修改清单并提交可直接审核的完整最终交付物；"
+            "协作者意见仅用于检查风险，不能替代父任务交付物。"
+        )
         if not feedback_text:
             return original or "根据导师反馈完成返工。"
         if not original:
-            return f"原始任务：{root_task.get('title', '')}\n返工要求：{feedback_text}"
-        return f"原始任务：{original}\n返工要求：{feedback_text}"
+            return f"原始任务：{root_task.get('title', '')}\n返工要求：{feedback_text}{previous_text}{instruction}"
+        return f"原始任务：{original}\n返工要求：{feedback_text}{previous_text}{instruction}"
+
+    @staticmethod
+    def _compact_previous(previous) -> dict | list | None:
+        if isinstance(previous, list):
+            return previous[:10]
+        if not isinstance(previous, dict):
+            return None
+        compact = {
+            key: previous.get(key)
+            for key in (
+                "summary", "findings", "deliverables", "risks", "next_steps", "claims",
+                "hypotheses", "uncertainties", "references_used", "academic_integrity",
+                "insufficient_evidence", "integrity_blocked",
+            )
+            if previous.get(key) is not None
+        }
+        experiment = previous.get("reproducible_experiment")
+        if isinstance(experiment, dict):
+            metrics = experiment.get("metrics") or {}
+            compact["reproducible_experiment"] = {
+                "summary": experiment.get("summary"),
+                "experiment_ran": experiment.get("experiment_ran"),
+                "publishable": experiment.get("publishable"),
+                "artifact_class": experiment.get("artifact_class"),
+                "metrics": {
+                    key: metrics.get(key)
+                    for key in (
+                        "rows", "best_strategy", "statistical_analysis", "randomness_audit",
+                        "artifact_hashes", "preregistration_trace",
+                    )
+                },
+                "reproduction": experiment.get("reproduction"),
+                "artifacts": experiment.get("artifacts"),
+                "preregistration_trace": experiment.get("preregistration_trace"),
+            }
+        return compact
 
     @staticmethod
     def _root_task(task: dict) -> dict:

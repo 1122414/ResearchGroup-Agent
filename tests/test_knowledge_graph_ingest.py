@@ -95,3 +95,10 @@ def test_ingest_creates_claims_links_and_filters_fabricated_sources():
     assert any("H1" in h["statement"] for h in hypotheses)
     uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
     assert any(u["severity"] == "high" for u in uncertainties)
+
+    knowledge_graph_service.ingest_task_result(task, result)
+
+    assert len(ResearchClaimRepository.get_by_run(run_id)) == 2
+    assert len(ResearchHypothesisRepository.get_by_run(run_id)) == 1
+    assert len(ResearchUncertaintyRepository.get_by_run(run_id)) == 1
+    assert len(EvidenceRepository.get_by_run(run_id)["links"]) == 1

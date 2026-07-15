@@ -108,7 +108,7 @@ class ReportService:
 
     @staticmethod
     def _promote_delivery_status(report: str, quality: dict) -> str:
-        if quality.get("passed") and "`thesis_draft`" in report:
+        if quality.get("publication_ready") and "`thesis_draft`" in report:
             return report.replace("`thesis_draft`", "`publishable_manuscript`", 1)
         return report
 

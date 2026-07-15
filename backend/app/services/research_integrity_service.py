@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import urlsplit
 
 from ..core.config import settings
 
@@ -74,7 +75,9 @@ class ResearchIntegrityService:
         if settings.citation_validation_enabled and violations:
             return self._blocked_fabrication_result(query, source_mode, sources, violations)
 
-        valid_claims = self._grounded_claims(result.get("claims"), content_excerpts)
+        valid_claims = self._scope_single_source_claims(
+            self._grounded_claims(result.get("claims"), content_excerpts)
+        )
         dropped_claims = len(result.get("claims") or []) - len(valid_claims)
 
         references_used = result.get("references_used") or []
@@ -110,6 +113,23 @@ class ResearchIntegrityService:
         if len(grounded_sources) < settings.literature_min_grounded_sources:
             grounded["limited_evidence"] = True
         return grounded
+
+    @staticmethod
+    def _scope_single_source_claims(claims: list[dict]) -> list[dict]:
+        """Prevent a paper-specific observation from becoming a universal claim."""
+        attribution_markers = (
+            "该研究", "该论文", "该文", "作者报告", "作者观察",
+            "the study", "the paper", "the authors report", "the authors observe",
+        )
+        scoped = []
+        for claim in claims:
+            item = dict(claim)
+            statement = str(item.get("statement") or "").strip()
+            source_ids = set(ResearchIntegrityService._as_ids(item.get("evidence_source_ids")))
+            if len(source_ids) == 1 and not any(marker in statement.lower() for marker in attribution_markers):
+                item["statement"] = f"该研究在其设置下报告：{statement}"
+            scoped.append(item)
+        return scoped
 
     def required_grounded_source_count(self, task: dict | None, query: str) -> int:
         if not settings.literature_require_grounded_sources:
@@ -149,14 +169,29 @@ class ResearchIntegrityService:
             violations.append(f"unknown source ids: {', '.join(unknown_refs)}")
 
         serialized = json.dumps(result, ensure_ascii=False)
-        bracket_refs = set(re.findall(r"\[(source_[^\]\s]+)\]", serialized))
-        unknown_bracket_refs = sorted(bracket_refs - allowed_ids)
+        bracket_refs = set(re.findall(r"\[(source_[^\]\s/]+)(?:/(excerpt_[^\]\s]+))?\]", serialized))
+        unknown_bracket_refs = sorted(source_id for source_id, _ in bracket_refs if source_id not in allowed_ids)
         if unknown_bracket_refs:
             violations.append(f"unknown bracket citations: {', '.join(unknown_bracket_refs)}")
 
-        allowed_urls = {str(item.get("url") or "").strip() for item in sources if item.get("url")}
+        passage_by_id = {item["id"]: item for item in cls._content_excerpts(excerpts)}
+        invalid_bracket_passages = sorted(
+            f"{source_id}/{passage_id}"
+            for source_id, passage_id in bracket_refs
+            if passage_id and (
+                passage_id not in passage_by_id
+                or passage_by_id[passage_id]["source_id"] != source_id
+            )
+        )
+        if invalid_bracket_passages:
+            violations.append(f"unknown or mismatched bracket passages: {', '.join(invalid_bracket_passages)}")
+
+        allowed_urls = {
+            cls._canonical_url(str(item.get("url") or ""))
+            for item in sources if item.get("url")
+        }
         cited_urls = {item.rstrip('",.;)') for item in re.findall(r"https?://[^\s\]\"')；;，。]+", serialized)}
-        unknown_urls = sorted(item for item in cited_urls if item not in allowed_urls)
+        unknown_urls = sorted(item for item in cited_urls if cls._canonical_url(item) not in allowed_urls)
         if unknown_urls:
             violations.append(f"unknown urls: {', '.join(unknown_urls)}")
 
@@ -169,7 +204,6 @@ class ResearchIntegrityService:
         if unknown_dois:
             violations.append(f"unknown dois: {', '.join(unknown_dois)}")
 
-        passage_by_id = {item["id"]: item for item in cls._content_excerpts(excerpts)}
         for index, claim in enumerate(result.get("claims") or []):
             if not isinstance(claim, dict) or not str(claim.get("statement") or "").strip():
                 continue
@@ -185,6 +219,18 @@ class ResearchIntegrityService:
             if not passage_source_ids.issubset(set(source_ids)):
                 violations.append(f"claim {index} passage/source mismatch")
         return violations
+
+    @staticmethod
+    def _canonical_url(value: str) -> str:
+        """Allow a whitelisted source's own passage locator, never another path."""
+        parsed = urlsplit(str(value or "").strip())
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        path = re.sub(r"/+$", "", parsed.path or "/")
+        if host.endswith("arxiv.org"):
+            path = re.sub(r"v\d+$", "", path, flags=re.IGNORECASE)
+        if host == "doi.org":
+            path = path.lower()
+        return f"{host}{path}"
 
     @classmethod
     def _grounded_claims(cls, claims, excerpts: list[dict]) -> list[dict]:

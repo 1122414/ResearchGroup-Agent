@@ -76,7 +76,10 @@ class TaskGraphService:
         }
         ready: list[dict] = []
         for task in tasks:
-            if task.get("status") not in {"pending", "assigned", "need_revision", "blocked"}:
+            # need_revision means the reviewed attempt is waiting for a newer
+            # revision task. Re-running that same attempt creates a revision
+            # cycle and bypasses the configured round limit.
+            if task.get("status") not in {"pending", "assigned", "blocked"}:
                 continue
             if task["id"] in pending_revisions:
                 continue

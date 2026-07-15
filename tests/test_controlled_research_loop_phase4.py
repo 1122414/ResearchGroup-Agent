@@ -2,7 +2,8 @@ from backend.app.core.config import settings
 from backend.app.services.evidence_pipeline_service import evidence_pipeline_service
 from backend.app.services.research_loop_critic_service import research_loop_critic_service
 from backend.app.services.research_loop_service import research_loop_service
-from backend.app.storage.repositories import RunEventRepository
+from backend.app.services.run_execution_service import run_execution_service
+from backend.app.storage.repositories import ApprovalRequestRepository, RunEventRepository, TaskRepository
 
 
 def _state(**updates):
@@ -83,3 +84,35 @@ def test_action_contract_is_not_mixed_into_search_query():
     assert "核验目标 claim" in query
     assert "max_tokens" not in query
     assert "fingerprint" not in query
+
+
+def test_approved_research_loop_intervention_is_reused(monkeypatch):
+    monkeypatch.setattr(
+        ApprovalRequestRepository,
+        "get_by_run",
+        lambda _run_id: [{
+            "request_type": "research_loop_intervention",
+            "task_id": None,
+            "status": "approved",
+        }],
+    )
+
+    assert run_execution_service._approved("run_loop", "research_loop_intervention") is True
+
+
+def test_completed_revision_archives_older_failed_drafts(monkeypatch):
+    tasks = [
+        {"id": "old", "revision_of_task_id": "root", "status": "need_revision"},
+        {"id": "new", "revision_of_task_id": "root", "status": "completed"},
+        {"id": "other", "revision_of_task_id": "other_root", "status": "need_revision"},
+    ]
+    updates = []
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: tasks)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status, fields)),
+    )
+
+    run_execution_service._archive_superseded_revisions("run_loop")
+
+    assert [(task_id, status) for task_id, status, _fields in updates] == [("old", "archived")]

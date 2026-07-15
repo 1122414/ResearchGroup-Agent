@@ -734,9 +734,9 @@ class ExperimentProtocolRepository:
             INSERT INTO experiment_protocols (
                 id, run_id, hypothesis_id, task_id, title, research_question,
                 independent_variables, dependent_variables, datasets, metrics, baselines,
-                stopping_conditions, expected_risks, status, created_at, updated_at
+                method_details, stopping_conditions, expected_risks, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 protocol["id"],
@@ -750,6 +750,7 @@ class ExperimentProtocolRepository:
                 json.dumps(protocol.get("datasets", []), ensure_ascii=False),
                 json.dumps(protocol.get("metrics", []), ensure_ascii=False),
                 json.dumps(protocol.get("baselines", []), ensure_ascii=False),
+                json.dumps(protocol.get("method_details", {}), ensure_ascii=False),
                 json.dumps(protocol.get("stopping_conditions", []), ensure_ascii=False),
                 json.dumps(protocol.get("expected_risks", []), ensure_ascii=False),
                 protocol.get("status", "draft"),
@@ -804,6 +805,7 @@ class ExperimentProtocolRepository:
             "datasets",
             "metrics",
             "baselines",
+            "method_details",
             "stopping_conditions",
             "expected_risks",
         ):
@@ -2096,6 +2098,7 @@ def _deserialize_experiment_protocol(row) -> dict:
         "datasets": _json_loads(row["datasets"], []),
         "metrics": _json_loads(row["metrics"], []),
         "baselines": _json_loads(row["baselines"], []),
+        "method_details": _json_loads(row["method_details"], {}),
         "stopping_conditions": _json_loads(row["stopping_conditions"], []),
         "expected_risks": _json_loads(row["expected_risks"], []),
         "status": row["status"],

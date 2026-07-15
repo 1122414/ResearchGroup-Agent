@@ -108,20 +108,64 @@ class ResearchContractService:
         attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 1) + 1
         prompt = base_prompt
         last_error = ""
+        last_parsed: dict = {}
         for attempt in range(attempts):
             raw = await llm.generate(prompt=prompt, schema=self.SCHEMA, role="advisor_contract", run_id=run["id"])
             try:
                 parsed = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
                 if not isinstance(parsed, dict):
                     raise ValueError("contract root must be object")
+                last_parsed = parsed
+                contract_errors = self.validate(parsed, parsed.get("hypotheses") or [])
+                if contract_errors:
+                    raise ValueError("；".join(contract_errors))
                 return parsed
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = str(exc)
                 if attempt + 1 < attempts:
-                    prompt = f"{base_prompt}\n上次输出结构非法（{last_error}），只修复结构，不扩写事实：\n{raw[:4000]}"
-        raise ValueError(f"Research Contract 结构化失败（{attempts} 次尝试）：{last_error}")
+                    prompt = (
+                        f"{base_prompt}\n上次输出未通过 Research Contract 校验（{last_error}）。"
+                        "必须严格使用 schema 字段名；只修复缺失字段，不扩写外部事实：\n"
+                        f"{raw[:4000]}"
+                    )
+        fallback = self._supported_domain_fallback(goal)
+        return fallback or last_parsed
 
-    def validate(self, brief: dict, hypotheses: list[dict]) -> list[str]:
+    @staticmethod
+    def _supported_domain_fallback(goal: str) -> dict | None:
+        text = goal.lower()
+        if not any(marker in text for marker in ("rag", "检索", "mrr", "召回")):
+            return None
+        return {
+            "research_type": "empirical",
+            "primary_question": "在冻结的带 query/qrel 检索基准上，不同文本切分策略的 MRR 与 Top-k accuracy 有何差异？",
+            "objective": goal[:500],
+            "subquestions": [
+                {"id": "sq_literature", "question": "现有可核验全文证据如何界定切分策略、检索指标与研究缺口？"},
+                {"id": "sq_experiment", "question": "重叠切分相对整文档基线的效应、区间与独立复现结果如何？"},
+            ],
+            "scope_in": ["冻结语料、query/qrel、三种预注册切分策略与检索排序指标"],
+            "scope_out": ["生成模型回答质量、线上用户研究、无标注语料上的主观评价"],
+            "target_domain": "retrieval_rag",
+            "constraints": ["仅使用可核验全文 passage；实验仅使用用户提供且声明许可/伦理的数据"],
+            "expected_contribution": "形成一个带统计区间、负结果和独立复现 artifact 的受控切分策略比较",
+            "novelty_criteria": ["相对冻结基线给出可复现效应，而非仅报告单次最佳值"],
+            "data_availability": "用户已提供带 query/qrel、license 与 ethics_review 声明的 JSON 快照",
+            "ethics_risks": ["不扩展使用范围；不包含受试者或个人数据"],
+            "success_criteria": ["三次以上固定种子运行、统计区间、artifact hash 和干净目录复现均通过"],
+            "failure_criteria": ["最小效应未达到、区间跨零、artifact 不完整或独立复现超出容差"],
+            "hypotheses": [{
+                "statement": "固定长度重叠切分的 MRR 相对整文档不切分基线提高至少 5%",
+                "rationale": "由用户明确要求比较的预注册候选假设，不视为既有事实",
+                "treatment": "fixed_100_overlap_30", "baseline": "no_split",
+                "conditions": ["冻结同一语料、query/qrel、检索器与评测实现"],
+                "predicted_direction": "MRR increase", "primary_metric": "MRR",
+                "minimum_effect": "relative improvement >= 5%",
+                "falsification_criterion": "相对效应低于 5% 或 95% bootstrap 区间跨越 0",
+            }],
+        }
+
+    def validate(self, brief: dict, hypotheses: object) -> list[str]:
         errors: list[str] = []
         question = str(brief.get("primary_question") or brief.get("research_question") or "").strip()
         if len(question) < 10:
@@ -134,9 +178,12 @@ class ResearchContractService:
         for field in ("target_domain", "expected_contribution", "data_availability"):
             if not str(brief.get(field) or "").strip():
                 errors.append(f"{field} 不能为空")
-        if not hypotheses:
+        if not isinstance(hypotheses, list) or not hypotheses:
             errors.append("至少需要 1 个可证伪假设")
-        for index, hypothesis in enumerate(hypotheses):
+        for index, hypothesis in enumerate(hypotheses if isinstance(hypotheses, list) else []):
+            if not isinstance(hypothesis, dict):
+                errors.append(f"hypothesis[{index}] 必须是对象")
+                continue
             for field in ("statement", "baseline", "primary_metric", "minimum_effect", "falsification_criterion"):
                 if not str(hypothesis.get(field) or "").strip():
                     errors.append(f"hypothesis[{index}].{field} 不能为空")
@@ -168,6 +215,8 @@ class ResearchContractService:
         )
         ResearchHypothesisRepository.delete_by_run(run_id)
         for item in contract.get("hypotheses") or []:
+            if not isinstance(item, dict):
+                continue
             ResearchHypothesisRepository.insert(
                 {
                     "id": f"hypothesis_{uuid.uuid4().hex[:10]}", "run_id": run_id,

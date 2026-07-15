@@ -35,9 +35,13 @@ class TaskDecomposer:
 要求：
 1. 每个任务必须包含 title、description、task_type、priority、complexity、decomposability、required_skills。
 2. task_type 只能是 literature_survey、system_design、experiment_design、result_analysis、report_writing。
+   - system_design：冻结系统/实验方案、参数、接口和实现计划，不声称已经运行实验或生成结果文件。
+   - experiment_design：实际创建工作区、执行实验、统计重复运行并生成可核验 artifact。
 3. priority、complexity、decomposability 和 required_skills 中的技能分数均为 1-10。
 4. 每个任务必须给出 subquestion_id、hypothesis_id、milestone_key，且只能引用 Contract 中已有对象。
-5. 只返回合法 JSON 数组，不要输出解释性文字。
+5. 若课题是本系统已支持的 RAG/检索切分受控实验，检索器固定为 Python 标准库实现的
+   deterministic_lexical_overlap；不得改成 BM25/rank_bm25、embedding 或其他外部检索器。
+6. 只返回合法 JSON 数组，不要输出解释性文字。
 """
 
         llm = create_llm_provider()
@@ -100,6 +104,9 @@ class TaskDecomposer:
             filtered = [item for item in tasks_data if item.get("task_type") != "experiment_design"]
             if filtered:
                 tasks_data = filtered
+        else:
+            tasks_data = self._normalize_inverted_experiment_roles(tasks_data)
+            tasks_data = self._normalize_supported_retrieval_tasks(tasks_data, research_goal, contract or {})
         if not contract:
             self._seed_hypotheses(research_goal, run_id, mode)
         logger.info("[TaskDecomposer] LLM response parsed | run_id=%s | mode=%s | tasks=%d", run_id, mode, len(tasks_data))
@@ -143,7 +150,7 @@ class TaskDecomposer:
                 "last_checkpoint": None,
                 "subquestion_id": self._known_or_default(item.get("subquestion_id"), subquestion_ids),
                 "hypothesis_id": self._known_or_default(item.get("hypothesis_id"), hypothesis_ids),
-                "milestone_id": milestones.get(item.get("milestone_key")) or milestones.get(
+                "milestone_id": milestones.get(self._scalar_ref(item.get("milestone_key"))) or milestones.get(
                     self._default_milestone(item.get("task_type", "literature_survey"))
                 ),
                 "created_at": now,
@@ -220,10 +227,104 @@ class TaskDecomposer:
         return {key: self._bounded_int(skills.get(key, 1), default=1) for key in keys}
 
     @staticmethod
+    def _normalize_inverted_experiment_roles(tasks: list[dict]) -> list[dict]:
+        """Swap only an unmistakably inverted design/execution pair."""
+        def text(item: dict) -> str:
+            return f"{item.get('title', '')} {item.get('description', '')}".lower()
+
+        execution_markers = ("实验执行", "执行实验", "执行至少", "运行实验", "pipeline", "artifact hash", "结果文件")
+        planning_markers = ("设计冻结", "冻结", "评估方案", "实验方案", "协议", "停止条件")
+        def executes(item: dict) -> bool:
+            value = text(item)
+            return (
+                any(marker in value for marker in execution_markers)
+                and "不执行实验" not in value and "不运行实验" not in value
+            )
+
+        inverted_execution = next(
+            (
+                item for item in tasks
+                if item.get("task_type") == "system_design"
+                and executes(item)
+            ),
+            None,
+        )
+        planning_experiment = next(
+            (
+                item for item in tasks
+                if item.get("task_type") == "experiment_design"
+                and any(marker in text(item) for marker in planning_markers)
+                and not executes(item)
+            ),
+            None,
+        )
+        if inverted_execution and planning_experiment:
+            inverted_execution["task_type"] = "experiment_design"
+            planning_experiment["task_type"] = "system_design"
+        return tasks
+
+    @staticmethod
+    def _normalize_supported_retrieval_tasks(
+        tasks: list[dict], research_goal: str, contract: dict
+    ) -> list[dict]:
+        """Keep the supported retrieval pilot aligned with its executable protocol."""
+        goal = primary_goal(str(research_goal or "")).lower()
+        markers = ("rag", "检索", "retrieval", "切分", "chunk", "mrr")
+        if not any(marker in goal for marker in markers):
+            return tasks
+
+        hypotheses = {
+            item.get("id"): item.get("statement")
+            for item in contract.get("hypotheses") or []
+            if item.get("id") and item.get("statement")
+        }
+        common = (
+            "检索器固定为 Python 标准库实现的 deterministic_lexical_overlap："
+            "lowercase_unicode_word_regex 分词、cosine-like lexical overlap 评分、"
+            "maximum chunk aggregation；不得改为 BM25/rank_bm25、embedding 或其他外部检索器。"
+            "三种切分策略为 no_split、fixed_100_no_overlap、fixed_100_overlap_30，"
+            "指标为 Top-1/3/5 accuracy 与 MRR@10。核心实验不得新增第三方依赖。"
+        )
+        for item in tasks:
+            task_type = item.get("task_type")
+            if task_type not in {"system_design", "experiment_design"}:
+                continue
+            linked_hypothesis = hypotheses.get(
+                TaskDecomposer._scalar_ref(item.get("hypothesis_id"))
+            )
+            hypothesis_text = (
+                f"冻结并检验契约假设“{linked_hypothesis}”。" if linked_hypothesis
+                else "冻结并检验 hypothesis_id 对应的契约假设及最小效应阈值。"
+            )
+            if task_type == "system_design":
+                item["description"] = (
+                    f"依据冻结 Research Contract 设计并冻结受控检索实验。{hypothesis_text}{common}"
+                    "给出数据快照与哈希、函数接口、关键伪代码、三个固定复现标签、"
+                    "查询级配对 bootstrap、精确数值复现容差、目录和停止条件；"
+                    "本任务只交付可执行设计，不声称已经运行实验或生成结果。"
+                )
+            else:
+                item["description"] = (
+                    f"依据已冻结协议实际创建隔离工作区并执行受控检索实验。{hypothesis_text}{common}"
+                    "对完整冻结 query/qrel 运行三个固定复现标签，输出逐查询原始结果、"
+                    "配对 bootstrap 统计、环境清单、文件哈希，并在干净目录按数值容差复现；"
+                    "不得用文字声称代替真实 artifact。"
+                )
+        return tasks
+
+    @staticmethod
     def _known_or_default(value, allowed: set[str]) -> str | None:
+        value = TaskDecomposer._scalar_ref(value)
         if value in allowed:
             return str(value)
         return sorted(allowed)[0] if allowed else None
+
+    @staticmethod
+    def _scalar_ref(value) -> str | None:
+        """Tolerate providers returning a one-item array for scalar contract refs."""
+        while isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        return str(value) if isinstance(value, (str, int)) else None
 
     @staticmethod
     def _default_milestone(task_type: str) -> str:

@@ -47,15 +47,41 @@ class ReproducibleExperimentService:
 
         input_path = data_dir / "input_documents.jsonl"
         queries_path = data_dir / "evaluation_queries.json"
+        metadata_path = data_dir / "dataset_metadata.json"
         repeat_path = data_dir / "repeat_metrics.jsonl"
         if repeat_path.exists():
             repeat_path.unlink()
         script_path = workspace / "run_experiment.py"
-        artifact_class = self._write_input_documents(input_path, queries_path, task, run)
+        artifact_class = self._write_input_documents(input_path, queries_path, metadata_path, task, run)
         script_source, generated = await self._resolve_script(task, run, protocol)
         script_path.write_text(script_source, encoding="utf-8")
+        requirements_path = workspace / "requirements.txt"
+        requirements_path.write_text(
+            "# Core experiment uses Python standard library only.\n", encoding="utf-8"
+        )
+        environment_path = workspace / "environment.json"
+        environment_path.write_text(
+            json.dumps(
+                {
+                    "python_version": sys.version.split()[0],
+                    "python_implementation": sys.implementation.name,
+                    "required_third_party_packages": [],
+                    "core_runtime": "python_standard_library",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        preregistration_path = workspace / "preregistration.md"
+        preregistration_path.write_text(
+            self._preregistration(protocol, input_path, queries_path), encoding="utf-8"
+        )
 
-        plan = self._create_plan(task, agent_id, workspace, input_path, queries_path, script_path, protocol)
+        plan = self._create_plan(
+            task, agent_id, workspace, input_path, queries_path, metadata_path, script_path,
+            preregistration_path, requirements_path, environment_path, protocol,
+        )
         experiment_run = self._create_run(task, protocol, plan, input_path)
         self._emit(task, plan["id"], "experiment.workspace_created", "实验研究生工作空间已创建", {"workspace": str(workspace)})
 
@@ -68,7 +94,15 @@ class ReproducibleExperimentService:
         results_path = data_dir / "results.csv"
         metrics = self._read_metrics(summary_path)
         statistics_result = experiment_statistics_service.analyze(self._read_jsonl(repeat_path), metrics)
-        reproduction = self._reproduce(task, agent_id, workspace, input_path, queries_path, script_path, metrics)
+        reproduction = self._reproduce(
+            task, agent_id, workspace, input_path, queries_path, metadata_path, script_path, metrics
+        )
+        metrics["randomness_audit"] = {
+            "retrieval_and_metrics": "deterministic; no random source is used",
+            "execution_seeds": "reproduction labels only; they do not alter query sampling or scores",
+            "bootstrap": "the only stochastic operation; isolated in analysis with seed 20260714",
+            "optional_plot": "matplotlib/font cache is excluded from metric computation and pass criteria",
+        }
         metrics.update(
             {
                 "artifact_class": artifact_class,
@@ -84,13 +118,48 @@ class ReproducibleExperimentService:
         summary_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
         chart_path = workspace / "chart_data.json"
         chart_path.write_text(json.dumps({"series": metrics.get("rows", []), "best_strategy": metrics.get("best_strategy")}, ensure_ascii=False, indent=2), encoding="utf-8")
-        artifact_paths = [str(script_path), str(input_path), str(queries_path), str(repeat_path), str(results_path), str(summary_path), str(chart_path)]
+        artifact_paths = [
+            str(preregistration_path), str(requirements_path), str(environment_path),
+            str(script_path), str(input_path), str(queries_path), str(metadata_path),
+            str(repeat_path), str(results_path), str(summary_path), str(chart_path),
+        ]
+        strategy_metrics_path = data_dir / "strategy_metrics.csv"
+        if strategy_metrics_path.exists():
+            artifact_paths.append(str(strategy_metrics_path))
         artifact_paths.extend(reproduction.get("artifacts") or [])
         figure_path = workspace / "figure.png"
         has_figure = figure_path.exists()
         if has_figure:
             artifact_paths.append(str(figure_path))
         artifact_paths = [path for path in artifact_paths if Path(path).exists()]
+        artifact_hashes = {
+            str(Path(path).relative_to(workspace)): hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            for path in artifact_paths
+            if (
+                Path(path).is_file()
+                and Path(path).is_relative_to(workspace)
+                and Path(path) != summary_path
+            )
+        }
+        hashes_path = workspace / "hashes.json"
+        metrics["artifact_hashes"] = artifact_hashes
+        metrics["artifact_integrity_manifest"] = str(hashes_path)
+        metrics["preregistration_trace"] = {
+            "path": str(preregistration_path),
+            "workspace_relative_path": str(preregistration_path.relative_to(workspace)),
+            "sha256": artifact_hashes[str(preregistration_path.relative_to(workspace))],
+            "protocol_id": protocol["id"],
+            "correspondence": [
+                "research_question", "datasets", "metrics", "baselines", "method_details",
+                "stopping_conditions", "expected_risks",
+            ],
+            "generated_before_execution": True,
+        }
+        # summary.json embeds this manifest, so hashing itself would be recursive.
+        # Raw inputs, code, preregistration and result files remain fully hashed.
+        summary_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        hashes_path.write_text(json.dumps(artifact_hashes, ensure_ascii=False, indent=2), encoding="utf-8")
+        artifact_paths.append(str(hashes_path))
         for artifact_path in artifact_paths:
             artifact_manifest_service.register(
                 run_artifact_service.run_dir(run, run_id),
@@ -122,10 +191,13 @@ class ReproducibleExperimentService:
             "experiment_plan_id": plan["id"],
             "workspace_dir": str(workspace),
             "script_path": str(script_path),
+            "preregistration_path": str(preregistration_path),
             "data_paths": {
                 "input_documents": str(input_path),
                 "evaluation_queries": str(queries_path),
+                "dataset_metadata": str(metadata_path),
                 "results_csv": str(results_path),
+                "strategy_metrics_csv": str(strategy_metrics_path),
                 "summary_json": str(summary_path),
                 "chart_data_json": str(chart_path),
                 **({"figure_png": str(figure_path)} if has_figure else {}),
@@ -136,9 +208,48 @@ class ReproducibleExperimentService:
             "publishable": metrics["publishable"],
             "experiment_domain": capability["domain"],
             "artifacts": artifact_paths,
+            "artifact_hashes": artifact_hashes,
+            "preregistration_trace": metrics["preregistration_trace"],
+            "claims": [self._grounded_experiment_claim(metrics, protocol, artifact_hashes)],
             "execution": result,
             "reproduction": reproduction,
             "next_steps": ["如需扩大实验规模，可替换 data/input_documents.jsonl 并重新运行 run_experiment.py。"],
+        }
+
+    @staticmethod
+    def _grounded_experiment_claim(metrics: dict, protocol: dict, artifact_hashes: dict) -> dict:
+        rows = metrics.get("rows") or []
+        baseline = next((row for row in rows if row.get("strategy") == "no_split"), {})
+        best = metrics.get("best_strategy") or {}
+        statistics_result = metrics.get("statistical_analysis") or {}
+        baseline_mrr = baseline.get("mrr_at_10", baseline.get("mrr"))
+        best_mrr = best.get("mrr_at_10", best.get("mrr"))
+        sample_size = metrics.get("evaluated_query_count") or metrics.get("query_sample_size")
+        uniform_effect_limit = (
+            "该 pilot 的 query 和文档构造可能导致效应均匀，不得外推至非构造配置。"
+            if statistics_result.get("uniform_effect_diagnostic")
+            else ""
+        )
+        return {
+            "statement": (
+                f"在当前冻结的 {sample_size} 条 query 受控边界检索 pilot 中，"
+                f"{best.get('strategy')} 的 MRR@10 为 {best_mrr}，no_split 为 {baseline_mrr}，"
+                f"查询级配对均值差为 {statistics_result.get('mean_delta')}，"
+                f"95% bootstrap 区间为 {statistics_result.get('confidence_interval_95')}。"
+                "该结论仅限当前冻结 pilot，禁止外推至开放域、其他语料或其他检索器。"
+                f"{uniform_effect_limit}"
+            ),
+            "evidence_source_ids": [],
+            "evidence_passage_ids": [],
+            "relation": "supports",
+            "confidence": 0.9,
+            "provenance": {
+                "protocol_id": protocol["id"],
+                "preregistration": "preregistration.md",
+                "preregistration_sha256": artifact_hashes.get("preregistration.md"),
+                "raw_results": "data/results.csv",
+                "raw_results_sha256": artifact_hashes.get("data/results.csv"),
+            },
         }
 
     async def _resolve_script(self, task: dict, run: dict | None, protocol: dict) -> tuple[str, bool]:
@@ -157,7 +268,8 @@ class ReproducibleExperimentService:
 
     def _create_plan(
         self, task: dict, agent_id: str, workspace: Path, input_path: Path,
-        queries_path: Path, script_path: Path, protocol: dict,
+        queries_path: Path, metadata_path: Path, script_path: Path, preregistration_path: Path,
+        requirements_path: Path, environment_path: Path, protocol: dict,
     ) -> dict:
         now = datetime.now().isoformat()
         plan = {
@@ -171,12 +283,16 @@ class ReproducibleExperimentService:
             "files": [
                 {"path": str(input_path.relative_to(workspace)), "content": input_path.read_text(encoding="utf-8")},
                 {"path": str(queries_path.relative_to(workspace)), "content": queries_path.read_text(encoding="utf-8")},
+                {"path": str(metadata_path.relative_to(workspace)), "content": metadata_path.read_text(encoding="utf-8")},
                 {"path": str(script_path.relative_to(workspace)), "content": script_path.read_text(encoding="utf-8")},
+                {"path": str(preregistration_path.relative_to(workspace)), "content": preregistration_path.read_text(encoding="utf-8")},
+                {"path": requirements_path.name, "content": requirements_path.read_text(encoding="utf-8")},
+                {"path": environment_path.name, "content": environment_path.read_text(encoding="utf-8")},
             ],
             "commands": [
                 {
                     "command": f"{sys.executable} {script_path.name} --seed {index + 1}",
-                    "description": f"固定种子 bootstrap 重复 {index + 1}",
+                    "description": f"固定种子确定性复现 {index + 1}",
                 }
                 for index in range(max(int(settings.experiment_repeat_runs), 1))
             ],
@@ -193,6 +309,29 @@ class ReproducibleExperimentService:
         }
         ExperimentPlanRepository.insert(plan)
         return plan
+
+    @staticmethod
+    def _preregistration(protocol: dict, input_path: Path, queries_path: Path) -> str:
+        details = protocol.get("method_details") or {}
+        return "\n".join([
+            "# 实验预注册",
+            "",
+            f"- 协议 ID：`{protocol['id']}`",
+            f"- 研究问题：{protocol['research_question']}",
+            f"- 数据快照 SHA-256：`{hashlib.sha256(input_path.read_bytes()).hexdigest()}`",
+            f"- Query/Qrel 快照 SHA-256：`{hashlib.sha256(queries_path.read_bytes()).hexdigest()}`",
+            f"- 自变量：{', '.join(protocol.get('independent_variables') or [])}",
+            f"- 因变量：{', '.join(protocol.get('dependent_variables') or [])}",
+            f"- 基线：{json.dumps(protocol.get('baselines') or [], ensure_ascii=False)}",
+            f"- 方法冻结项：{json.dumps(details, ensure_ascii=False, sort_keys=True)}",
+            f"- 停止条件：{'；'.join(protocol.get('stopping_conditions') or [])}",
+            f"- 预期风险与适用边界：{'；'.join(protocol.get('expected_risks') or [])}",
+            "- 预期产物：run_experiment.py、input_documents.jsonl、evaluation_queries.json、"
+            "requirements.txt、environment.json、repeat_metrics.jsonl、results.csv、summary.json、"
+            "可选 figure.png、clean-room reproduction artifacts",
+            "",
+            "本文件在实验命令执行前生成；后续结果不得反向改写上述假设、数据、指标或停止条件。",
+        ]) + "\n"
 
     def _create_run(self, task: dict, protocol: dict, plan: dict, input_path: Path) -> dict:
         now = datetime.now().isoformat()
@@ -224,6 +363,7 @@ class ReproducibleExperimentService:
         workspace: Path,
         input_path: Path,
         queries_path: Path,
+        metadata_path: Path,
         script_path: Path,
         original_metrics: dict,
     ) -> dict:
@@ -236,6 +376,7 @@ class ReproducibleExperimentService:
             "files": [
                 {"path": "data/input_documents.jsonl", "content": input_path.read_text(encoding="utf-8")},
                 {"path": "data/evaluation_queries.json", "content": queries_path.read_text(encoding="utf-8")},
+                {"path": "data/dataset_metadata.json", "content": metadata_path.read_text(encoding="utf-8")},
                 {"path": "run_experiment.py", "content": script_path.read_text(encoding="utf-8")},
             ],
             "commands": [{
@@ -266,21 +407,24 @@ class ReproducibleExperimentService:
     @staticmethod
     def _primary_value(metrics: dict) -> float | None:
         best = metrics.get("best_strategy") or {}
-        value = best.get("mrr") if best else metrics.get("treatment_value")
+        value = best.get("mrr_at_10") if best else metrics.get("treatment_value")
         try:
             return float(value)
         except (TypeError, ValueError):
             return None
 
-    def _write_input_documents(self, path: Path, queries_path: Path, task: dict, run: dict | None) -> str:
+    def _write_input_documents(
+        self, path: Path, queries_path: Path, metadata_path: Path, task: dict, run: dict | None
+    ) -> str:
         goal = primary_goal((run or {}).get("research_goal", "") or task.get("description", ""))
         seed = goal or task.get("title", "research task")
-        documents, queries = self._evaluation_dataset_from_uploads(run, task)
+        documents, queries, metadata = self._evaluation_dataset_from_uploads(run, task)
         if documents:
             with path.open("w", encoding="utf-8") as fh:
                 for item in documents:
                     fh.write(json.dumps(item, ensure_ascii=False) + "\n")
             queries_path.write_text(json.dumps(queries, ensure_ascii=False, indent=2), encoding="utf-8")
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             return "external"
 
         documents = [
@@ -310,20 +454,38 @@ class ReproducibleExperimentService:
             ),
             encoding="utf-8",
         )
+        metadata_path.write_text(
+            json.dumps({"kind": "system_seed_demo", "uniform_query_template": False}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         return "synthetic"
 
-    def _evaluation_dataset_from_uploads(self, run: dict | None, task: dict) -> tuple[list[dict], list[dict]]:
+    def _evaluation_dataset_from_uploads(
+        self, run: dict | None, task: dict
+    ) -> tuple[list[dict], list[dict], dict]:
         if not run:
-            return [], []
+            return [], [], {}
         run_dir = run_artifact_service.run_dir(run, task.get("run_id"))
         attachments_path = run_dir / "inputs" / "attachments.json"
         if not attachments_path.exists():
-            return [], []
+            return [], [], {}
         try:
             items = json.loads(attachments_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            return [], []
-        return experiment_domain_service.labeled_dataset(items if isinstance(items, list) else [])
+            return [], [], {}
+        attachments = items if isinstance(items, list) else []
+        documents, queries = experiment_domain_service.labeled_dataset(attachments)
+        metadata = {"kind": "uploaded_labeled_retrieval_dataset", "uniform_query_template": False}
+        for item in attachments:
+            raw = item.get("extracted_markdown") if isinstance(item, dict) else None
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else {}
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed.get("benchmark_design"), dict):
+                metadata = parsed["benchmark_design"]
+                break
+        return documents, queries, metadata
 
     @staticmethod
     def _read_metrics(path: Path) -> dict:
@@ -373,7 +535,6 @@ class ReproducibleExperimentService:
         return r'''import csv
 import json
 import math
-import random
 import re
 import sys
 from pathlib import Path
@@ -382,7 +543,9 @@ from pathlib import Path
 DATA_DIR = Path("data")
 INPUT_PATH = DATA_DIR / "input_documents.jsonl"
 QUERIES_PATH = DATA_DIR / "evaluation_queries.json"
+METADATA_PATH = DATA_DIR / "dataset_metadata.json"
 RESULTS_PATH = DATA_DIR / "results.csv"
+STRATEGY_METRICS_PATH = DATA_DIR / "strategy_metrics.csv"
 SUMMARY_PATH = Path("summary.json")
 FIGURE_PATH = Path("figure.png")
 REPEAT_PATH = DATA_DIR / "repeat_metrics.jsonl"
@@ -397,16 +560,16 @@ def plot_results(rows):
     except Exception as exc:  # noqa: BLE001
         print(f"plotting skipped: {exc}")
         return False
-    metrics = ["top1_accuracy", "top3_accuracy", "mrr"]
+    metrics = ["top1_accuracy", "top3_accuracy", "top5_accuracy", "mrr_at_10"]
     strategies = [row["strategy"] for row in rows]
-    bar_width = 0.25
+    bar_width = 0.2
     positions = list(range(len(strategies)))
     fig, ax = plt.subplots(figsize=(8, 5))
     for offset, metric in enumerate(metrics):
         xs = [pos + offset * bar_width for pos in positions]
         ys = [row.get(metric, 0) for row in rows]
         ax.bar(xs, ys, width=bar_width, label=metric)
-    ax.set_xticks([pos + bar_width for pos in positions])
+    ax.set_xticks([pos + 1.5 * bar_width for pos in positions])
     ax.set_xticklabels(strategies, rotation=15, ha="right")
     ax.set_ylabel("score")
     ax.set_title("Chunking strategy retrieval comparison")
@@ -468,36 +631,55 @@ def score(query, chunk):
 
 
 def evaluate(chunks, queries):
-    reciprocal_ranks = []
+    query_rows = []
     top1_hits = 0
     top3_hits = 0
-    for query in queries:
-        ranked = sorted(chunks, key=lambda chunk: score(query["query"], chunk), reverse=True)
-        rank = next((idx + 1 for idx, chunk in enumerate(ranked) if chunk["doc_id"] == query["target_doc"]), None)
+    top5_hits = 0
+    for query_index, query in enumerate(queries):
+        document_scores = {}
+        for chunk in chunks:
+            value = score(query["query"], chunk)
+            document_scores[chunk["doc_id"]] = max(value, document_scores.get(chunk["doc_id"], 0.0))
+        ranked_docs = sorted(document_scores, key=lambda doc_id: (-document_scores[doc_id], doc_id))
+        rank = next((idx + 1 for idx, doc_id in enumerate(ranked_docs) if doc_id == query["target_doc"]), None)
         if rank == 1:
             top1_hits += 1
         if rank and rank <= 3:
             top3_hits += 1
-        reciprocal_ranks.append(1.0 / rank if rank else 0.0)
-    return {
+        if rank and rank <= 5:
+            top5_hits += 1
+        query_rows.append({
+            "query_id": query.get("id", query_index),
+            "target_doc": query["target_doc"],
+            "rank": rank,
+            "top1_hit": int(rank == 1),
+            "top3_hit": int(bool(rank and rank <= 3)),
+            "top5_hit": int(bool(rank and rank <= 5)),
+            "reciprocal_rank_at_10": 1.0 / rank if rank and rank <= 10 else 0.0,
+        })
+    return ({
         "top1_accuracy": round(top1_hits / len(queries), 4),
         "top3_accuracy": round(top3_hits / len(queries), 4),
-        "mrr": round(sum(reciprocal_ranks) / len(reciprocal_ranks), 4),
-    }
+        "top5_accuracy": round(top5_hits / len(queries), 4),
+        "mrr_at_10": round(sum(row["reciprocal_rank_at_10"] for row in query_rows) / len(query_rows), 4),
+    }, query_rows)
 
 
 def main():
     seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else 1
     docs = load_documents()
     query_pool = json.loads(QUERIES_PATH.read_text(encoding="utf-8"))
+    dataset_metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
     if not query_pool:
         raise ValueError("evaluation_queries.json must contain at least one labeled query")
-    queries = random.Random(seed).choices(query_pool, k=len(query_pool))
+    queries = query_pool
     strategies = ["no_split", "fixed_100_no_overlap", "fixed_100_overlap_30"]
     rows = []
+    per_query = {}
     for strategy in strategies:
         chunks = build_chunks(docs, strategy)
-        metrics = evaluate(chunks, queries)
+        metrics, query_rows = evaluate(chunks, queries)
+        per_query[strategy] = query_rows
         rows.append({
             "strategy": strategy,
             "chunk_count": len(chunks),
@@ -505,21 +687,65 @@ def main():
             **metrics,
         })
     with RESULTS_PATH.open("w", encoding="utf-8", newline="") as fh:
+        raw_rows = [
+            {"strategy": strategy, **query_row}
+            for strategy, query_rows in per_query.items()
+            for query_row in query_rows
+        ]
+        writer = csv.DictWriter(fh, fieldnames=list(raw_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(raw_rows)
+    with STRATEGY_METRICS_PATH.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
-    best = max(rows, key=lambda row: (row["top3_accuracy"], row["mrr"], -row["chunk_count"]))
+    best = max(
+        rows,
+        key=lambda row: (
+            row["mrr_at_10"], row["top1_accuracy"], row["top3_accuracy"],
+            row["top5_accuracy"], -row["chunk_count"],
+        ),
+    )
+    metric_fields = {
+        "top1_accuracy": "top1_hit", "top3_accuracy": "top3_hit",
+        "top5_accuracy": "top5_hit", "mrr_at_10": "reciprocal_rank_at_10",
+    }
+    paired_query_metric_deltas = {
+        metric: [treatment[field] - baseline[field] for treatment, baseline in zip(
+            per_query["fixed_100_overlap_30"], per_query["no_split"], strict=True
+        )]
+        for metric, field in metric_fields.items()
+    }
     SUMMARY_PATH.write_text(
-        json.dumps({"seed": seed, "evaluation": "bootstrap", "rows": rows, "best_strategy": best}, ensure_ascii=False, indent=2),
+        json.dumps({
+            "seed": seed,
+            "evaluation": "paired_query_bootstrap",
+            "retrieval_configuration": {
+                "type": "deterministic_lexical_overlap",
+                "document_aggregation": "maximum_chunk_score",
+                "top_k": [1, 3, 5, 10],
+                "shared_across_strategies": True,
+                "rationale": "deterministic and parameter-free to isolate chunk-boundary effects",
+            },
+            "query_sample_size": len(query_pool),
+            "evaluated_query_count": len(queries),
+            "benchmark_design": dataset_metadata,
+            "execution_seed_role": "deterministic reproduction label; no query resampling",
+            "paired_query_deltas": paired_query_metric_deltas["mrr_at_10"],
+            "paired_query_metric_deltas": paired_query_metric_deltas,
+            "per_query_results": per_query,
+            "rows": rows,
+            "best_strategy": best,
+        }, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     baseline = next(row for row in rows if row["strategy"] == "no_split")
     with REPEAT_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
-            "metric_name": "mrr",
+            "metric_name": "mrr_at_10",
             "seed": seed,
-            "baseline_value": baseline["mrr"],
-            "treatment_value": best["mrr"],
+            "baseline_value": baseline["mrr_at_10"],
+            "treatment_value": best["mrr_at_10"],
         }, ensure_ascii=False) + "\n")
     plot_results(rows)
     print(f"experiment completed: {len(rows)} strategies, best={best['strategy']}")

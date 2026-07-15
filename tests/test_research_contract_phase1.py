@@ -77,3 +77,17 @@ def test_invalid_contract_is_revision_state():
 
 def test_contract_type_overrides_keyword_mode_detection():
     assert task_decomposer.detect_mode("提出并验证一个新方法", {"research_type": "survey"}) == "survey"
+
+
+def test_supported_rag_contract_has_bounded_deterministic_fallback():
+    fallback = research_contract_service._supported_domain_fallback("比较 RAG 检索切分的 MRR")
+    assert fallback is not None
+    assert research_contract_service.validate(fallback, fallback["hypotheses"]) == []
+    assert research_contract_service._supported_domain_fallback("细胞培养湿实验") is None
+
+
+def test_contract_validation_rejects_string_hypothesis_without_crashing():
+    fallback = research_contract_service._supported_domain_fallback("比较 RAG 检索切分的 MRR")
+    assert fallback is not None
+    errors = research_contract_service.validate(fallback, ["重叠切分会提升 MRR"])
+    assert "hypothesis[0] 必须是对象" in errors

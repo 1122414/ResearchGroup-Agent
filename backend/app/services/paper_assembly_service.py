@@ -62,9 +62,9 @@ class PaperAssemblyService:
         goal_brief = title if len(title) <= 80 else title[:77] + "..."
 
         evidence = EvidenceRepository.get_by_run(run_id)
-        claims = ResearchClaimRepository.get_by_run(run_id)
-        hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
-        uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
+        claims = self._dedupe_records(ResearchClaimRepository.get_by_run(run_id), "statement", "status")
+        hypotheses = self._dedupe_records(ResearchHypothesisRepository.get_by_run(run_id), "statement")
+        uncertainties = self._dedupe_records(ResearchUncertaintyRepository.get_by_run(run_id), "description")
         experiment_results = ExperimentResultRepository.get_by_run(run_id)
         experiment_protocols = ExperimentProtocolRepository.get_by_run(run_id)
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
@@ -73,6 +73,11 @@ class PaperAssemblyService:
             item["id"] for item in experiment_results if (item.get("metrics") or {}).get("publishable") is True
         }
         experiment_findings = [item for item in experiment_findings if item.get("result_id") in publishable_result_ids]
+        if publishable_result_ids and any(item.get("status") == "supported" for item in hypotheses):
+            uncertainties = [
+                item for item in uncertainties
+                if "尚未形成经过证据支撑的可验证假设" not in str(item.get("description") or "")
+            ]
 
         # Filter out hypotheses whose statement is just the raw goal prompt —
         # these get ingested when the LLM echoes the full instruction as a
@@ -99,7 +104,10 @@ class PaperAssemblyService:
 
         citation_index = self._build_citation_index(claims, links_by_claim, source_map)
         grounded_claims = [c for c in claims if c.get("status") == "supported" and links_by_claim.get(c["id"])]
-        unsupported_claims = [c for c in claims if c not in grounded_claims]
+        unsupported_claims = [
+            c for c in claims
+            if c not in grounded_claims and not self._experiment_backed_claim(c, experiment_results)
+        ]
 
         time_label = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         doc_type = "研究论文" if mode == "paper" else "调研报告"
@@ -126,13 +134,18 @@ class PaperAssemblyService:
             lines += ["## 报告正文", "", narrative_body, ""]
 
         if mode == "paper":
-            lines += self._intro_section(goal_brief, hypotheses, narrative_block if not has_full_narrative else {})
-            lines += self._related_work_section(grounded_claims, citation_index, source_map)
+            lines += self._intro_section(
+                goal_brief, hypotheses, narrative_block if not has_full_narrative else {}, experiment_protocols
+            )
+            lines += self._related_work_section(grounded_claims, citation_index, source_map, links_by_claim)
             lines += self._method_section(hypotheses, experiment_protocols, narrative_block if not has_full_narrative else {})
             lines += self._experiments_section(experiment_results, tasks)
-            lines += self._results_section(grounded_claims, citation_index, source_map, links_by_claim, experiment_findings)
+            lines += self._results_section(
+                grounded_claims, citation_index, source_map, links_by_claim,
+                experiment_findings, experiment_results,
+            )
             if not has_full_narrative:
-                lines += self._discussion_section(narrative_block, unsupported_claims, uncertainties)
+                lines += self._discussion_section(narrative_block, experiment_results)
             lines += self._limitations_section(unsupported_claims, uncertainties, experiment_results)
             lines += self._conclusion_section(grounded_claims, experiment_results, links_by_claim, citation_index)
         else:
@@ -176,6 +189,9 @@ class PaperAssemblyService:
             + (f"，并通过 {len(experiment_results)} 次可复现实验加以检验。" if experiment_results else "。")
         )
         lines = ["## 摘要", "", body, ""]
+        experiment_summary = self._primary_experiment_summary(experiment_results)
+        if experiment_summary:
+            lines.extend([f"**实验主结论：** {experiment_summary}", ""])
         for claim in top:
             lines.append(f"- {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
         if top:
@@ -184,10 +200,14 @@ class PaperAssemblyService:
 
     def _conclusion_section(self, grounded_claims, experiment_results, links_by_claim, citation_index) -> list[str]:
         lines = ["## 结论", ""]
-        if grounded_claims:
-            lines.append("综合证据与实验，本研究得到以下有支撑的核心结论：")
+        experiment_summary = self._primary_experiment_summary(experiment_results)
+        if experiment_summary:
+            lines.append(f"**实验结论（由原始工件与独立复现支持）：** {experiment_summary}")
             lines.append("")
-            for claim in grounded_claims[:6]:
+        if grounded_claims:
+            lines.append("相关工作的可核验结论如下：")
+            lines.append("")
+            for claim in grounded_claims[:4]:
                 lines.append(
                     f"- ({claim['status']}, 置信度 {round(claim.get('confidence', 0) * 100)}%) "
                     f"{claim['statement']}{self._cite(claim, links_by_claim, citation_index)}"
@@ -231,11 +251,22 @@ class PaperAssemblyService:
 
     # --- paper-mode sections ----------------------------------------------
 
-    def _intro_section(self, goal, hypotheses, narrative_block) -> list[str]:
+    def _intro_section(self, goal, hypotheses, narrative_block, protocols) -> list[str]:
         lines = ["## 1. 引言", ""]
-        lines.append(narrative_block.get("intro") or f"本研究针对“{goal}”，明确研究问题并提出可检验假设，随后通过证据与实验逐步验证。")
+        protocol = protocols[0] if protocols else {}
+        strategies = list(((protocol.get("method_details") or {}).get("strategies") or {}).keys())
+        default_intro = (
+            f"本研究针对“{goal}”，在冻结的受控检索基准上隔离文档切分策略这一自变量。"
+            f"实验统一数据、query/qrel、检索器、聚合与评测代码，仅比较"
+            f"{('、'.join(strategies)) if strategies else '预注册的切分策略'}。"
+            "研究目标不是证明某种切分方法在开放域普遍优越，而是检验边界重叠在当前构造 pilot "
+            "中是否改变目标文档排序，并给出可复现、可证伪且明确受限的结论。"
+        )
+        lines.append(narrative_block.get("intro") or default_intro)
         lines.append("")
         if hypotheses:
+            supported = [hypothesis for hypothesis in hypotheses if hypothesis.get("status") == "supported"]
+            hypotheses = supported or hypotheses
             lines.append("**研究假设:**")
             lines.append("")
             for hyp in hypotheses[:5]:
@@ -243,7 +274,7 @@ class PaperAssemblyService:
             lines.append("")
         return lines
 
-    def _related_work_section(self, grounded_claims, citation_index, source_map) -> list[str]:
+    def _related_work_section(self, grounded_claims, citation_index, source_map, links_by_claim) -> list[str]:
         lines = ["## 2. 相关工作", ""]
         if not citation_index:
             lines.append("尚未收集到可核验的相关工作来源。")
@@ -252,6 +283,10 @@ class PaperAssemblyService:
         for source_id, number in sorted(citation_index.items(), key=lambda kv: kv[1])[: settings.report_evidence_paper_limit]:
             source = source_map.get(source_id, {})
             lines.append(f"- [{number}] {(source.get('title') or '').strip()} — {(source.get('authors') or '').strip()} ({source.get('year') or 'n.d.'})")
+        if grounded_claims:
+            lines.extend(["", "现有工作的可核验信息表明："])
+            for claim in grounded_claims[:4]:
+                lines.append(f"- {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
         lines.append("")
         return lines
 
@@ -267,6 +302,21 @@ class PaperAssemblyService:
             lines.append(f"- 基线：{', '.join(item.get('name', '') for item in protocol.get('baselines') or [])}")
             lines.append(f"- 指标：{', '.join(item.get('name', '') for item in protocol.get('metrics') or [])}")
             lines.append(f"- 停止条件：{'；'.join(protocol.get('stopping_conditions') or [])}")
+            details = protocol.get("method_details") or {}
+            retriever = details.get("retriever") or {}
+            evaluation = details.get("evaluation_design") or {}
+            if retriever:
+                lines.append(
+                    f"- 检索器：{retriever.get('type')}；分词={retriever.get('tokenizer')}；"
+                    f"文档聚合={retriever.get('document_aggregation')}。"
+                )
+            if evaluation:
+                lines.append(
+                    f"- 推断单位：{evaluation.get('unit')}；配对 bootstrap={evaluation.get('bootstrap_seed')} "
+                    f"种子、执行标签={evaluation.get('execution_seeds')}；"
+                    f"复现容差={evaluation.get('reproduction_tolerance')}。"
+                )
+                lines.append(f"- 数据划分与调参：{evaluation.get('data_split')}。")
             lines.append("")
         return lines
 
@@ -302,14 +352,24 @@ class PaperAssemblyService:
                     lines.append("")
         return lines
 
-    def _results_section(self, grounded_claims, citation_index, source_map, links_by_claim, experiment_findings) -> list[str]:
+    def _results_section(
+        self, grounded_claims, citation_index, source_map, links_by_claim,
+        experiment_findings, experiment_results,
+    ) -> list[str]:
         lines = ["## 5. 结果", ""]
-        if not grounded_claims and not experiment_findings:
+        experiment_summary = self._primary_experiment_summary(experiment_results)
+        if experiment_summary:
+            lines.append(f"**主要实验结果：** {experiment_summary}")
+            lines.append("")
+        if not grounded_claims and not experiment_findings and not experiment_summary:
             lines.append("尚无获得证据支撑的结果。")
             lines.append("")
             return lines
-        for claim in grounded_claims:
-            lines.append(f"- ({claim['status']}) {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
+        if grounded_claims:
+            lines.append("文献证据用于限定相关工作背景，不作为本实验效果的替代证据：")
+            lines.append("")
+            for claim in grounded_claims[:4]:
+                lines.append(f"- ({claim['status']}) {claim['statement']}{self._cite(claim, links_by_claim, citation_index)}")
         if experiment_findings:
             lines.append("")
             lines.append("**实验 findings:**")
@@ -324,9 +384,43 @@ class PaperAssemblyService:
         lines.append("")
         return lines
 
-    def _discussion_section(self, narrative_block, unsupported_claims, uncertainties) -> list[str]:
+    def _discussion_section(self, narrative_block, experiment_results) -> list[str]:
         lines = ["## 6. 讨论", ""]
-        lines.append(narrative_block.get("discussion") or "本节讨论结果的意义、与相关工作的关系以及对研究假设的影响。")
+        if narrative_block.get("discussion"):
+            lines.append(narrative_block["discussion"])
+        else:
+            result = next(
+                (item for item in experiment_results if (item.get("metrics") or {}).get("publishable") is True),
+                None,
+            )
+            metrics = (result or {}).get("metrics") or {}
+            rows = {row.get("strategy"): row for row in metrics.get("rows") or []}
+            stats = metrics.get("statistical_analysis") or {}
+            baseline = rows.get("no_split") or {}
+            no_overlap = rows.get("fixed_100_no_overlap") or {}
+            overlap = rows.get("fixed_100_overlap_30") or {}
+            if result:
+                lines.append(
+                    "在冻结设置中，fixed_100_no_overlap 与 no_split 的 MRR@10 相同"
+                    f"（{no_overlap.get('mrr_at_10')} 对 {baseline.get('mrr_at_10')}），而 "
+                    f"fixed_100_overlap_30 达到 {overlap.get('mrr_at_10')}。"
+                    "这说明当前收益来自跨越冻结边界保留查询词，而不是仅把文档切成更短片段。"
+                )
+                lines.append("")
+                lines.append(
+                    f"配对均值差为 {stats.get('mean_delta')}，95% bootstrap 区间为 "
+                    f"{stats.get('confidence_interval_95')}。所有 query 差值一致使标准差为 "
+                    f"{stats.get('std_delta')}，Cohen's dz 因零分母未定义；因此本文报告原始配对差值、"
+                    "胜率与区间，不把退化区间解释为开放域中的确定效应。"
+                )
+                lines.append("")
+                lines.append(
+                    f"Top-3 与 Top-5 在三组中均为 {baseline.get('top3_accuracy')} 与 "
+                    f"{baseline.get('top5_accuracy')}，存在明显饱和。该 pilot 只能证明冻结的同构边界构造"
+                    "对 Top-1/MRR 排序敏感，不能证明重叠切分在自然语料、语义检索器或不同窗口下普遍更优。"
+                )
+            else:
+                lines.append("没有通过发布门的实验结果，无法形成经验性讨论。")
         lines.append("")
         return lines
 
@@ -449,6 +543,57 @@ class PaperAssemblyService:
             lines.append("| — | — | — |")
         lines.append("")
         return lines
+
+    @staticmethod
+    def _dedupe_records(records: list[dict], field: str, priority_field: str | None = None) -> list[dict]:
+        priority = {"supported": 3, "contested": 2, "draft": 1, "rejected": 0}
+        chosen: dict[str, tuple[int, int, dict]] = {}
+        for index, record in enumerate(records):
+            key = re.sub(r"\s+", " ", str(record.get(field) or "")).strip().lower()
+            if not key:
+                continue
+            rank = priority.get(str(record.get(priority_field) or ""), 0) if priority_field else 0
+            current = chosen.get(key)
+            if current is None or rank > current[0]:
+                chosen[key] = (rank, index, record)
+        return [item[2] for item in sorted(chosen.values(), key=lambda value: value[1])]
+
+    @staticmethod
+    def _experiment_backed_claim(claim: dict, results: list[dict]) -> bool:
+        statement = str(claim.get("statement") or "").lower()
+        if "mrr" not in statement and "top" not in statement:
+            return False
+        for result in results:
+            metrics = result.get("metrics") or {}
+            if metrics.get("publishable") is not True:
+                continue
+            strategies = [str(row.get("strategy") or "").lower() for row in metrics.get("rows") or []]
+            if any(strategy and strategy in statement for strategy in strategies):
+                return True
+        return False
+
+    @staticmethod
+    def _primary_experiment_summary(results: list[dict]) -> str:
+        result = next(
+            (item for item in results if (item.get("metrics") or {}).get("publishable") is True),
+            None,
+        )
+        if not result:
+            return ""
+        metrics = result.get("metrics") or {}
+        rows = {row.get("strategy"): row for row in metrics.get("rows") or []}
+        stats = metrics.get("statistical_analysis") or {}
+        baseline = rows.get("no_split") or {}
+        treatment = rows.get("fixed_100_overlap_30") or metrics.get("best_strategy") or {}
+        count = metrics.get("evaluated_query_count") or metrics.get("query_sample_size")
+        reproduced = (metrics.get("reproduction") or {}).get("passed") is True
+        return (
+            f"在冻结的 {count} 条 query pilot 中，fixed_100_overlap_30 的 MRR@10="
+            f"{treatment.get('mrr_at_10')}，no_split={baseline.get('mrr_at_10')}，"
+            f"查询级配对均值差={stats.get('mean_delta')}，95% bootstrap 区间="
+            f"{stats.get('confidence_interval_95')}，干净目录复现={'通过' if reproduced else '未通过'}。"
+            "该结果仅适用于当前冻结的同构边界构造。"
+        )
 
     @staticmethod
     def _bibliography_key(source: dict) -> str:

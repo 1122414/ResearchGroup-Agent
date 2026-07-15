@@ -23,6 +23,7 @@ from app.core.logging_middleware import LoggingMiddleware
 from app.services.agent_registry import agent_registry
 from app.services.agent_skill_service import agent_skill_service
 from app.services.provider_audit_service import provider_audit_service
+from app.services.run_execution_service import run_execution_service
 from app.storage import init_db
 
 setup_logging(settings.log_level)
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
     )
     for warning in audit["warnings"]:
         logger.warning("[ProviderAudit] %s", warning)
+    recovered = run_execution_service.recover_interrupted_runs()
+    if recovered:
+        logger.warning("Recovered interrupted runs after restart | run_ids=%s", ",".join(recovered))
     yield
 
 

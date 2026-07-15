@@ -113,13 +113,123 @@ def test_literature_policy_keeps_only_passage_grounded_claims(monkeypatch):
     checked = research_integrity_service.apply_literature_policy(
         result, [source], "query", "test", {"title": "brief"}, [excerpt]
     )
-    assert [claim["statement"] for claim in checked["claims"]] == ["grounded"]
+    assert [claim["statement"] for claim in checked["claims"]] == ["该研究在其设置下报告：grounded"]
     assert checked["academic_integrity"]["dropped_ungrounded_claims"] == 1
 
 
+def test_literature_policy_allows_locator_of_whitelisted_url(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    sources = [{
+        "id": "source_ok", "url": "https://arxiv.org/abs/2603.06976v1",
+        "metadata": {"citation_eligible": True},
+    }]
+    excerpts = [{
+        "id": "excerpt_ok", "source_id": "source_ok", "excerpt": "A real passage",
+        "locator": "http://arxiv.org/abs/2603.06976v1#chars=0-4000",
+        "excerpt_type": "fulltext",
+    }]
+    result = {
+        "summary": "See http://arxiv.org/abs/2603.06976v1#chars=0-4000",
+        "references_used": ["source_ok"],
+        "claims": [{
+            "statement": "该论文报告了一个受限结果。",
+            "evidence_source_ids": ["source_ok"], "evidence_passage_ids": ["excerpt_ok"],
+            "relation": "supports", "confidence": 0.8,
+        }],
+    }
+    checked = research_integrity_service.apply_literature_policy(
+        result, sources, "query", "test", {"title": "论文综述"}, excerpts
+    )
+    assert checked["academic_integrity"]["status"] == "passed"
+    assert len(checked["claims"]) == 1
+
+
+def test_literature_policy_allows_verified_source_passage_bracket(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    source = {"id": "source_ok", "metadata": {"citation_eligible": True}}
+    excerpt = {
+        "id": "excerpt_ok", "source_id": "source_ok", "excerpt": "A real passage",
+        "excerpt_type": "fulltext",
+    }
+    result = {
+        "summary": "受限结论 [source_ok/excerpt_ok]",
+        "references_used": ["source_ok"],
+        "claims": [{
+            "statement": "该研究报告受限结论", "evidence_source_ids": ["source_ok"],
+            "evidence_passage_ids": ["excerpt_ok"], "relation": "supports", "confidence": 0.8,
+        }],
+    }
+    checked = research_integrity_service.apply_literature_policy(
+        result, [source], "query", "test", {"title": "论文综述"}, [excerpt]
+    )
+    assert checked["academic_integrity"]["status"] == "passed"
+
+
+def test_literature_policy_blocks_mismatched_source_passage_bracket(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    sources = [{"id": "source_a"}, {"id": "source_b"}]
+    excerpt = {"id": "excerpt_b", "source_id": "source_b", "excerpt": "passage"}
+    checked = research_integrity_service.apply_literature_policy(
+        {"summary": "错误配对 [source_a/excerpt_b]", "references_used": ["source_a"]},
+        sources, "query", "test", {"title": "论文综述"}, [excerpt],
+    )
+    assert checked["academic_integrity"]["status"] == "blocked_fabrication"
+
+
+def test_literature_policy_still_blocks_different_url(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    source = {"id": "source_ok", "url": "https://arxiv.org/abs/2603.06976v1"}
+    excerpt = {"id": "excerpt_ok", "source_id": "source_ok", "excerpt": "passage"}
+    checked = research_integrity_service.apply_literature_policy(
+        {"summary": "See https://arxiv.org/abs/9999.99999", "references_used": ["source_ok"]},
+        [source], "query", "test", {"title": "论文综述"}, [excerpt],
+    )
+    assert checked["academic_integrity"]["status"] == "blocked_fabrication"
+
+
 def test_review_invalid_structure_fails_closed():
-    assert review_service._parse_review("not json")["approved"] is False
+    assert review_service._parse_review("not json")["review_transport_failed"] is True
     assert review_service._parse_review('{"feedback":"missing decision"}')["approved"] is False
+
+
+def test_advisor_payload_omits_raw_passages_but_keeps_traceability():
+    payload = review_service._advisor_payload({
+        "summary": "synthesis",
+        "claims": [{"statement": "supported"}],
+        "evidence_excerpts": [{"excerpt": "x" * 50000}],
+        "evidence_assessments": [{"overall_score": 1}],
+        "papers_read": [{
+            "id": "source_1", "title": "Paper", "url": "https://example.test/paper",
+            "metadata": {"content": "x" * 50000},
+        }],
+    })
+
+    assert "evidence_excerpts" not in payload
+    assert "evidence_assessments" not in payload
+    assert payload["papers_read"] == [{
+        "id": "source_1", "title": "Paper", "url": "https://example.test/paper",
+    }]
+
+
+def test_result_analysis_rubric_accepts_verified_experiment_metrics(monkeypatch):
+    monkeypatch.setattr(settings, "review_default_approved_score", 0.8)
+    rubric = review_service._rubric_for_task("result_analysis")
+    scores = review_service._score_task(
+        {
+            "task_type": "result_analysis",
+            "outputs": [{
+                "reproducible_experiment": {
+                    "metrics": {"rows": [{"strategy": "overlap", "mrr": 1.0}]},
+                    "reproduction": {"passed": True},
+                },
+            }],
+        },
+        {"approved": True},
+        rubric,
+    )
+
+    assert scores["evidence"] == 1.0
+    assert sum(scores.values()) / len(scores) >= rubric["threshold"]
 
 
 @pytest.mark.asyncio

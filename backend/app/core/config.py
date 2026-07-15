@@ -75,6 +75,7 @@ class Settings(BaseSettings):
 
     # Runtime behavior
     run_cancel_check_enabled: bool = True
+    run_restart_recovery_limit: int = 3
     run_interaction_mode: str = "hitl"
     run_event_default_limit: int = 100
     run_event_max_limit: int = 500
@@ -92,6 +93,7 @@ class Settings(BaseSettings):
     run_artifact_dedupe_limit: int = 100
     evidence_provider_mode: str = "auto"
     evidence_remote_search_enabled: bool = True
+    evidence_search_timeout_seconds: int = 15
     web_search_enabled: bool = False
     web_search_provider_mode: str = "tavily"
     evidence_search_max_results: int = 5
@@ -133,7 +135,7 @@ class Settings(BaseSettings):
 
     # Full-text ingestion: read real papers, not just bibliographic metadata.
     fulltext_ingest_enabled: bool = False
-    fulltext_max_sources: int = 4
+    fulltext_max_sources: int = 5
     fulltext_max_chars: int = 12000
     fulltext_fetch_timeout: int = 30
 
@@ -253,6 +255,7 @@ class Settings(BaseSettings):
         role_map = {
             "advisor": self.advisor_model_name or self.llm_model_name,
             "advisor_decompose": self.advisor_model_name or self.llm_model_name,
+            "advisor_contract": self.advisor_model_name or self.llm_model_name,
             "advisor_review": self.advisor_model_name or self.llm_model_name,
             "advisor_report": self.advisor_model_name or self.llm_model_name,
             "independent_reviewer": self.independent_reviewer_model_name or self.graduate_model_name or self.llm_model_name,

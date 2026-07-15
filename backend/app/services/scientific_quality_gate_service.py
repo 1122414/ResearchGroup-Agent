@@ -40,6 +40,7 @@ class ScientificQualityGateService:
             "passed": bool(independent.get("approved")),
             "issues": independent.get("issues") or [],
             "reviewer": independent.get("reviewer"),
+            "simulation": bool(independent.get("simulation")),
         }
         passed = all(item["passed"] for item in layers.values())
         return {
@@ -92,8 +93,16 @@ class ScientificQualityGateService:
             name: {"passed": not layer_issues, "issues": layer_issues, "verifier": f"report_{name}_gate_v1"}
             for name, layer_issues in issues.items()
         }
+        passed = all(item["passed"] for item in layers.values())
+        simulated_reviews = any(
+            ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+            .get("independent_review", {}).get("simulation")
+            for task in tasks if task.get("status") == "completed"
+        )
         return {
-            "passed": all(item["passed"] for item in layers.values()),
+            "passed": passed,
+            "publication_ready": passed and not simulated_reviews,
+            "publication_blockers": ["mock_or_simulated_independent_review"] if passed and simulated_reviews else [],
             "layers": layers, "revision_plan": self._revision_plan(layers),
             "hard_gate_policy": "all_layers_required",
         }
@@ -121,6 +130,11 @@ class ScientificQualityGateService:
             else []
         )
         for index, claim in enumerate(claims_to_check):
+            provenance = claim.get("provenance") or {}
+            if task.get("task_type") == "result_analysis" and all(
+                provenance.get(key) for key in ("protocol_id", "raw_results", "raw_results_sha256")
+            ):
+                continue
             source_ids = set(claim.get("evidence_source_ids") or [])
             passage_ids = claim.get("evidence_passage_ids") or []
             if not source_ids or not passage_ids:
@@ -143,6 +157,8 @@ class ScientificQualityGateService:
     def _semantic_gate(task: dict, latest: dict) -> dict:
         issues = []
         claims = latest.get("claims") or []
+        if task.get("task_type") == "literature_survey" and not claims:
+            issues.append("literature_review_without_verified_claim")
         if task.get("task_type") == "literature_survey" and claims:
             audit = latest.get("entailment_audit") or {}
             if not audit.get("checked"):
@@ -151,10 +167,17 @@ class ScientificQualityGateService:
                 if claim.get("entailment_verdict") not in {"entailed", "partially_entailed"}:
                     issues.append(f"claim_{index}:entailment_not_verified")
                 statement = str(claim.get("statement") or "").lower()
-                high_risk = any(marker in statement for marker in ("导致", "证明", "显著")) or bool(
-                    re.search(r"\b(?:cause|causes|caused|prove|proves|proven|significant|significantly)\b", statement)
+                # A paper may report a statistically significant result from its
+                # own experiment. Require corroboration only when the wording
+                # makes a causal/proof claim that extrapolates beyond that source.
+                high_risk = any(marker in statement for marker in ("导致", "证明", "证实")) or bool(
+                    re.search(r"\b(?:cause|causes|caused|prove|proves|proven)\b", statement)
                 )
-                if high_risk and len(set(claim.get("evidence_source_ids") or [])) < 2:
+                attributed = any(marker in statement for marker in (
+                    "该研究", "该论文", "该文", "作者报告", "作者观察",
+                    "the study", "the paper", "the authors report", "the authors observe",
+                ))
+                if high_risk and not attributed and len(set(claim.get("evidence_source_ids") or [])) < 2:
                     issues.append(f"claim_{index}:high_risk_requires_two_sources")
         return {"passed": not issues, "issues": issues, "verifier": "semantic_gate_v1"}
 
@@ -180,7 +203,15 @@ class ScientificQualityGateService:
         for layer, result in layers.items():
             for issue in result.get("issues") or []:
                 reason = issue.get("reason") if isinstance(issue, dict) else str(issue)
-                required_change = issue.get("required_change") if isinstance(issue, dict) else "修复该层问题并重新运行验证"
+                if isinstance(issue, dict):
+                    required_change = issue.get("required_change")
+                elif "high_risk_requires_two_sources" in reason:
+                    required_change = (
+                        "该主张若只由一篇论文支持，必须明确写成‘该研究/该论文在其设置下报告……’；"
+                        "只有找到第二个独立来源及其 passage 时，才可保留无归因的跨来源因果表述。"
+                    )
+                else:
+                    required_change = "修复该层问题并重新运行验证"
                 plan.append({"layer": layer, "issue": reason, "required_change": required_change})
         return plan
 

@@ -57,7 +57,7 @@ class WebSearchTool:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=settings.llm_timeout) as response:
+            with urllib.request.urlopen(request, timeout=settings.evidence_search_timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             return [], exc.__class__.__name__

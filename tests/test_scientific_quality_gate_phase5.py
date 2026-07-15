@@ -3,6 +3,7 @@ import pytest
 from backend.app.core.config import settings
 from backend.app.services.scientific_quality_gate_service import scientific_quality_gate_service
 from backend.app.services.independent_reviewer_service import independent_reviewer_service
+from backend.app.services.review_service import review_service
 from backend.app.storage.repositories import (
     EvidenceRepository,
     ExperimentResultRepository,
@@ -60,6 +61,70 @@ async def test_high_risk_claim_requires_two_sources(monkeypatch):
     assert quality["layers"]["independent_review"]["reviewer"] == "not_called_after_hard_gate_failure"
 
 
+@pytest.mark.asyncio
+async def test_single_study_significant_result_does_not_require_two_sources(monkeypatch):
+    monkeypatch.setattr(settings, "mock_mode", True)
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: _evidence())
+    quality = await scientific_quality_gate_service.evaluate_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "literature_survey"},
+        {
+            "summary": "source-specific result", "entailment_audit": {"checked": True},
+            "claims": [{
+                "statement": "该研究报告结构感知切分使 MRR 从 0.36 显著提升到 0.59。",
+                "evidence_source_ids": ["source_1"], "evidence_passage_ids": ["passage_1"],
+                "entailment_verdict": "entailed",
+            }],
+        },
+    )
+    assert quality["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_attributed_single_study_causal_wording_does_not_loop(monkeypatch):
+    monkeypatch.setattr(settings, "mock_mode", True)
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: _evidence())
+    quality = await scientific_quality_gate_service.evaluate_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "literature_survey"},
+        {
+            "summary": "source-specific result", "entailment_audit": {"checked": True},
+            "claims": [{
+                "statement": "该论文在其测试设置下报告重叠切分会导致相邻块重复。",
+                "evidence_source_ids": ["source_1"], "evidence_passage_ids": ["passage_1"],
+                "entailment_verdict": "entailed",
+            }],
+        },
+    )
+    assert quality["passed"] is True
+
+
+def test_integrity_policy_scopes_single_source_claim_before_quality_gate():
+    from backend.app.services.research_integrity_service import research_integrity_service
+
+    claims = research_integrity_service._scope_single_source_claims(
+        [{
+                "statement": "重叠切分会导致相邻块重复。",
+                "evidence_source_ids": ["source_1"],
+                "evidence_passage_ids": ["passage_1"],
+                "relation": "supports",
+                "confidence": 0.8,
+        }]
+    )
+
+    assert claims[0]["statement"].startswith("该研究在其设置下报告：")
+
+
+@pytest.mark.asyncio
+async def test_literature_gate_rejects_zero_verified_claims(monkeypatch):
+    monkeypatch.setattr(settings, "mock_mode", True)
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: _evidence())
+    quality = await scientific_quality_gate_service.evaluate_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "literature_survey"},
+        {"summary": "only a narrative", "claims": [], "entailment_audit": {"checked": True}},
+    )
+    assert quality["passed"] is False
+    assert "literature_review_without_verified_claim" in quality["layers"]["semantic"]["issues"]
+
+
 def test_report_gate_rejects_task_without_independent_quality_record(monkeypatch):
     monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: _evidence())
     monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
@@ -96,3 +161,158 @@ async def test_independent_reviewer_failure_is_fail_closed(monkeypatch):
     )
     assert result["approved"] is False
     assert result["reviewer"] == "independent_reviewer_schema_guard"
+    assert result["issues"][0]["target"] == "review_transport"
+
+
+@pytest.mark.asyncio
+async def test_independent_reviewer_repairs_truncated_output_with_compact_protocol(monkeypatch):
+    calls = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return '{"approved":true,"issues":[],"summary":"unterminated'
+            return '{"approved":true,"issues":[],"summary":"evidence is consistent"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(settings, "llm_structured_repair_attempts", 1)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "literature_survey"},
+        {"claims": []}, {"excerpts": []},
+    )
+    assert result["approved"] is True
+    assert len(calls) == 2
+    assert "严格压缩" in calls[1]
+    assert "unterminated" not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_independent_reviewer_uses_binary_fallback_without_rerunning_task(monkeypatch):
+    calls = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            calls.append(prompt)
+            if len(calls) < 3:
+                return '{"approved":true'
+            return '{"approved":true,"summary":"reproduction is consistent"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(settings, "llm_structured_repair_attempts", 1)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "experiment_design"},
+        {"claims": [], "reproducible_experiment": {"publishable": True}}, {"excerpts": []},
+    )
+    assert result["approved"] is True
+    assert result["reviewer"] == "independent_reviewer_model_minimal"
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_independent_reviewer_uses_deliverable_scope_for_system_design(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"design is internally consistent"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_1", "run_id": "run_1", "task_type": "system_design", "description": "freeze parameters"},
+        {"claims": [], "summary": "parameters frozen", "findings": ["seed=42"]},
+        {"excerpts": []},
+    )
+    assert result["approved"] is True
+    assert '"deliverable"' in prompts[0]
+    assert "不得仅因没有 passage 或 experiment artifact 判为不通过" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_independent_reviewer_respects_frozen_evaluation_only_experiment(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"bounded pilot is adequately preregistered"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_exp", "run_id": "run_1", "task_type": "experiment_design"},
+        {"claims": [], "reproducible_experiment": {
+            "preregistration_path": "/tmp/preregistration.md",
+            "protocol": {"method_details": {
+                "evaluation_design": {"data_split": "no fitting; frozen evaluation-only benchmark"},
+                "scope": "controlled pilot only",
+            }},
+        }},
+        {"excerpts": []},
+    )
+    assert result["approved"] is True
+    assert "不得机械要求训练/测试划分" in prompts[0]
+    assert "不得仅因样本小而要求擅自扩大" in prompts[0]
+
+
+def test_independent_reviewer_normalizes_harmless_field_drift():
+    value = independent_reviewer_service._compact_review({
+        "approved": False,
+        "issues": {"severity": "high", "area": "statistics", "description": "CI is missing", "recommendation": "add CI"},
+        "conclusion": "revision required",
+    })
+    assert value == {
+        "approved": False,
+        "issues": [{
+            "severity": "major", "target": "statistics", "reason": "CI is missing",
+            "required_change": "add CI",
+        }],
+        "summary": "revision required",
+    }
+
+
+def test_literature_reviewer_must_not_invent_missing_source_statistics():
+    scope = independent_reviewer_service._literature_review_scope()
+    assert "不是复现被引论文" in scope
+    assert "不得要求作者替被引论文补做" in scope
+    assert "正确处理是把缺失项列为来源局限" in scope
+    assert "定性 passage 不机械要求效果量" in scope
+
+
+def test_review_transport_failure_stops_without_full_task_revision(monkeypatch):
+    monkeypatch.setattr(review_service, "_persist_review", lambda *_args: None)
+    gates = {
+        "passed": False,
+        "layers": {
+            "schema": {"passed": True, "issues": []},
+            "provenance": {"passed": True, "issues": []},
+            "semantic": {"passed": True, "issues": []},
+            "method": {"passed": True, "issues": []},
+            "independent_review": {
+                "passed": False,
+                "issues": [{"target": "review_transport", "reason": "invalid JSON"}],
+            },
+        },
+        "revision_plan": [],
+    }
+    review = review_service._review_quality_gate_failure(
+        {"id": "task_1", "task_type": "experiment_design"}, gates,
+    )
+    assert review["requires_revision"] is False
+    assert review["review_mode"] == "independent_review_transport_failure"

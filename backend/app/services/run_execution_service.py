@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -39,6 +40,49 @@ class RunExecutionService:
     def __init__(self) -> None:
         self._active_tasks: dict[str, asyncio.Task] = {}
 
+    def recover_interrupted_runs(self) -> list[str]:
+        """Resume persisted active runs after a backend process restart."""
+        active_statuses = {
+            RunStatus.queued.value, RunStatus.decomposing.value, RunStatus.scheduling.value,
+            RunStatus.executing.value, RunStatus.reviewing.value, RunStatus.reporting.value,
+        }
+        recovered: list[str] = []
+        for run in RunRepository.get_all():
+            shutdown_cancelled = run.get("status") == RunStatus.cancelled.value and not run.get("cancel_reason")
+            if (run.get("status") not in active_statuses and not shutdown_cancelled) or not self._has_owned_artifact(run):
+                continue
+            if len(recovered) >= max(1, settings.run_restart_recovery_limit):
+                break
+            run_id = run["id"]
+            for task in TaskRepository.get_all(run_id=run_id):
+                if task.get("status") not in {"running", "waiting_review"}:
+                    continue
+                status = "running" if task.get("outputs") else "pending"
+                TaskRepository.update_status(
+                    task["id"], status, blocked_reason="服务重启后从持久化检查点恢复",
+                )
+            RunRepository.update_status(
+                run_id, RunStatus.executing.value, current_step="服务重启后恢复执行",
+                completed_at=None, cancel_requested_at=None, cancel_reason=None,
+            )
+            run_event_service.emit(
+                run_id, "run.recovered", "recovery", "运行已从服务重启恢复",
+                "复用已持久化任务、审批、证据与检查点继续执行",
+            )
+            asyncio.create_task(self.execute(run_id))
+            recovered.append(run_id)
+        return recovered
+
+    @staticmethod
+    def _has_owned_artifact(run: dict) -> bool:
+        try:
+            path = Path(str(run.get("artifact_dir") or "")).resolve()
+            root = settings.artifacts_dir.resolve()
+            marker = path / ".run_id"
+            return path.is_relative_to(root) and marker.is_file() and marker.read_text(encoding="utf-8").strip() == run["id"]
+        except (OSError, KeyError):
+            return False
+
     async def execute(self, run_id: str) -> dict:
         self._register_active_task(run_id)
         logger.info("[RunExecution] execute started | run_id=%s", run_id)
@@ -54,6 +98,7 @@ class RunExecutionService:
                 tasks = await self._initialize_run(run)
             else:
                 self._ensure_scheduling(tasks, run_id)
+                self._archive_superseded_revisions(run_id)
 
             if self._has_pending_approval(run_id):
                 return self._pause_for_confirmation(run_id)
@@ -94,22 +139,34 @@ class RunExecutionService:
 
             loop_snapshot = research_loop_service.snapshot(run_id)
             if loop_snapshot["terminal_state"] in {"human_required", "incomplete"}:
-                approval_service.ensure_pending(
+                if not self._approved(run_id, "research_loop_intervention"):
+                    approval_service.ensure_pending(
+                        run_id,
+                        "research_loop_intervention",
+                        "研究闭环尚未达到论文质量线",
+                        loop_snapshot["stop_reason"],
+                        payload={
+                            "terminal_state": loop_snapshot["terminal_state"],
+                            "required_actions": loop_snapshot["human_requirements"],
+                            "research_state": loop_snapshot["state"],
+                        },
+                    )
+                    run_event_service.emit(
+                        run_id, "research_loop.intervention_required", "research_loop", "需要人工补充研究条件",
+                        loop_snapshot["stop_reason"], payload={"terminal_state": loop_snapshot["terminal_state"]},
+                    )
+                    return self._pause_for_confirmation(run_id)
+                run_event_service.emit(
                     run_id,
-                    "research_loop_intervention",
-                    "研究闭环尚未达到论文质量线",
+                    "research_loop.intervention_accepted",
+                    "research_loop",
+                    "已接受研究边界并继续成文",
                     loop_snapshot["stop_reason"],
                     payload={
                         "terminal_state": loop_snapshot["terminal_state"],
-                        "required_actions": loop_snapshot["human_requirements"],
                         "research_state": loop_snapshot["state"],
                     },
                 )
-                run_event_service.emit(
-                    run_id, "research_loop.intervention_required", "research_loop", "需要人工补充研究条件",
-                    loop_snapshot["stop_reason"], payload={"terminal_state": loop_snapshot["terminal_state"]},
-                )
-                return self._pause_for_confirmation(run_id)
 
             # If every research task failed there is nothing to write a report
             # from. Finalize the run as failed instead of producing an empty
@@ -169,7 +226,20 @@ class RunExecutionService:
             self._reset_agents(run_id)
             run_event_service.emit(run_id, "run.completed", "run", "运行完成", "全部任务已归档，Agent 已回到空闲状态")
             return self.get_summary(run_id)
-        except (RunCancelled, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            current = RunRepository.get_by_id(run_id) or {}
+            if current.get("status") in {RunStatus.cancelling.value, RunStatus.cancelled.value}:
+                return self._cancel_now(run_id)
+            RunRepository.update_status(
+                run_id, RunStatus.reviewing.value,
+                current_step="服务关闭，等待重启后从检查点恢复", completed_at=None,
+            )
+            run_event_service.emit(
+                run_id, "run.interrupted", "recovery", "服务关闭，运行已持久化",
+                "下次启动将复用现有任务、证据和审批继续执行",
+            )
+            return self.get_summary(run_id)
+        except RunCancelled:
             return self._cancel_now(run_id)
         except Exception as exc:
             RunRepository.update_status(run_id, RunStatus.failed.value, current_step=f"执行失败: {exc}", completed_at=datetime.now().isoformat())
@@ -288,6 +358,25 @@ class RunExecutionService:
                 return False
         return True
 
+    @staticmethod
+    def _archive_superseded_revisions(run_id: str) -> None:
+        tasks = TaskRepository.get_all(run_id=run_id)
+        completed_roots = {
+            task.get("revision_of_task_id")
+            for task in tasks
+            if task.get("revision_of_task_id") and task.get("status") == "completed"
+        }
+        for task in tasks:
+            if (
+                task.get("revision_of_task_id") in completed_roots
+                and task.get("status") == "need_revision"
+            ):
+                TaskRepository.update_status(
+                    task["id"],
+                    "archived",
+                    blocked_reason="已被同一返工链中通过审核的新版本取代。",
+                )
+
     async def _execute_research_flow(self, run_id: str) -> None:
         while True:
             tasks = TaskRepository.get_all(run_id=run_id)
@@ -369,8 +458,21 @@ class RunExecutionService:
                         blocked_reason=terminal_feedback,
                         review_feedback=terminal_feedback,
                     )
+            self._fail_dependency_descendants(run_id, root_id, terminal_feedback)
             changed = True
         return changed
+
+    @staticmethod
+    def _fail_dependency_descendants(run_id: str, root_task_id: str, reason: str) -> None:
+        for task_id in task_graph_service.descendants(run_id, root_task_id):
+            task = TaskRepository.get_by_id(task_id)
+            if task and task.get("status") not in {"completed", "failed", "archived"}:
+                TaskRepository.update_status(
+                    task_id,
+                    "failed",
+                    blocked_reason=f"前置任务失败，无法继续：{reason}",
+                    review_feedback=f"前置任务失败，无法继续：{reason}",
+                )
 
     async def _execute_writing_flow(self, run_id: str) -> None:
         tasks = TaskRepository.get_all(run_id=run_id)
@@ -468,7 +570,7 @@ class RunExecutionService:
                         payload={"skill_ids": [skill["id"] for skill in created_skills]},
                     )
                 if review.get("requires_revision"):
-                    revision_task = task_recovery_service.create_revision_task(latest_after_review, review.get("feedback", ""))
+                    revision_task = task_recovery_service.create_revision_task(latest_after_review, review)
                     if not revision_task:
                         terminal_feedback = (
                             f"已达到最大返工轮次 {settings.task_max_revision_rounds}，"
@@ -480,6 +582,8 @@ class RunExecutionService:
                             blocked_reason=terminal_feedback,
                             review_feedback=terminal_feedback,
                         )
+                        root_task_id = latest_after_review.get("revision_of_task_id") or latest_after_review["id"]
+                        self._fail_dependency_descendants(run_id, root_task_id, terminal_feedback)
                         run_event_service.emit(
                             run_id,
                             "revision.exhausted",
