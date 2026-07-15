@@ -45,15 +45,15 @@ class TaskDecomposer:
 4. 每个任务必须给出 subquestion_id、hypothesis_id、milestone_key，且只能引用 Contract 中已有对象。
 5. 若课题是本系统已支持的 RAG/检索切分受控实验，检索器固定为 Python 标准库实现的
    deterministic_lexical_overlap；不得改成 BM25/rank_bm25、embedding 或其他外部检索器。
-6. 只返回合法 JSON 数组，不要输出解释性文字。
+6. 只返回形如 {{"tasks": [...]}} 的合法 JSON 对象，不要输出解释性文字。
 7. resource_plan 或 ethics_plan 未放行的步骤不得写成已经可自动执行；应保留为范围外条件或人工资源要求。
 """
 
         llm = create_llm_provider()
         logger.info("[TaskDecomposer] calling LLM | run_id=%s | role=advisor_decompose", run_id)
         task_schema = {
-            "type": "array",
-            "items": {
+            "type": "object",
+            "properties": {"tasks": {"type": "array", "items": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
@@ -78,7 +78,8 @@ class TaskDecomposer:
                     "title", "description", "task_type", "priority", "complexity", "decomposability",
                     "required_skills", "subquestion_id", "hypothesis_id", "milestone_key",
                 ],
-            },
+            }}},
+            "required": ["tasks"],
         }
         raw_response = await llm.generate(
             prompt=f"{system_prompt}\n\n---\n\n{user_prompt}",
@@ -92,7 +93,7 @@ class TaskDecomposer:
             raw_response = await llm.generate(
                 prompt=(
                     f"{system_prompt}\n\n---\n\n{user_prompt}\n\n"
-                    "上次任务数组结构非法或为空。只修复 JSON 结构，不新增研究目标之外的内容：\n"
+                    "上次 tasks 数组结构非法或为空。只修复 JSON 结构，不新增研究目标之外的内容：\n"
                     f"{raw_response[:4000]}"
                 ),
                 schema=task_schema,
@@ -221,7 +222,10 @@ class TaskDecomposer:
             text = text[:-3]
         try:
             parsed = json.loads(text.strip())
-            return parsed if isinstance(parsed, list) else []
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+            tasks = parsed.get("tasks") if isinstance(parsed, dict) else None
+            return [item for item in tasks if isinstance(item, dict)] if isinstance(tasks, list) else []
         except json.JSONDecodeError:
             return []
 

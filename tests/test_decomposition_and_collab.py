@@ -26,6 +26,14 @@ def test_detect_mode():
     assert task_decomposer.detect_mode("提出一种更快的检索方法并验证") == "paper"
 
 
+def test_task_parser_accepts_provider_json_object_wrapper_and_legacy_array():
+    task = {"title": "真实任务", "task_type": "literature_survey"}
+
+    assert task_decomposer._parse_response(json.dumps({"tasks": [task]})) == [task]
+    assert task_decomposer._parse_response(json.dumps([task])) == [task]
+    assert task_decomposer._parse_response(json.dumps({"items": [task]})) == []
+
+
 def test_inverted_design_and_execution_roles_are_normalized():
     tasks = [
         {
