@@ -168,6 +168,37 @@ def test_data_acquisition_scope_cannot_claim_llm_generated_derivatives():
     assert "后续可执行实验或分析任务" in result[0]["description"]
 
 
+def test_revision_preserves_valid_work_package_fields(monkeypatch):
+    task = {
+        "id": "revision_2", "run_id": "run_1", "revision_of_task_id": "root",
+        "created_at": "2026-01-03",
+    }
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [
+        {
+            "id": "root", "run_id": "run_1", "created_at": "2026-01-01",
+            "outputs": [{"method_package": {
+                "quality_controls": ["hash audit", "independent review"],
+                "deviation_policy": "record all deviations",
+            }}],
+        },
+        {
+            "id": "revision_1", "revision_of_task_id": "root", "created_at": "2026-01-02",
+            "outputs": [{"method_package": {
+                "quality_controls": ["hash audit", "independent review", "reproduction"],
+                "stopping_rule": "frozen sample exhausted",
+            }}],
+        },
+    ])
+
+    merged = task_executor._preserve_revision_work_packages(
+        task, {"method_package": {"quality_controls": [], "analysis_plan": "paired bootstrap"}},
+    )
+    package = merged["method_package"]
+    assert package["quality_controls"] == ["hash audit", "independent review", "reproduction"]
+    assert package["stopping_rule"] == "frozen sample exhausted"
+    assert package["analysis_plan"] == "paired bootstrap"
+
+
 @pytest.mark.asyncio
 async def test_survey_decomposition_drops_experiments_and_seeds_hypothesis():
     run_id = f"run_dec_{uuid.uuid4().hex[:6]}"

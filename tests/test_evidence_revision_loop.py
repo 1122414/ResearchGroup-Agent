@@ -2,9 +2,10 @@ import pytest
 
 from backend.app.core.config import settings
 from backend.app.services.browser_research_service import BrowserResearchService, BrowserVerificationResult
+from backend.app.services.evidence_pipeline_service import EvidencePipelineService
 from backend.app.services.research_integrity_service import research_integrity_service
 from backend.app.services.task_recovery_service import task_recovery_service
-from backend.app.storage.repositories import TaskRepository
+from backend.app.storage.repositories import EvidenceRepository, TaskRepository
 
 
 @pytest.mark.asyncio
@@ -53,6 +54,30 @@ async def test_browser_verification_keeps_trusted_metadata_when_verdicts_are_mis
         source["metadata"]["browser_verification"]["fallback"] == "trusted_scholarly_metadata"
         for source in verified[1:]
     )
+
+
+def test_literature_revision_reuses_frozen_fulltext_pool(monkeypatch):
+    service = EvidencePipelineService()
+    sources = [{"id": "source_1"}, {"id": "source_2"}]
+    excerpts = [
+        {"id": "passage_1", "source_id": "source_1", "excerpt": "a"},
+        {"id": "passage_2", "source_id": "source_2", "excerpt": "b"},
+    ]
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)
+    monkeypatch.setattr(service, "_cumulative_grounded_evidence", lambda *_args: (sources, excerpts))
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {
+        "assessments": [{"source_id": "source_1"}, {"source_id": "source_2"}],
+    })
+
+    bundle = service._frozen_revision_bundle({
+        "id": "revision", "run_id": "run_1", "revision_of_task_id": "root",
+    }, "query")
+
+    assert bundle["mode"] == "frozen_revision_evidence"
+    assert bundle["sources"] == sources
+    assert bundle["excerpts"] == excerpts
+    assert bundle["search_metrics"]["reused_frozen_pool"] is True
+    assert bundle["search_attempts"] == []
 
 
 def test_revision_task_does_not_reuse_itself_as_next_revision(monkeypatch):

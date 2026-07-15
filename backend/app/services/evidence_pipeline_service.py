@@ -35,6 +35,14 @@ _STOPWORDS = {
 class EvidencePipelineService:
     async def collect_for_task(self, task: dict) -> dict:
         query = self._query_for_task(task)
+        frozen = self._frozen_revision_bundle(task, query)
+        if frozen:
+            run_event_service.emit(
+                task.get("run_id"), "evidence.reused", "evidence", "返工复用冻结证据池",
+                f"复用 {len(frozen['sources'])} 个全文来源，不重复检索与网页核验。",
+                task_id=task.get("id"),
+            )
+            return frozen
         root_task = self._root_task(task)
         feedback = self._revision_feedback(task)
         if settings.research_agent_loop_enabled:
@@ -112,6 +120,40 @@ class EvidencePipelineService:
             "search_protocol_id": protocol_id,
             "search_metrics": search_metrics,
             **persisted,
+        }
+
+    def _frozen_revision_bundle(self, task: dict, query: str) -> dict | None:
+        if not task.get("revision_of_task_id") or not task.get("run_id"):
+            return None
+        sources, excerpts = self._cumulative_grounded_evidence(task.get("run_id"), [])
+        if len(sources) < max(int(settings.literature_min_grounded_sources), 1) or not excerpts:
+            return None
+        source_ids = {source["id"] for source in sources}
+        evidence = EvidenceRepository.get_by_run(task["run_id"])
+        assessments = [
+            item for item in evidence.get("assessments") or []
+            if item.get("source_id") in source_ids
+        ]
+        return {
+            "mode": "frozen_revision_evidence",
+            "query": query,
+            "queries": [query] if query else [],
+            "search_attempts": [],
+            "fulltext_ingested": 0,
+            "search_protocol_id": None,
+            "search_metrics": {
+                "candidate_count": 0,
+                "deduplicated_count": len(sources),
+                "included_count": len(sources),
+                "duplicate_rate": 0.0,
+                "fulltext_acquisition_rate": 1.0,
+                "passage_count": len(excerpts),
+                "cumulative_grounded_source_count": len(sources),
+                "reused_frozen_pool": True,
+            },
+            "sources": sources,
+            "excerpts": excerpts,
+            "assessments": assessments,
         }
 
     @staticmethod

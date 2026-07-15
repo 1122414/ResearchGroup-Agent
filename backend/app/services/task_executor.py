@@ -156,6 +156,7 @@ class TaskExecutor:
         except Exception:
             agent_skill_service.record_usage(active_skills, success=False)
             raise
+        result = self._preserve_revision_work_packages(task, result)
         if task_type == "literature_survey" and evidence_bundle is not None:
             result = research_integrity_service.apply_literature_policy(
                 result,
@@ -301,6 +302,38 @@ class TaskExecutor:
             "hypotheses": [],
             "material_manifest": material_manifest,
         }
+
+    @staticmethod
+    def _preserve_revision_work_packages(task: dict, result: dict) -> dict:
+        """Fill fields a revision accidentally dropped without overriding its edits."""
+        root_id = task.get("revision_of_task_id")
+        if not root_id:
+            return result
+        current_created = str(task.get("created_at") or "")
+        family = [
+            item for item in TaskRepository.get_all(run_id=task.get("run_id"))
+            if (item.get("id") == root_id or item.get("revision_of_task_id") == root_id)
+            and item.get("id") != task.get("id")
+            and str(item.get("created_at") or "") < current_created
+            and item.get("outputs")
+        ]
+        if not family:
+            return result
+        previous = max(family, key=lambda item: str(item.get("created_at") or ""))["outputs"][-1]
+
+        def fill_missing(old, new):
+            if isinstance(old, dict) and isinstance(new, dict):
+                merged = dict(new)
+                for key, value in old.items():
+                    merged[key] = fill_missing(value, merged.get(key))
+                return merged
+            return old if new in (None, "", [], {}) else new
+
+        merged = dict(result)
+        for key in ("method_package", "material_manifest", "analysis_artifact", "chapter"):
+            if isinstance(previous, dict) and previous.get(key):
+                merged[key] = fill_missing(previous[key], merged.get(key))
+        return merged
 
     def _collaboration_context(self, task: dict, collaborator_results: list[dict] | None = None) -> str:
         """Surface SubAgent/collaborator results so the owner integrates them.
