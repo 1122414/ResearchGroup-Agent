@@ -21,6 +21,8 @@ class TaskStatus(str, Enum):
 
 class TaskType(str, Enum):
     literature_survey = "literature_survey"
+    research_design = "research_design"
+    data_acquisition = "data_acquisition"
     system_design = "system_design"
     experiment_design = "experiment_design"
     result_analysis = "result_analysis"

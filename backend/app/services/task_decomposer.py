@@ -35,7 +35,9 @@ class TaskDecomposer:
 
 要求：
 1. 每个任务必须包含 title、description、task_type、priority、complexity、decomposability、required_skills。
-2. task_type 目前只能是 literature_survey、system_design、experiment_design、result_analysis、report_writing。
+2. task_type 只能是 literature_survey、research_design、data_acquisition、system_design、experiment_design、result_analysis、report_writing。
+   - research_design：冻结学科适配的方法、抽样/语料、材料协议、分析计划、质量控制与偏离处理。
+   - data_acquisition：只登记真实上传或外部执行返回的材料、来源、授权与哈希，不得由语言模型生成原始数据。
    - system_design 表示通用研究设计：应按 methodology_profile 冻结抽样、语料、测量、解释框架、证明路线或实验方案，不能默认是软件系统设计。
    - experiment_design 仅用于系统能够真实执行并产生 artifact 的计算/定量实验。不得把访谈、田野、湿实验、临床、人文解释或理论证明伪装成自动计算实验。
    - result_analysis 必须采用 methodology_profile.analysis_methods 与 quality_criteria，而不是一律输出数值指标。
@@ -59,7 +61,8 @@ class TaskDecomposer:
                     "task_type": {
                         "type": "string",
                         "enum": [
-                            "literature_survey", "system_design", "experiment_design",
+                            "literature_survey", "research_design", "data_acquisition",
+                            "system_design", "experiment_design",
                             "result_analysis", "report_writing",
                         ],
                     },
@@ -103,6 +106,7 @@ class TaskDecomposer:
         hypotheses = (contract or {}).get("hypotheses") or []
         mode = self.detect_mode(research_goal, brief or None)
         if mode == "survey":
+            tasks_data = self._respect_methodology_capability(tasks_data, brief)
             # Surveys/investigations should not fabricate experiments; drop experiment tasks.
             filtered = [item for item in tasks_data if item.get("task_type") != "experiment_design"]
             if filtered:
@@ -318,13 +322,28 @@ class TaskDecomposer:
 
     @staticmethod
     def _respect_methodology_capability(tasks: list[dict], brief: dict) -> list[dict]:
-        """Do not turn non-computational scholarship into a fabricated executable experiment."""
+        """Translate computer-centric task labels into method-neutral work packages."""
         family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
         executable_families = {"computational", "quantitative", "design_science"}
         if family in executable_families:
             return tasks
-        filtered = [item for item in tasks if item.get("task_type") != "experiment_design"]
-        return filtered or tasks
+        profile = brief.get("methodology_profile") or {}
+        for item in tasks:
+            if item.get("task_type") == "system_design":
+                item["task_type"] = "research_design"
+                item["title"] = "冻结跨学科研究设计"
+                item["description"] = (
+                    f"按 {family} / {profile.get('epistemic_mode', '')} 方法冻结研究设计、抽样或语料、"
+                    "材料协议、分析计划、至少两项质量控制、停止规则和偏离处理；不得声称已取得材料。"
+                )
+            elif item.get("task_type") == "experiment_design":
+                item["task_type"] = "data_acquisition"
+                item["title"] = "获取并冻结真实研究材料"
+                item["description"] = (
+                    "仅接收用户上传或经审计外部执行返回的真实材料，生成逐文件来源、授权、SHA-256、"
+                    "收集日志与完整性清单；缺失材料时必须失败，不得由 LLM 补造。"
+                )
+        return tasks
 
     @staticmethod
     def _known_or_default(value, allowed: set[str]) -> str | None:
@@ -344,6 +363,8 @@ class TaskDecomposer:
     def _default_milestone(task_type: str) -> str:
         return {
             "literature_survey": "evidence_sufficient",
+            "research_design": "methodology_frozen",
+            "data_acquisition": "resources_ready",
             "system_design": "framing_frozen",
             "experiment_design": "experiment_protocol_frozen",
             "result_analysis": "replication_passed",

@@ -145,7 +145,7 @@ def test_feasibility_profile_round_trips_and_prevents_freezing_blocked_contract(
         research_contract_service.freeze(run_id)
 
 
-def test_noncomputational_method_drops_fabricated_automatic_experiment_task():
+def test_noncomputational_method_replaces_fabricated_experiment_with_real_material_acquisition():
     tasks = [
         {"task_type": "literature_survey"},
         {"task_type": "experiment_design"},
@@ -156,7 +156,7 @@ def test_noncomputational_method_drops_fabricated_automatic_experiment_task():
         tasks, {"methodology_family": "humanities"}
     )
     assert {item["task_type"] for item in filtered} == {
-        "literature_survey", "result_analysis", "report_writing",
+        "literature_survey", "data_acquisition", "result_analysis", "report_writing",
     }
 
 

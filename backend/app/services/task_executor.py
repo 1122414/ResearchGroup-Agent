@@ -23,6 +23,8 @@ from .experiment_protocol_service import experiment_protocol_service
 from .knowledge_graph_service import knowledge_graph_service
 from .literature_source_service import literature_source_service
 from .research_integrity_service import research_integrity_service
+from .research_material_service import research_material_service
+from .research_method_registry_service import research_method_registry_service
 from .reproducible_experiment_service import reproducible_experiment_service
 from .run_event_service import run_event_service
 
@@ -70,6 +72,13 @@ class TaskExecutor:
         active_skills = agent_skill_service.active_for_task(owner_id, task)
         skill_prompt = agent_skill_service.render_for_prompt(active_skills)
         contract_context = self._research_contract_context(task)
+        brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+        method_requirement = research_method_registry_service.requirements_for(brief).get(task_type, {})
+        method_work_package = (
+            "【方法专用工作包（字段缺失将被硬门拒绝）】\n"
+            + json.dumps(method_requirement, ensure_ascii=False, indent=2)
+            if method_requirement else ""
+        )
         upstream_context = self._upstream_context(task)
         experiment_protocol = (
             experiment_protocol_service.ensure_for_task(task)
@@ -109,6 +118,7 @@ class TaskExecutor:
 {skill_prompt}
 {collaboration_context}
 {contract_context}
+{method_work_package}
 {upstream_context}
 {protocol_context}
 {literature_grounding}
@@ -122,6 +132,7 @@ class TaskExecutor:
 5. 给出 hypotheses（可选）：数组，每个元素 {{"statement": 可检验的假设, "rationale": 依据}}。
 6. 给出 uncertainties（可选）：数组，每个元素 {{"description": 仍未解决的问题, "severity": "low"|"medium"|"high"}}。
 7. 不要输出 Markdown，只返回 JSON。
+8. 若存在“方法专用工作包”，必须按 required_object 输出对应对象和全部字段；不得用 summary 代替。
 """
 
         llm = create_llm_provider()
@@ -167,6 +178,16 @@ class TaskExecutor:
             result["reproducible_experiment"] = executed
             if task_type == "result_analysis":
                 result["claims"] = executed.get("claims") or experiment.get("claims") or []
+        if task_type == "data_acquisition":
+            material_manifest = research_material_service.ingest_for_task(task)
+            result["material_manifest"] = material_manifest
+            if material_manifest.get("completeness") != "complete":
+                result.setdefault("uncertainties", []).append({
+                    "description": "真实研究材料清单不完整：" + "、".join(
+                        material_manifest.get("missing_conditions") or []
+                    ),
+                    "severity": "high",
+                })
         if task_type == "experiment_design":
             experiment_result = await reproducible_experiment_service.run_for_task(task, owner_id)
             result = self._ground_experiment_output(experiment_result)
@@ -315,8 +336,11 @@ class TaskExecutor:
         run_id = task.get("run_id")
         task_type = task.get("task_type")
         wanted = {
-            "result_analysis": {"experiment_design"},
-            "report_writing": {"literature_survey", "system_design", "experiment_design", "result_analysis"},
+            "result_analysis": {"research_design", "data_acquisition", "experiment_design"},
+            "report_writing": {
+                "literature_survey", "research_design", "data_acquisition",
+                "system_design", "experiment_design", "result_analysis",
+            },
         }.get(task_type)
         if not run_id or not wanted:
             return ""
@@ -329,7 +353,8 @@ class TaskExecutor:
         if not selected:
             return ""
         instruction = (
-            "必须直接使用下列已审核实验数值完成效应量、区间与成功标准判断；不得声称缺少实验数据。"
+            "必须按冻结的方法画像分析下列已审核材料或实验，不得把质性、人文、理论或综述材料伪装成数值实验；"
+            "有已审核实验数值时不得声称缺少实验数据。"
             if task_type == "result_analysis"
             else "必须综合下列已审核产出撰写论文，不得重新猜测数值、来源或适用范围。"
         )
@@ -393,6 +418,7 @@ class TaskExecutor:
             for key in (
                 "summary", "findings", "deliverables", "claims", "risks", "next_steps",
                 "uncertainties", "references_used", "academic_integrity", "experiment_protocol",
+                "method_package", "material_manifest", "analysis_artifact",
             )
             if value.get(key) is not None
         }

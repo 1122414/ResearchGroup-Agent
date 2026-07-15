@@ -14,19 +14,23 @@ class TaskGraphService:
             by_type[task.get("task_type", "")].append(task)
 
         literature = [task["id"] for task in by_type.get("literature_survey", [])]
+        design = [task["id"] for task in by_type.get("research_design", [])]
         system = [task["id"] for task in by_type.get("system_design", [])]
+        acquisition = [task["id"] for task in by_type.get("data_acquisition", [])]
         experiments = [task["id"] for task in by_type.get("experiment_design", [])]
         analysis = [task["id"] for task in by_type.get("result_analysis", [])]
 
         for task in tasks:
             deps: list[str] = []
             task_type = task.get("task_type")
-            if task_type == "system_design":
+            if task_type in {"system_design", "research_design"}:
                 deps = literature
+            elif task_type == "data_acquisition":
+                deps = literature + design + system
             elif task_type == "experiment_design":
-                deps = literature + system
+                deps = literature + design + system
             elif task_type == "result_analysis":
-                deps = experiments or system or literature
+                deps = acquisition or experiments or design or system or literature
             elif task_type == "report_writing":
                 deps = [item["id"] for item in tasks if item["id"] != task["id"] and item.get("task_type") != "report_writing"]
             TaskDependencyRepository.replace_for_task(task["id"], list(dict.fromkeys(deps)))

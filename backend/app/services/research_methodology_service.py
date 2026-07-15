@@ -53,6 +53,14 @@ class ResearchMethodologyService:
                 errors.append(f"resource_plan[{index}].status 不合法")
             if not isinstance(resource.get("required"), bool):
                 errors.append(f"resource_plan[{index}].required 必须是布尔值")
+            if not str(resource.get("owner") or "").strip():
+                errors.append(f"resource_plan[{index}].owner 不能为空")
+            if resource.get("status") == "available" and not str(resource.get("evidence") or "").strip():
+                errors.append(f"resource_plan[{index}].evidence 在 available 时不能为空")
+            if resource.get("status") in {"missing", "requires_human", "pending_verification"} and not str(
+                resource.get("resolution") or ""
+            ).strip():
+                errors.append(f"resource_plan[{index}].resolution 在未就绪时不能为空")
 
         if not isinstance(ethics.get("required"), bool):
             errors.append("ethics_plan.required 必须是布尔值")
@@ -60,6 +68,8 @@ class ResearchMethodologyService:
             errors.append("ethics_plan.status 不合法")
         if ethics.get("required") and ethics.get("status") == "not_required":
             errors.append("需要伦理审查时 ethics_plan.status 不能为 not_required")
+        if ethics.get("status") == "approved" and not str(ethics.get("approval_reference") or "").strip():
+            errors.append("ethics_plan.status=approved 时 approval_reference 不能为空")
         if not ethics.get("required") and ethics.get("status") not in {"not_required", "approved"}:
             errors.append("无需伦理审查时 ethics_plan.status 应为 not_required 或 approved")
 
@@ -67,6 +77,10 @@ class ResearchMethodologyService:
             errors.append("thesis_requirements.degree_level 必须为 master/硕士")
         if thesis.get("status") not in self.THESIS_STATUSES:
             errors.append("thesis_requirements.status 不合法")
+        if thesis.get("status") == "confirmed" and not all(
+            str(thesis.get(field) or "").strip() for field in ("institution", "programme")
+        ):
+            errors.append("论文规范 confirmed 时 institution 与 programme 不能为空")
         for field in ("language", "citation_style"):
             if not str(thesis.get(field) or "").strip():
                 errors.append(f"thesis_requirements.{field} 不能为空")

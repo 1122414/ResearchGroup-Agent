@@ -222,7 +222,29 @@ class MockLLMProvider(LLMProvider):
         )
 
     def _mock_graduate_result(self, prompt: str) -> str:
-        if "system_design" in prompt or "系统设计" in prompt:
+        if "research_design" in prompt or "研究设计" in prompt:
+            family = next((item for item in (
+                "quantitative", "qualitative", "computational", "experimental", "systematic_review",
+                "humanities", "theoretical", "design_science", "mixed_methods",
+            ) if f'"family": "{item}"' in prompt), "computational")
+            result = {
+                "summary": "已按冻结方法画像形成研究设计工作包。",
+                "method_package": {
+                    "family": family, "study_design": "按 Research Contract 冻结的研究设计",
+                    "sampling_or_corpus_plan": "以契约声明的分析单位、纳排边界和资源清单为准",
+                    "data_or_material_protocol": "只接收带来源、授权与完整性哈希的真实材料",
+                    "analysis_plan": "使用 methodology_profile.analysis_methods 并执行方法专用检查",
+                    "quality_controls": ["证据可追溯", "负例、反例或稳健性检查"],
+                    "stopping_rule": "达到预注册充分性标准或资源/伦理门阻断",
+                    "deviation_policy": "所有偏离均记录、说明影响并重新审核",
+                },
+            }
+        elif "data_acquisition" in prompt or "材料与数据获取" in prompt:
+            result = {
+                "summary": "材料清单由系统从用户上传原文件生成；Mock 文本不作为原始研究材料。",
+                "claims": [],
+            }
+        elif "system_design" in prompt or "系统设计" in prompt:
             result = {
                 "summary": "建议以 Run 事件流作为系统可观测性的核心，把拆解、调度、执行、SubAgent、审核和报告生成都写入结构化事件。",
                 "deliverables": ["运行状态机", "事件日志表", "成本记录表", "前端运行详情页"],

@@ -291,6 +291,8 @@ class ReviewService:
     def _rubric_for_task(self, task_type: str) -> dict:
         dimensions = {
             "literature_survey": {"coverage": 0.25, "traceability": 0.35, "method_mapping": 0.25, "clarity": 0.15},
+            "research_design": {"method_fit": 0.3, "sampling_or_corpus": 0.2, "quality_control": 0.3, "feasibility": 0.2},
+            "data_acquisition": {"provenance": 0.35, "integrity": 0.3, "authorization": 0.2, "completeness": 0.15},
             "system_design": {"feasibility": 0.35, "interfaces": 0.25, "risk_control": 0.2, "clarity": 0.2},
             "experiment_design": {"reproducibility": 0.35, "baseline": 0.2, "metrics": 0.25, "safety": 0.2},
             "result_analysis": {"completeness": 0.3, "interpretation": 0.3, "evidence": 0.2, "clarity": 0.2},
@@ -316,13 +318,31 @@ class ReviewService:
             elif dimension == "metrics":
                 stats = latest.get("reproducible_experiment", {}).get("metrics", {}).get("statistical_analysis", {})
                 score = 1.0 if stats.get("passed") else settings.review_missing_score
+            elif dimension in {"method_fit", "sampling_or_corpus", "quality_control"}:
+                package = latest.get("method_package") or {}
+                required = {
+                    "method_fit": "family", "sampling_or_corpus": "sampling_or_corpus_plan",
+                    "quality_control": "quality_controls",
+                }[dimension]
+                score = 1.0 if package.get(required) else settings.review_missing_score
+            elif dimension in {"provenance", "integrity", "authorization", "completeness"}:
+                manifest = latest.get("material_manifest") or {}
+                records = manifest.get("source_records") or []
+                checks = {
+                    "provenance": bool(records) and all(item.get("provenance") for item in records),
+                    "integrity": bool(records) and all(item.get("sha256") for item in records),
+                    "authorization": bool(records) and all(item.get("authorization_evidence") for item in records),
+                    "completeness": manifest.get("completeness") == "complete",
+                }
+                score = 1.0 if checks[dimension] else settings.review_missing_score
             elif dimension == "evidence":
                 if task.get("task_type") == "report_writing":
                     score = settings.review_report_evidence_score if latest else settings.review_default_rejected_score
                 elif task.get("task_type") == "result_analysis":
                     experiment_metrics = latest.get("reproducible_experiment", {}).get("metrics", {})
                     score = 1.0 if (
-                        latest.get("key_metrics") or latest.get("metrics") or experiment_metrics.get("rows")
+                        latest.get("analysis_artifact") or latest.get("key_metrics")
+                        or latest.get("metrics") or experiment_metrics.get("rows")
                     ) else settings.review_default_rejected_score
                 else:
                     score = 1.0 if latest.get("papers_read") or latest.get("reproducible_experiment") else settings.review_default_rejected_score

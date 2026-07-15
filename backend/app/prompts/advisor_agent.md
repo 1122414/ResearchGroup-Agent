@@ -38,7 +38,7 @@
   {
     "title": "任务标题",
     "description": "详细任务描述",
-    "task_type": "literature_survey|system_design|experiment_design|result_analysis|report_writing",
+    "task_type": "literature_survey|research_design|data_acquisition|system_design|experiment_design|result_analysis|report_writing",
     "priority": 1-10,
     "complexity": 1-10,
     "decomposability": 1-10,

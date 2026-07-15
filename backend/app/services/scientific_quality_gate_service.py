@@ -15,6 +15,7 @@ from ..storage.repositories import (
 from .artifact_manifest_service import artifact_manifest_service
 from .independent_reviewer_service import independent_reviewer_service
 from .research_methodology_service import research_methodology_service
+from .research_method_registry_service import research_method_registry_service
 from .run_artifact_service import run_artifact_service
 
 
@@ -157,6 +158,8 @@ class ScientificQualityGateService:
 
         if task.get("task_type") == "experiment_design":
             issues.extend(self._artifact_issues(task, latest))
+        if task.get("task_type") == "data_acquisition":
+            issues.extend(self._material_artifact_issues(task, latest))
         return {"passed": not issues, "issues": issues, "verifier": "provenance_gate_v1"}
 
     @staticmethod
@@ -201,6 +204,8 @@ class ScientificQualityGateService:
                 issues.append("statistical_requirements_failed")
             if not (metrics.get("reproduction") or {}).get("passed"):
                 issues.append("independent_reproduction_failed")
+        brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+        issues.extend(research_method_registry_service.validate_task(task, latest, brief))
         return {"passed": not issues, "issues": issues, "verifier": "method_gate_v1"}
 
     @staticmethod
@@ -240,6 +245,31 @@ class ScientificQualityGateService:
                 issues.append(f"artifact_hash_mismatch:{path}")
         if not paths:
             issues.append("experiment_artifacts_missing")
+        return issues
+
+    @staticmethod
+    def _material_artifact_issues(task: dict, latest: dict) -> list[str]:
+        material = latest.get("material_manifest") or {}
+        records = material.get("source_records") or []
+        run = RunRepository.get_by_id(task.get("run_id")) or {}
+        run_dir = run_artifact_service.run_dir(run, task.get("run_id")).resolve()
+        manifest = artifact_manifest_service.read(run_dir)
+        registered = {item.get("path") for item in manifest.get("artifacts") or []}
+        issues: list[str] = []
+        artifact = material.get("artifact")
+        if not artifact or artifact not in registered:
+            issues.append("material_manifest_unregistered")
+        for index, record in enumerate(records if isinstance(records, list) else []):
+            try:
+                path = Path(str(record.get("path") or "")).resolve()
+                if not path.is_file() or not path.is_relative_to(run_dir):
+                    issues.append(f"material_record_{index}:path_invalid")
+                    continue
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest != record.get("sha256"):
+                    issues.append(f"material_record_{index}:hash_mismatch")
+            except (OSError, RuntimeError):
+                issues.append(f"material_record_{index}:read_failed")
         return issues
 
 

@@ -521,6 +521,8 @@ export const SKILL_NAMES: Record<string, string> = {
 
 export const TASK_TYPE_LABELS: Record<string, string> = {
   literature_survey: "文献调研",
+  research_design: "研究设计",
+  data_acquisition: "材料与数据获取",
   system_design: "系统设计",
   experiment_design: "实验设计",
   result_analysis: "结果分析",

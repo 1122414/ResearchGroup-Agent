@@ -17,6 +17,8 @@ _AGENT_TYPE_TO_ZONE = {
 
 _TASK_TYPE_TO_ACTIVITY = {
     "literature_survey": "researching",
+    "research_design": "researching",
+    "data_acquisition": "experimenting",
     "system_design": "coding",
     "experiment_design": "experimenting",
     "result_analysis": "analyzing",

@@ -23,6 +23,8 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 DEFAULT_REQUIRED_SKILLS = {
     "literature_survey": {"literature_review": 8, "coding": 1, "experiment": 1, "data_analysis": 2, "academic_writing": 5, "mentoring": 1},
+    "research_design": {"literature_review": 7, "coding": 2, "experiment": 6, "data_analysis": 6, "academic_writing": 6, "mentoring": 6},
+    "data_acquisition": {"literature_review": 4, "coding": 3, "experiment": 7, "data_analysis": 5, "academic_writing": 3, "mentoring": 5},
     "system_design": {"literature_review": 2, "coding": 8, "experiment": 4, "data_analysis": 4, "academic_writing": 2, "mentoring": 2},
     "experiment_design": {"literature_review": 3, "coding": 3, "experiment": 8, "data_analysis": 5, "academic_writing": 4, "mentoring": 2},
     "result_analysis": {"literature_review": 2, "coding": 4, "experiment": 3, "data_analysis": 9, "academic_writing": 5, "mentoring": 2},
