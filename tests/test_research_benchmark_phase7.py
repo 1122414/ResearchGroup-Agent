@@ -262,6 +262,28 @@ def test_relevance_ranking_prefers_scholarly_source_after_domain_filter():
     assert [source["id"] for source in ranked] == ["paper", "blog"]
 
 
+def test_relevance_ranking_does_not_reward_accidental_long_fulltext_overlap():
+    sources = [
+        {
+            "id": "physics", "title": "QCD working group report",
+            "metadata": {
+                "provider": "arxiv",
+                "content": "government education expenditure income GDP comparison " * 20,
+            },
+        },
+        {
+            "id": "education", "title": "Government education expenditure by income group",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    ranked = evidence_pipeline_service._rank_by_relevance(
+        sources, "government education expenditure GDP high income lower middle income group comparison",
+    )
+
+    assert [source["id"] for source in ranked] == ["education"]
+
+
 @pytest.mark.asyncio
 async def test_slow_structured_search_does_not_block_control_event_loop(monkeypatch):
     observed = {"tick": False, "responsive_during_call": False}

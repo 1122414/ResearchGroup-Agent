@@ -326,20 +326,24 @@ class EvidencePipelineService:
 
         def score(source: dict) -> float:
             metadata = source.get("metadata", {}) or {}
-            text = " ".join(
+            heading = " ".join(
                 str(part)
                 for part in [
                     source.get("title"),
                     source.get("venue"),
-                    metadata.get("summary"),
-                    metadata.get("content"),
                 ]
                 if part
             ).lower()
-            source_tokens = {t for t in re.findall(r"[\w\u4e00-\u9fff]+", text)}
-            if not source_tokens:
+            body = " ".join(
+                str(part) for part in [metadata.get("summary"), metadata.get("content")] if part
+            ).lower()
+            heading_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", heading))
+            body_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", body))
+            if not heading_tokens and not body_tokens:
                 return 0.0
-            return len(query_tokens & source_tokens) / (len(query_tokens) ** 0.5)
+            heading_overlap = len(query_tokens & heading_tokens)
+            body_only_overlap = len((query_tokens & body_tokens) - heading_tokens)
+            return (heading_overlap + min(body_only_overlap, 2) * 0.25) / (len(query_tokens) ** 0.5)
 
         scholarly_providers = {"crossref", "openalex", "arxiv", "semantic_scholar"}
         scored = [(score(source), index, source) for index, source in enumerate(sources)]
