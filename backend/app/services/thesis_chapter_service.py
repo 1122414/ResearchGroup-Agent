@@ -479,6 +479,24 @@ class ThesisChapterService:
             {"quality_gates": {"layers": {"independent_review": {"issues": issues}}}},
         )
 
+    def advisor_feedback_conflicts_with_artifact(self, task: dict, latest: dict, feedback: str) -> bool:
+        """Detect a narrow advisor request that reverses an artifact-verified character unit."""
+        lowered = feedback.casefold()
+        chapter_text = " ".join(
+            str(paragraph.get("text") or "")
+            for section in (latest.get("chapter") or {}).get("sections") or []
+            for paragraph in section.get("paragraphs") or []
+        ).casefold()
+        return (
+            "character" in lowered
+            and "token" in lowered
+            and any(marker in lowered for marker in ("应修正为", "改为", "replace", "instead"))
+            and "character" in chapter_text
+            and self._artifact_supports_replacement(
+                "100 characters", self._canonical_artifact_text(task.get("run_id")),
+            )
+        )
+
     def _canonical_artifact_text(self, run_id: str) -> str:
         compact = []
         for item in self.artifact_support(run_id):

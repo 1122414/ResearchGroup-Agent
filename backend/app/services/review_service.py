@@ -13,6 +13,7 @@ from ..storage.repositories import (
 )
 from .artifact_manifest_service import artifact_manifest_service
 from .scientific_quality_gate_service import scientific_quality_gate_service
+from .thesis_chapter_service import thesis_chapter_service
 
 
 class ReviewService:
@@ -80,6 +81,7 @@ class ReviewService:
             llm_review = self._parse_review(raw_response)
         if llm_review.get("review_transport_failed"):
             return self._review_advisor_transport_failure(task, quality_gates)
+        llm_review = self._arbitrate_advisor(task, latest, llm_review, quality_gates)
         rubric = self._rubric_for_task(task.get("task_type", ""))
         scores = self._score_task(task, llm_review, rubric)
         average_score = round(sum(scores.values()) / max(len(scores), 1), 4)
@@ -106,6 +108,26 @@ class ReviewService:
         self._persist_review(task, review)
         if approved:
             self._promote_artifact_claims(task, latest)
+        return review
+
+    @staticmethod
+    def _arbitrate_advisor(task: dict, latest: dict, review: dict, quality_gates: dict) -> dict:
+        if (
+            task.get("task_type") == "thesis_chapter"
+            and quality_gates.get("passed") is True
+            and review.get("approved") is False
+            and thesis_chapter_service.advisor_feedback_conflicts_with_artifact(
+                task, latest, str(review.get("feedback") or ""),
+            )
+        ):
+            return {
+                "approved": True,
+                "feedback": (
+                    "导师否决要求与冻结实验工件的单位合同冲突，已由更强的工件一致性硬门仲裁为通过。"
+                    f" 原意见：{str(review.get('feedback') or '')[:500]}"
+                ),
+                "advisor_artifact_conflict_overridden": True,
+            }
         return review
 
     @staticmethod

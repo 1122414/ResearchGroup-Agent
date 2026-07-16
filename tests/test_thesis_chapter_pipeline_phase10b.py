@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from backend.app.services.report_service import ReportService
+from backend.app.services.review_service import ReviewService
 from backend.app.services.task_executor import TaskExecutor
 from backend.app.services.research_state_service import research_state_service
 from backend.app.services.run_execution_service import run_execution_service
@@ -532,6 +533,34 @@ def test_surgical_repair_uniquely_anchors_global_semantic_target_by_exact_quote(
 
     assert repaired["result"]["chapter"]["sections"][0]["paragraphs"][1]["text"] == "Evidence statement."
     assert repaired["changes"][0]["target"] == "p2"
+
+
+def test_advisor_artifact_conflict_arbitration_is_narrow(monkeypatch):
+    monkeypatch.setattr(
+        thesis_chapter_service, "_canonical_artifact_text",
+        lambda _run_id: '{"chunk_size":100,"unit":"characters"}',
+    )
+    task = {"run_id": "run", "task_type": "thesis_chapter"}
+    latest = {"chapter": {"sections": [{"paragraphs": [{
+        "text": "The method uses 100-character chunks.",
+    }]}]}}
+    rejected = {
+        "approved": False,
+        "feedback": "误用 characters 代替 tokens，应修正为 100-token chunks。",
+    }
+
+    arbitrated = ReviewService._arbitrate_advisor(
+        task, latest, rejected, {"passed": True},
+    )
+
+    assert arbitrated["approved"] is True
+    assert arbitrated["advisor_artifact_conflict_overridden"] is True
+    assert ReviewService._arbitrate_advisor(
+        task, latest, {"approved": False, "feedback": "章节结论缺失。"}, {"passed": True},
+    )["approved"] is False
+    assert ReviewService._arbitrate_advisor(
+        task, latest, rejected, {"passed": False},
+    )["approved"] is False
 
 
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
