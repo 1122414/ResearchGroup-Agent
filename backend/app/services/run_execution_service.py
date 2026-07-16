@@ -557,6 +557,7 @@ class RunExecutionService:
                 return
             self._retry_first_paragraph_audit(writing_tasks)
             self._retry_structural_floor_migration(writing_tasks)
+            self._retry_epistemic_audit_migration(writing_tasks)
             self._retry_surgical_chapter_repair(writing_tasks)
             self._retry_transient_writing_failures(writing_tasks)
             writing_tasks = [
@@ -773,7 +774,7 @@ class RunExecutionService:
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and int(task.get("attempt_count") or 0) == 5
-                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and self._is_paragraph_audit_reviewer(reviewer)
                 and not self._has_task_event(task, "review.paragraph_audit_recheck")
             ):
                 continue
@@ -802,7 +803,7 @@ class RunExecutionService:
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and int(task.get("attempt_count") or 0) == 6
-                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and self._is_paragraph_audit_reviewer(reviewer)
                 and not self._has_task_event(task, "revision.structural_floor_migration")
             ):
                 continue
@@ -813,6 +814,49 @@ class RunExecutionService:
                 "院校字数改由全文硬门验收；复用现有正文和完整分段清单，仅允许最后一次删除型修复。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
                 payload={"reopened_task_id": reopened["id"], "attempt_count": task.get("attempt_count")},
+            )
+            changed = True
+        return changed
+
+    def _retry_epistemic_audit_migration(self, tasks: list[dict]) -> bool:
+        """Re-review legacy chapters after separating direct facts from bounded scholarly inference."""
+        changed = False
+        for task in tasks:
+            reviewer = (
+                ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+                .get("independent_review", {}).get("reviewer")
+            )
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and not self._has_task_event(task, "review.epistemic_audit_migration")
+                and task.get("outputs")
+            ):
+                continue
+            empty_review = {"quality_gates": {"layers": {"independent_review": {"issues": []}}}}
+            cleanup = thesis_chapter_service.surgical_repair(task, task["outputs"][-1], empty_review)
+            result = cleanup["result"]
+            TaskRepository.update_status(
+                task["id"], "running", outputs=[result], blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            OutputRepository.insert({
+                "id": f"out_{task['id']}", "output_type": "task_result",
+                "title": f"任务产出：{task.get('title', task['id'])}",
+                "content": json.dumps(result, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"), "task_id": task["id"],
+                "agent_id": task.get("owner_agent"), "created_at": datetime.now().isoformat(),
+            })
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "review.epistemic_audit_migration", "review",
+                "章节按分层认识论协议重新审核",
+                "仅清理历史删除产生的残句，复用现有正文；不消耗外科修复轮次或章节 attempt。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+                payload={"cleanup_changes": cleanup["changes"]},
             )
             changed = True
         return changed
@@ -829,7 +873,7 @@ class RunExecutionService:
             if not (
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
-                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and self._is_paragraph_audit_reviewer(reviewer)
                 and repair_round < 5
                 and task.get("outputs")
             ):
@@ -886,6 +930,10 @@ class RunExecutionService:
         )
 
     @staticmethod
+    def _is_paragraph_audit_reviewer(reviewer: str | None) -> bool:
+        return str(reviewer or "").startswith("independent_reviewer_model_paragraph_audit")
+
+    @staticmethod
     def _revive_dependency_descendants(run_id: str, root_task_id: str) -> None:
         for task_id in task_graph_service.descendants(run_id, root_task_id):
             task = TaskRepository.get_by_id(task_id)
@@ -916,7 +964,7 @@ class RunExecutionService:
         )
         return (
             attempts == 5
-            and reviewer == "independent_reviewer_model_paragraph_audit"
+            and self._is_paragraph_audit_reviewer(reviewer)
             and not self._has_task_event(task, "revision.paragraph_audit_consolidation")
         )
 

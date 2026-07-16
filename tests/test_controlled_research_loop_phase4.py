@@ -361,3 +361,39 @@ def test_surgical_repair_reuses_output_without_increasing_attempt(monkeypatch):
     assert task["outputs"] == [repaired_result]
     assert persisted[0]["id"] == "out_chapter"
     assert events == ["revision.surgical_chapter_repair"]
+
+
+def test_legacy_direct_entailment_audit_rechecks_without_spending_surgical_round(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 7, "owner_agent": "writer",
+        "revision_of_task_id": "root", "title": "Introduction",
+        "outputs": [{"summary": "old", "chapter": {}}],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit",
+        }}}},
+    }
+    events = []
+
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.surgical_repair",
+        lambda *_args: {"result": {"summary": "clean"}, "changes": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.OutputRepository.insert", lambda _output: None,
+    )
+    monkeypatch.setattr(run_execution_service, "_revive_dependency_descendants", lambda *_args: None)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_epistemic_audit_migration([task]) is True
+    assert task["status"] == "running"
+    assert task["attempt_count"] == 7
+    assert events == ["review.epistemic_audit_migration"]

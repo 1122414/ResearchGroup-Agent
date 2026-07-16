@@ -294,6 +294,8 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     assert result["approved"] is True
     assert len(prompts) == 2
     assert "逐段穷尽检查" in prompts[0]
+    assert "interpretation/limitation" in prompts[0]
+    assert "不得要求来源逐字写出作者自己的综合判断" in prompts[0]
     assert "complete chapter body" in prompts[0]
     assert "bounded pilot result" in prompts[0]
     assert '"available_support"' in prompts[0]
@@ -363,7 +365,7 @@ async def test_chapter_reviewer_collects_all_bounded_batch_support_issues(monkey
     )
 
     assert result["approved"] is False
-    assert result["reviewer"] == "independent_reviewer_model_paragraph_audit"
+    assert result["reviewer"] == "independent_reviewer_model_paragraph_audit_v2"
     assert [item["target"] for item in result["issues"]] == ["p0", "p6"]
     assert len(prompts) == 2
 

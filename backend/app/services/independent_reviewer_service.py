@@ -150,7 +150,7 @@ class IndependentReviewerService:
                     "approved": False,
                     "issues": support_issues,
                     "summary": "分段证据审计发现需一次性修复的越界表述",
-                    "reviewer": "independent_reviewer_model_paragraph_audit",
+                    "reviewer": "independent_reviewer_model_paragraph_audit_v2",
                     "simulation": False,
                 }
             payload["paragraph_support_audit"] = {
@@ -243,8 +243,12 @@ class IndependentReviewerService:
             }
             prompt = (
                 "你是论文段落证据审计员，未参与生成。逐段穷尽检查本批次全部段落，只能使用各段"
-                "support_ids 实际绑定的 bound_support，不得使用常识或其他段落的证据。检查每个事实、"
-                "因果、机制和解释性表述是否被直接蕴含；transition/limitation 也不得偷带新事实。"
+                "support_ids 实际绑定的 bound_support，不得使用常识或其他段落的证据。来源归因、数值、"
+                "外部事实、因果和机制必须被直接蕴含。由多个绑定事实透明合成、没有新增外部事实且明确限定"
+                "范围的解释可以通过，不得要求来源逐字写出作者自己的综合判断。interpretation/limitation "
+                "可给出与绑定事实和 brief 边界一致的审慎推论；仅在新增机制、因果、数值或无依据外推时拒绝。"
+                "transition 可组织章节和论点而无需来源，但不得偷带新事实。method 的参数和执行事实须与工件"
+                "一致，方法选择理由可由冻结合同直接推出。"
                 "一次列出本批次全部 critical/major 越界，最多12条；不要报告文风或可选增强项。"
                 "available_support 只能用于提出修复：若其中有直接蕴含该表述的冻结支持，优先要求补绑其 ID；"
                 "否则删除不受支持的最小短语。required_change 和 target 必须写出段落 ID。"
