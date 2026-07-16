@@ -246,11 +246,20 @@ class ThesisChapterService:
                 unresolved.append(issue)
                 continue
             original = str(paragraph.get("text") or "")
-            sentence = self._deletion_sentence(original, instruction)
-            if not sentence:
-                unresolved.append(issue)
-                continue
-            revised = self._remove_exact_sentence(original, sentence)
+            fragments = self._exact_deletion_fragments(original, instruction)
+            if fragments:
+                revised = original
+                for fragment in fragments:
+                    revised = revised.replace(fragment, "", 1)
+                revised = self._clean_deletion_spacing(revised)
+                deleted = " | ".join(fragments)
+            else:
+                sentence = self._deletion_sentence(original, instruction)
+                if not sentence:
+                    unresolved.append(issue)
+                    continue
+                revised = self._remove_exact_sentence(original, sentence)
+                deleted = sentence
             if revised == original:
                 unresolved.append(issue)
                 continue
@@ -259,7 +268,7 @@ class ThesisChapterService:
             else:
                 section["paragraphs"] = [item for item in section.get("paragraphs") or [] if item is not paragraph]
                 paragraph_locations.pop(target, None)
-            changes.append({"target": target, "operation": "delete", "text": sentence[:240]})
+            changes.append({"target": target, "operation": "delete", "text": deleted[:240]})
         repaired["summary"] = "按独立分段审计执行单调外科修复；正文只删除原句或补绑已冻结支持。"
         repaired["claims"] = []
         return {"result": repaired, "changes": changes, "unresolved": unresolved}
@@ -287,6 +296,23 @@ class ThesisChapterService:
             scored.append((quote_score + overlap * 4, overlap, -index, sentence))
         score, overlap, _index, sentence = max(scored)
         return sentence if score >= 60 or overlap >= 3 else None
+
+    @staticmethod
+    def _exact_deletion_fragments(paragraph: str, instruction: str) -> list[str]:
+        fragments = []
+        for pattern in (r"'([^']{8,})'", r"‘([^’]{8,})’", r'“([^”]{8,})”'):
+            for value in re.findall(pattern, instruction):
+                if value in paragraph and value not in fragments:
+                    fragments.append(value)
+        return fragments
+
+    @staticmethod
+    def _clean_deletion_spacing(text: str) -> str:
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+        text = re.sub(r",\s*,", ",", text)
+        text = re.sub(r",\s*\.", ".", text)
+        return text
 
     @staticmethod
     def _remove_exact_sentence(paragraph: str, sentence: str) -> str:

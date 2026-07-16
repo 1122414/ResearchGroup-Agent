@@ -328,6 +328,28 @@ def test_surgical_chapter_repair_only_deletes_original_sentences_and_binds_verif
     assert repaired["unresolved"] == []
 
 
+def test_surgical_chapter_repair_prefers_exact_phrases_over_deleting_supported_sentence(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(thesis_chapter_service, "artifact_support", lambda _run_id: [])
+    original = (
+        "DPR improves retrieval accuracy on the frozen benchmark, "
+        "establishing DPR as a universal baseline for every domain."
+    )
+    latest = {"chapter": {"sections": [{"paragraphs": [{
+        "id": "p1", "text": original, "support_ids": ["brief:scope"],
+    }]}]}}
+    review = {"quality_gates": {"layers": {"independent_review": {"issues": [{
+        "target": "p1", "reason": "'establishing DPR as a universal baseline for every domain' is unsupported",
+        "required_change": "delete the unsupported phrase",
+    }]}}}}
+
+    repaired = thesis_chapter_service.surgical_repair({"run_id": "run"}, latest, review)
+    text = repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]["text"]
+
+    assert text == "DPR improves retrieval accuracy on the frozen benchmark."
+    assert "DPR improves retrieval accuracy" in text
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

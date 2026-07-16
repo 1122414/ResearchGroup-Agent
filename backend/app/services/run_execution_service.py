@@ -830,7 +830,7 @@ class RunExecutionService:
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and reviewer == "independent_reviewer_model_paragraph_audit"
-                and repair_round < 2
+                and repair_round < 3
                 and task.get("outputs")
             ):
                 continue
