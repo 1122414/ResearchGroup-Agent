@@ -340,10 +340,12 @@ class TaskDecomposer:
     def _respect_methodology_capability(tasks: list[dict], brief: dict) -> list[dict]:
         """Translate computer-centric task labels into method-neutral work packages."""
         family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
-        executable_families = {"computational", "quantitative", "design_science"}
+        executable_families = {"computational", "experimental", "design_science"}
         if family in executable_families:
             return tasks
         profile = brief.get("methodology_profile") or {}
+        normalized: list[dict] = []
+        has_material_task = any(item.get("task_type") == "data_acquisition" for item in tasks)
         for item in tasks:
             if item.get("task_type") == "system_design":
                 item["task_type"] = "research_design"
@@ -353,13 +355,17 @@ class TaskDecomposer:
                     "材料协议、分析计划、至少两项质量控制、停止规则和偏离处理；不得声称已取得材料。"
                 )
             elif item.get("task_type") == "experiment_design":
+                if has_material_task:
+                    continue
                 item["task_type"] = "data_acquisition"
                 item["title"] = "获取并冻结真实研究材料"
                 item["description"] = (
                     "仅接收用户上传或经审计外部执行返回的真实材料，生成逐文件来源、授权、SHA-256、"
                     "收集日志与完整性清单；缺失材料时必须失败，不得由 LLM 补造。"
                 )
-        return tasks
+                has_material_task = True
+            normalized.append(item)
+        return normalized
 
     @staticmethod
     def _ensure_complete_workflow(tasks: list[dict], brief: dict, mode: str) -> list[dict]:

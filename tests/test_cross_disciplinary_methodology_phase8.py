@@ -161,6 +161,29 @@ def test_noncomputational_method_replaces_fabricated_experiment_with_real_materi
     }
 
 
+def test_observational_quantitative_drops_duplicate_experiment_task():
+    tasks = [
+        {"title": "data", "task_type": "data_acquisition"},
+        {"title": "fabricated experiment", "task_type": "experiment_design"},
+        {"title": "analysis", "task_type": "result_analysis"},
+    ]
+
+    filtered = task_decomposer._respect_methodology_capability(
+        tasks, {"methodology_family": "quantitative"},
+    )
+
+    assert [item["task_type"] for item in filtered] == ["data_acquisition", "result_analysis"]
+    assert all(item["title"] != "fabricated experiment" for item in filtered)
+
+
+def test_experimental_method_keeps_real_experiment_task():
+    tasks = [{"task_type": "experiment_design"}]
+
+    assert task_decomposer._respect_methodology_capability(
+        tasks, {"methodology_family": "experimental"},
+    ) == tasks
+
+
 def test_report_can_pass_research_gate_without_being_mislabeled_complete_master_thesis(monkeypatch):
     contract = _contract(thesis_status="not_provided")
     monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {
