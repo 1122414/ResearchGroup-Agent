@@ -669,6 +669,34 @@ def test_delivery_status_promotes_only_after_master_thesis_gate():
     )
 
 
+def test_verified_final_thesis_completes_canonical_report_task(monkeypatch):
+    tasks = [
+        {
+            "id": "report_root", "task_type": "report_writing", "status": "failed",
+            "revision_of_task_id": None, "outputs": [],
+        },
+        {
+            "id": "report_revision", "task_type": "report_writing", "status": "failed",
+            "revision_of_task_id": "report_root", "outputs": [],
+        },
+    ]
+    updates = []
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: tasks)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **kwargs: updates.append((task_id, status, kwargs)),
+    )
+
+    quality = {"passed": True, "master_thesis_ready": True}
+    ReportService._complete_report_writing_tasks("run_verified", quality)
+
+    assert len(updates) == 1
+    task_id, status, payload = updates[0]
+    assert (task_id, status) == ("report_root", "completed")
+    assert payload["review_result"]["quality_gates"] == quality
+    assert payload["outputs"][-1]["final_report_id"] == "final_report_run_verified"
+
+
 def test_harvard_contract_renders_author_date_citations(tmp_path):
     run_id, run = _run_with_thesis(tmp_path, ["Analysis"], citation_style="Harvard")
     claim_id = f"claim_harvard_{uuid.uuid4().hex[:8]}"

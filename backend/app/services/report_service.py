@@ -97,6 +97,7 @@ class ReportService:
         grounding_audit = self._run_grounding_audit(run["id"], report)
         scientific_quality = self._run_scientific_quality_gate(run["id"], report, grounding_audit)
         report = self._promote_delivery_status(report, scientific_quality)
+        self._complete_report_writing_tasks(run["id"], scientific_quality)
         self._mark_report_verified(run["id"])
         self._save_report(run["id"], report, review_summary, writer_draft)
         OutputRepository.insert(
@@ -195,6 +196,31 @@ class ReportService:
         if milestone:
             now = datetime.now().isoformat()
             ResearchMilestoneRepository.update(milestone["id"], status="passed", completed_at=now, updated_at=now)
+
+    @staticmethod
+    def _complete_report_writing_tasks(run_id: str, quality: dict) -> None:
+        """Let the verified assembled thesis, rather than an intermediate synopsis, settle report writing."""
+        feedback = "最终论文已完成装配，并通过接地审计与科学质量门。"
+        for task in TaskRepository.get_all(run_id=run_id):
+            if task.get("task_type") != "report_writing" or task.get("revision_of_task_id"):
+                continue
+            outputs = list(task.get("outputs") or [])
+            marker = {"final_report_id": f"final_report_{run_id}", "summary": feedback}
+            if marker not in outputs:
+                outputs.append(marker)
+            TaskRepository.update_status(
+                task["id"],
+                "completed",
+                outputs=outputs,
+                blocked_reason=None,
+                review_feedback=feedback,
+                review_result={
+                    "approved": True,
+                    "feedback": feedback,
+                    "quality_gates": quality,
+                    "revision_plan": [],
+                },
+            )
 
     async def _generate_writer_draft(self, run: dict, writer_agent: dict | None, task_summaries: list[dict], review_summary: str, agent_time: str) -> str:
         goal = self._primary_goal(run)
