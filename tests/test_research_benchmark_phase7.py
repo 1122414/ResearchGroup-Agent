@@ -284,6 +284,40 @@ def test_relevance_ranking_does_not_reward_accidental_long_fulltext_overlap():
     assert [source["id"] for source in ranked] == ["education"]
 
 
+def test_relevance_ranking_rejects_malformed_page_sized_title():
+    sources = [
+        {
+            "id": "issue-page", "title": "education expenditure income GDP " * 200,
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "id": "article", "title": "Government education expenditure by country income group",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    ranked = evidence_pipeline_service._rank_by_relevance(
+        sources, "government education expenditure GDP high income lower middle income group",
+    )
+
+    assert [source["id"] for source in ranked] == ["article"]
+
+
+def test_browser_supplement_depends_on_relevant_grounded_titles(monkeypatch):
+    monkeypatch.setattr(settings, "browser_research_enabled", True)
+    monkeypatch.setattr(settings, "browser_research_provider_mode", "browser_use")
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 3)
+    query = "government education expenditure GDP high income lower middle income group"
+    relevant = [
+        {"id": "a", "title": "Government education expenditure by income group", "metadata": {}},
+        {"id": "b", "title": "Education spending GDP share across income economies", "metadata": {}},
+        {"id": "c", "title": "Public education expenditure in high income countries", "metadata": {}},
+    ]
+
+    assert evidence_pipeline_service._needs_browser_supplement(relevant[:2], query) is True
+    assert evidence_pipeline_service._needs_browser_supplement(relevant, query) is False
+
+
 @pytest.mark.asyncio
 async def test_slow_structured_search_does_not_block_control_event_loop(monkeypatch):
     observed = {"tick": False, "responsive_during_call": False}

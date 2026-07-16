@@ -61,18 +61,8 @@ class EvidencePipelineService:
                 "provider": "user_seed", "kind": "seed", "enabled": True,
                 "result_count": len(seed_sources), "error": None, "query": query,
             })
-        protocol_id = self._record_search_protocol(task, queries, attempts)
-        self._record_search_runs(task, protocol_id, attempts)
-        self._emit_search_trace(
-            task,
-            query,
-            attempts,
-            browser_discovered=browser_count,
-            candidate_count=len(raw_sources),
-            queries=queries,
-        )
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in raw_sources])
-        normalized = self._rank_by_relevance(normalized, " ".join(queries) or query)
+        normalized = self._rank_by_relevance(normalized, query)
         normalized = self._prioritize_seed_sources(normalized)
         mode = "remote_provider" if normalized else "curated_fallback"
         if not normalized and settings.literature_curated_fallback_enabled:
@@ -82,16 +72,7 @@ class EvidencePipelineService:
         if not normalized:
             mode = "no_grounded_source"
         normalized = normalized[: max(settings.evidence_search_max_results, settings.literature_source_limit)]
-        before_verification = len(normalized)
-        normalized = await browser_research_service.verify_candidates(query, normalized)
-        self._emit_verification_trace(task, query, before_verification, normalized)
-        if normalized and settings.browser_research_enabled:
-            mode = f"{mode}+browser_research"
-        if not normalized:
-            mode = "no_grounded_source+browser_research" if settings.browser_research_enabled else "no_grounded_source"
-        verified = await asyncio.to_thread(source_verification_service.verify_sources, normalized)
-        normalized = [source for source in verified if source_verification_service.citation_eligible(source)]
-        self._record_screening(task, verified)
+        normalized = await self._verify_sources(task, query, normalized)
         if not normalized:
             mode = "no_citation_eligible_source"
         persisted = self.persist_sources(task, normalized)
@@ -104,6 +85,49 @@ class EvidencePipelineService:
         grounded_sources, grounded_excerpts = self._rank_grounded_bundle(
             grounded_sources, grounded_excerpts, query,
         )
+        browser_already_attempted = any(item.get("provider") == "browser_use" for item in attempts)
+        if (
+            self._needs_browser_supplement(grounded_sources, query)
+            and not browser_already_attempted
+            and not self._browser_supplement_attempted(task)
+        ):
+            discovery_query = self._browser_discovery_query(task, queries, query)
+            browser_sources = await browser_research_service.discover(discovery_query)
+            browser_count += len(browser_sources)
+            raw_sources.extend(browser_sources)
+            attempts.append({
+                "provider": "browser_use", "kind": "browser_supplement", "enabled": True,
+                "result_count": len(browser_sources), "error": None, "query": discovery_query,
+            })
+            supplement = self._deduplicate_sources(
+                [self._normalize_source(source, task) for source in browser_sources]
+            )
+            supplement = self._rank_by_relevance(supplement, query)
+            supplement = await self._verify_sources(task, query, supplement)
+            if supplement:
+                extra = self.persist_sources(task, supplement)
+                persisted["assessments"].extend(extra["assessments"])
+                fulltext_ingested += await asyncio.to_thread(
+                    fulltext_ingest_service.ingest_sources, task.get("run_id"), supplement,
+                )
+                normalized = self._deduplicate_sources([*normalized, *supplement])
+                grounded_sources, grounded_excerpts = self._cumulative_grounded_evidence(
+                    task.get("run_id"), normalized,
+                )
+                grounded_sources, grounded_excerpts = self._rank_grounded_bundle(
+                    grounded_sources, grounded_excerpts, query,
+                )
+                mode = "browser_discovery" if mode.startswith("no_") else f"{mode}+browser_discovery"
+
+        protocol_id = self._record_search_protocol(task, queries, attempts)
+        self._record_search_runs(task, protocol_id, attempts)
+        self._emit_search_trace(
+            task, query, attempts, browser_discovered=browser_count,
+            candidate_count=len(raw_sources), queries=queries,
+        )
+        before_verification = len(self._deduplicate_sources(
+            [self._normalize_source(source, task) for source in raw_sources]
+        ))
         persisted["sources"] = grounded_sources
         persisted["excerpts"] = grounded_excerpts
         search_metrics = {
@@ -222,17 +246,49 @@ class EvidencePipelineService:
                     }
                 )
             browser_sources = []
+            browser_called = False
             if not search_result["results"] and not browser_attempted:
                 browser_attempted = True
+                browser_called = True
                 browser_sources = await browser_research_service.discover(query)
             sources.extend(browser_sources)
             browser_count += len(browser_sources)
-            if settings.browser_research_enabled:
+            if browser_called:
                 attempts.append(
                     {"provider": "browser_use", "kind": "browser", "enabled": True,
                      "result_count": len(browser_sources), "error": None, "query": query}
                 )
         return sources, attempts, browser_count
+
+    async def _verify_sources(self, task: dict, query: str, sources: list[dict]) -> list[dict]:
+        before = len(sources)
+        sources = await browser_research_service.verify_candidates(query, sources)
+        self._emit_verification_trace(task, query, before, sources)
+        verified = await asyncio.to_thread(source_verification_service.verify_sources, sources)
+        self._record_screening(task, verified)
+        return [source for source in verified if source_verification_service.citation_eligible(source)]
+
+    def _browser_supplement_attempted(self, task: dict) -> bool:
+        run_id = task.get("run_id")
+        if not run_id:
+            return False
+        root_id = self._root_task(task).get("id")
+        family = {
+            item["id"] for item in TaskRepository.get_all(run_id=run_id)
+            if item["id"] == root_id or item.get("revision_of_task_id") == root_id
+        }
+        return any(
+            item.get("provider") == "browser_use" and item.get("task_id") in family
+            for item in LiteratureSearchRepository.get_by_run(run_id)["runs"]
+        )
+
+    @staticmethod
+    def _browser_discovery_query(task: dict, queries: list[str], fallback: str) -> str:
+        concise = next((item for item in queries if 40 <= len(item) <= 300), "")
+        if concise:
+            return concise
+        run = RunRepository.get_by_id(task.get("run_id")) or {}
+        return primary_goal(str(run.get("research_goal") or "")) or fallback
 
     def _record_search_protocol(self, task: dict, queries: list[str], attempts: list[dict]) -> str | None:
         run_id = task.get("run_id")
@@ -318,49 +374,60 @@ class EvidencePipelineService:
         return ""
 
     def _rank_by_relevance(self, sources: list[dict], query: str) -> list[dict]:
-        import re
-
-        query_tokens = {t.lower() for t in re.findall(r"[\w\u4e00-\u9fff]+", query) if t.lower() not in _STOPWORDS}
+        query_tokens = self._relevance_tokens(query)
         if not query_tokens:
             return sources
-
-        def score(source: dict) -> float:
-            metadata = source.get("metadata", {}) or {}
-            heading = " ".join(
-                str(part)
-                for part in [
-                    source.get("title"),
-                    source.get("venue"),
-                ]
-                if part
-            ).lower()
-            body = " ".join(
-                str(part) for part in [metadata.get("summary"), metadata.get("content")] if part
-            ).lower()
-            heading_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", heading))
-            body_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", body))
-            if not heading_tokens and not body_tokens:
-                return 0.0
-            heading_overlap = len(query_tokens & heading_tokens)
-            body_only_overlap = len((query_tokens & body_tokens) - heading_tokens)
-            return (heading_overlap + min(body_only_overlap, 2) * 0.25) / (len(query_tokens) ** 0.5)
-
         scholarly_providers = {"crossref", "openalex", "arxiv", "semantic_scholar"}
-        scored = [(score(source), index, source) for index, source in enumerate(sources)]
-        minimum_two_term_overlap = 2 / (len(query_tokens) ** 0.5)
-        if scored and max(item[0] for item in scored) >= minimum_two_term_overlap:
-            scored = [item for item in scored if item[0] >= minimum_two_term_overlap]
+        scored = [
+            (*self._source_relevance(source, query_tokens), index, source)
+            for index, source in enumerate(sources)
+            if len(str(source.get("title") or "")) <= 500
+        ]
+        required_overlap = self._required_heading_overlap(query_tokens)
+        if scored and max(item[0] for item in scored) >= required_overlap:
+            scored = [item for item in scored if item[0] >= required_overlap]
         return [
             source
-            for _, _, source in sorted(
+            for _, score, _, source in sorted(
                 scored,
                 key=lambda item: (
-                    (item[2].get("metadata") or {}).get("provider") not in scholarly_providers,
-                    -item[0],
-                    item[1],
+                    (item[3].get("metadata") or {}).get("provider") not in scholarly_providers,
+                    -item[1],
+                    item[2],
                 ),
             )
         ]
+
+    def _needs_browser_supplement(self, sources: list[dict], query: str) -> bool:
+        if not browser_research_service.enabled():
+            return False
+        tokens = self._relevance_tokens(query)
+        required = self._required_heading_overlap(tokens)
+        relevant = sum(self._source_relevance(source, tokens)[0] >= required for source in sources)
+        return relevant < max(int(settings.literature_min_grounded_sources), 1)
+
+    @staticmethod
+    def _relevance_tokens(text: str) -> set[str]:
+        return {
+            token.lower() for token in re.findall(r"[\w\u4e00-\u9fff]+", text)
+            if token.lower() not in _STOPWORDS and len(token) > 1
+        }
+
+    @staticmethod
+    def _required_heading_overlap(tokens: set[str]) -> int:
+        return 2 if len(tokens) < 8 else 3
+
+    @staticmethod
+    def _source_relevance(source: dict, query_tokens: set[str]) -> tuple[int, float]:
+        metadata = source.get("metadata", {}) or {}
+        heading = " ".join(str(part) for part in [source.get("title"), source.get("venue")] if part).lower()
+        body = " ".join(str(part) for part in [metadata.get("summary"), metadata.get("content")] if part).lower()
+        heading_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", heading))
+        body_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", body))
+        heading_overlap = len(query_tokens & heading_tokens)
+        body_only_overlap = len((query_tokens & body_tokens) - heading_tokens)
+        score = (heading_overlap + min(body_only_overlap, 2) * 0.25) / max(len(query_tokens) ** 0.5, 1)
+        return heading_overlap, score
 
     async def collect_for_query(self, run_id: str, query: str) -> dict:
         search_result = await asyncio.to_thread(evidence_provider.search_with_trace, query)

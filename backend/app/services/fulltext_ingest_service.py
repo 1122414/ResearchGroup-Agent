@@ -84,12 +84,23 @@ class FulltextIngestService:
             return "", "fetch_failed"
 
         if "pdf" in content_type.lower() or url.lower().endswith(".pdf"):
-            return self._extract_pdf(raw), "pdf"
+            return self._usable_text(self._extract_pdf(raw)), "pdf"
+        if raw.startswith(b"PK\x03\x04") or raw.count(b"\x00") > max(len(raw) // 100, 8):
+            return "", "unsupported_binary"
         try:
             html = raw.decode("utf-8", errors="ignore")
         except Exception:  # noqa: BLE001
             return "", "html"
-        return self._strip_html(html), "html"
+        return self._usable_text(self._strip_html(html)), "html"
+
+    @staticmethod
+    def _usable_text(text: str) -> str:
+        text = str(text or "").strip()
+        if len(text) < 200:
+            return ""
+        readable = sum(character.isprintable() for character in text) / len(text)
+        letters = sum(character.isalpha() for character in text)
+        return text if readable >= 0.9 and letters >= 100 else ""
 
     @staticmethod
     def _extract_pdf(raw: bytes) -> str:

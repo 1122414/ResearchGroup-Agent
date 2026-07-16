@@ -78,6 +78,36 @@ def test_fulltext_limit_cannot_make_literature_contract_impossible(monkeypatch):
     assert count == 3
 
 
+def test_fulltext_readability_filter_rejects_redirect_and_accepts_article_text():
+    assert fulltext_ingest_service._usable_text("Redirecting") == ""
+    readable = "This verified article reports a reproducible method and result. " * 8
+    assert fulltext_ingest_service._usable_text(readable) == readable.strip()
+
+
+def test_fulltext_fetch_rejects_office_archive_mislabeled_as_html(monkeypatch):
+    class Response:
+        headers = {"Content-Type": "text/html"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read(_limit):
+            return b"PK\x03\x04" + b"\x00" * 1000
+
+    monkeypatch.setattr(
+        "backend.app.services.fulltext_ingest_service.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    assert fulltext_ingest_service._fetch_text("https://example.test/chart") == (
+        "", "unsupported_binary",
+    )
+
+
 def test_source_ids_and_fulltext_ingestion_are_stable_within_run(monkeypatch):
     run_id = f"run_fulltext_stable_{uuid.uuid4().hex[:8]}"
     raw = {"id": "arxiv:1234.56789", "title": "Stable Paper", "url": "https://arxiv.org/abs/1234.56789"}
