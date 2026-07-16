@@ -292,6 +292,7 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     )
 
     assert result["approved"] is True
+    assert result["reviewer"] == "independent_reviewer_model_paragraph_audit_v2_global"
     assert len(prompts) == 2
     assert "逐段穷尽检查" in prompts[0]
     assert "interpretation/limitation" in prompts[0]

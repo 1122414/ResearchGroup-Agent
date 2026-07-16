@@ -191,7 +191,10 @@ class IndependentReviewerService:
             "summary 不超过 240 字；不要复述 passage、任务或实验数据。\n"
             + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:payload_limit]
         )
-        return await self._ask_reviewer(base_prompt, task, verified_support_ids)
+        review = await self._ask_reviewer(base_prompt, task, verified_support_ids)
+        if task.get("task_type") == "thesis_chapter":
+            review["reviewer"] = "independent_reviewer_model_paragraph_audit_v2_global"
+        return review
 
     async def _review_thesis_support_batches(
         self,

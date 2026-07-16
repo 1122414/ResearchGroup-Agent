@@ -427,12 +427,15 @@ def test_exhausted_v2_surgery_can_use_one_global_editorial_pass(monkeypatch):
         "status": "failed", "attempt_count": 6, "owner_agent": "writer",
         "outputs": [{"summary": "audited", "chapter": {}}],
         "review_result": {"quality_gates": {"layers": {"independent_review": {
-            "reviewer": "independent_reviewer_model_paragraph_audit_v2",
+            "reviewer": "independent_reviewer_model",
         }}}},
     }
     events = []
     monkeypatch.setattr(run_execution_service, "_task_event_count", lambda *_args: 5)
-    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        run_execution_service, "_has_task_event",
+        lambda _task, event: event == "revision.paragraph_audit_consolidation",
+    )
     monkeypatch.setattr(
         "backend.app.services.run_execution_service.thesis_chapter_service.editorial_repair",
         lambda *_args: {

@@ -885,14 +885,21 @@ class RunExecutionService:
                 and self._has_task_event(task, "revision.advisor_paragraph_restoration")
                 and not self._has_task_event(task, "revision.post_restoration_surgical_repair")
             )
+            legacy_v2_global = reviewer == "independent_reviewer_model" and any(
+                self._has_task_event(task, event_type)
+                for event_type in (
+                    "review.epistemic_audit_migration",
+                    "revision.paragraph_audit_consolidation",
+                )
+            )
             editorial_eligible = (
-                reviewer == "independent_reviewer_model_paragraph_audit_v2"
+                (reviewer == "independent_reviewer_model_paragraph_audit_v2_global" or legacy_v2_global)
                 and not self._has_task_event(task, "revision.global_editorial_repair")
             )
             if not (
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
-                and self._is_paragraph_audit_reviewer(reviewer)
+                and (self._is_paragraph_audit_reviewer(reviewer) or editorial_eligible)
                 and (repair_round < 5 or post_restoration or editorial_eligible)
                 and task.get("outputs")
             ):
