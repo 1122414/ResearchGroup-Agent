@@ -436,6 +436,29 @@ def test_relevance_ranking_keeps_component_after_substantive_work():
     assert [source["id"] for source in ranked] == ["article", "figure"]
 
 
+def test_venue_terms_cannot_complete_title_relevance_hard_gate():
+    sources = [
+        {
+            "id": "health",
+            "title": "Analysis of national health expenditure in GDP",
+            "venue": "International Conference on Management Science and Innovative Education",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "id": "education",
+            "title": "Impact of government expenditure on education and GDP",
+            "venue": "Public Finance Review",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    ranked = evidence_pipeline_service._rank_by_relevance(
+        sources, "government education expenditure GDP World Bank",
+    )
+
+    assert [source["id"] for source in ranked] == ["education"]
+
+
 def test_relevance_ranking_rejects_malformed_page_sized_title():
     sources = [
         {

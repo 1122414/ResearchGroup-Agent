@@ -485,19 +485,28 @@ class EvidencePipelineService:
 
     @staticmethod
     def _required_heading_overlap(tokens: set[str]) -> int:
-        return 2 if len(tokens) < 8 else 3
+        if len(tokens) <= 2:
+            return 1
+        if len(tokens) == 3:
+            return 2
+        return 3
 
     @staticmethod
     def _source_relevance(source: dict, query_tokens: set[str]) -> tuple[int, float]:
         metadata = source.get("metadata", {}) or {}
-        heading = " ".join(str(part) for part in [source.get("title"), source.get("venue")] if part).lower()
+        title = str(source.get("title") or "").lower()
+        venue = str(source.get("venue") or "").lower()
         body = " ".join(str(part) for part in [metadata.get("summary"), metadata.get("content")] if part).lower()
-        heading_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", heading))
+        title_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", title))
+        venue_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", venue))
         body_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", body))
-        heading_overlap = len(query_tokens & heading_tokens)
-        body_only_overlap = len((query_tokens & body_tokens) - heading_tokens)
-        score = (heading_overlap + min(body_only_overlap, 2) * 0.25) / max(len(query_tokens) ** 0.5, 1)
-        return heading_overlap, score
+        title_overlap = len(query_tokens & title_tokens)
+        venue_only_overlap = len((query_tokens & venue_tokens) - title_tokens)
+        body_only_overlap = len((query_tokens & body_tokens) - title_tokens - venue_tokens)
+        score = (
+            title_overlap + min(venue_only_overlap, 2) * 0.1 + min(body_only_overlap, 2) * 0.25
+        ) / max(len(query_tokens) ** 0.5, 1)
+        return title_overlap, score
 
     async def collect_for_query(self, run_id: str, query: str) -> dict:
         search_result = await asyncio.to_thread(evidence_provider.search_with_trace, query)
