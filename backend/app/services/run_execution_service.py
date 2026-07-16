@@ -559,6 +559,7 @@ class RunExecutionService:
             self._retry_structural_floor_migration(writing_tasks)
             self._retry_epistemic_audit_migration(writing_tasks)
             self._retry_global_scope_migration(writing_tasks)
+            self._retry_advisor_artifact_conflict_migration(writing_tasks)
             self._retry_advisor_paragraph_restoration(writing_tasks)
             self._retry_advisor_exact_cleanup(writing_tasks)
             self._retry_surgical_chapter_repair(writing_tasks)
@@ -899,6 +900,38 @@ class RunExecutionService:
                 task["run_id"], "review.global_scope_migration", "review",
                 "按宽严适中的全局章节协议重新审核",
                 "复用现有正文；不因可选搬章或有边界的结果预览、方法理由和局限直接判死。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
+        return changed
+
+    def _retry_advisor_artifact_conflict_migration(self, tasks: list[dict]) -> bool:
+        """Re-review one persisted advisor rejection that contradicts the frozen artifact."""
+        changed = False
+        for task in tasks:
+            review = task.get("review_result") or {}
+            latest = (task.get("outputs") or [{}])[-1]
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and (review.get("quality_gates") or {}).get("passed") is True
+                and thesis_chapter_service.advisor_feedback_conflicts_with_artifact(
+                    task, latest, str(review.get("feedback") or ""),
+                )
+                and not self._has_task_event(task, "review.advisor_artifact_conflict_migration")
+            ):
+                continue
+            TaskRepository.update_status(
+                task["id"], "running", blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "review.advisor_artifact_conflict_migration", "review",
+                "导师工件冲突按新仲裁协议重审",
+                "复用现有章节与已通过的科学硬门；不修改正文或增加章节 attempt。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
             )
             changed = True
