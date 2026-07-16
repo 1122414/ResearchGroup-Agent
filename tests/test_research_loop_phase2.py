@@ -70,6 +70,15 @@ def test_crossref_query_keeps_topic_and_drops_comparison_scaffolding():
     assert query == "government education expenditure GDP"
 
 
+def test_scholarly_query_drops_workflow_prose_but_keeps_domain_terms():
+    query = evidence_provider._scholarly_query(
+        "In the frozen snapshot, how does reported government education expenditure differ? "
+        "Produce the complete dissertation within the attached data contract."
+    )
+
+    assert query == "government education expenditure"
+
+
 def test_all_scholarly_providers_reuse_the_same_core_query():
     import inspect
 

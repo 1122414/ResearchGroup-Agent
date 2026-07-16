@@ -156,7 +156,10 @@ class EvidenceProvider:
         """Keep provider queries concise; Crossref handles concepts better than Boolean prose."""
         ignored = {
             "and", "or", "not", "the", "a", "an", "of", "for", "to", "in", "on",
-            "with", "by", "from", "study", "research", "analysis", "evidence", "review",
+            "with", "by", "from", "as", "at", "is", "are", "be", "how", "does",
+            "this", "that", "these", "those", "study", "research", "analysis", "evidence", "review",
+            "reported", "frozen", "snapshot", "differ", "produce", "complete", "dissertation",
+            "within", "contract", "attached", "data",
             "percentage", "percent", "share", "versus", "vs", "between", "country",
             "countries", "economy", "economies", "group", "groups", "comparative",
             "comparison", "cross-country", "descriptive", "statistics", "statistical",

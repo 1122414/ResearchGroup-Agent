@@ -435,23 +435,35 @@ class EvidencePipelineService:
         query_tokens = self._relevance_tokens(query)
         if not query_tokens:
             return sources
+        core_tokens = self._relevance_tokens(evidence_provider._scholarly_query(query))
         scholarly_providers = {"crossref", "openalex", "arxiv", "semantic_scholar"}
         scored = [
-            (*self._source_relevance(source, query_tokens), index, source)
+            (
+                *self._source_relevance(source, query_tokens),
+                self._source_relevance(source, core_tokens)[0] if core_tokens else 0,
+                index,
+                source,
+            )
             for index, source in enumerate(sources)
             if len(str(source.get("title") or "")) <= 500
         ]
         required_overlap = self._required_heading_overlap(query_tokens)
         if scored and max(item[0] for item in scored) >= required_overlap:
             scored = [item for item in scored if item[0] >= required_overlap]
+        core_required = min(3, len(core_tokens))
+        core_matches = [item for item in scored if item[2] >= core_required]
+        if core_required and len(core_matches) >= min(2, len(scored)):
+            scored = core_matches
         return [
             source
-            for _, score, _, source in sorted(
+            for _, score, _, _, source in sorted(
                 scored,
                 key=lambda item: (
-                    (item[3].get("metadata") or {}).get("provider") not in scholarly_providers,
+                    (item[4].get("metadata") or {}).get("provider") not in scholarly_providers,
+                    (item[4].get("metadata") or {}).get("type")
+                    in {"component", "reference-entry", "peer-review"},
                     -item[1],
-                    item[2],
+                    item[3],
                 ),
             )
         ]

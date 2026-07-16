@@ -389,6 +389,53 @@ def test_relevance_ranking_does_not_reward_accidental_long_fulltext_overlap():
     assert [source["id"] for source in ranked] == ["education"]
 
 
+def test_relevance_ranking_requires_core_topic_when_multiple_strong_matches_exist():
+    sources = [
+        {
+            "id": "comparison_shell",
+            "title": "Greenhouse gas emission GDP tertiary education high income lower middle income comparison",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "id": "substantive_one",
+            "title": "Government expenditure on education in World Bank models",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "id": "substantive_two",
+            "title": "Impact of government expenditure on education and GDP",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+    query = (
+        "government education expenditure as percentage of GDP high-income lower-middle-income "
+        "comparison World Bank 2022"
+    )
+
+    ranked = evidence_pipeline_service._rank_by_relevance(sources, query)
+
+    assert {source["id"] for source in ranked} == {"substantive_one", "substantive_two"}
+
+
+def test_relevance_ranking_keeps_component_after_substantive_work():
+    sources = [
+        {
+            "id": "figure", "title": "Government expenditure on education as a share of GDP",
+            "metadata": {"provider": "crossref", "type": "component"},
+        },
+        {
+            "id": "article", "title": "Government expenditure on education and GDP",
+            "metadata": {"provider": "crossref", "type": "journal-article"},
+        },
+    ]
+
+    ranked = evidence_pipeline_service._rank_by_relevance(
+        sources, "government education expenditure GDP",
+    )
+
+    assert [source["id"] for source in ranked] == ["article", "figure"]
+
+
 def test_relevance_ranking_rejects_malformed_page_sized_title():
     sources = [
         {
