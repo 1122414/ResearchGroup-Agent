@@ -84,10 +84,16 @@ class ScientificQualityGateService:
             ]
             if not valid_links and not self._artifact_backed_research_claim(run_id, claim):
                 issues["semantic"].append(f"supported_claim_without_verified_link:{claim['id']}")
-        if brief.get("research_type") in {"empirical", "mixed"} and not any(
-            (item.get("metrics") or {}).get("publishable") is True for item in results
-        ):
-            issues["method"].append("empirical_report_without_publishable_experiment")
+        if brief.get("research_type") in {"empirical", "mixed"}:
+            requirement = research_method_registry_service.result_evidence_requirement(brief)
+            if requirement == "publishable_experiment" and not any(
+                (item.get("metrics") or {}).get("publishable") is True for item in results
+            ):
+                issues["method"].append("empirical_report_without_publishable_experiment")
+            elif requirement == "verified_analysis" and not research_method_registry_service.verified_analysis_artifacts(
+                tasks, brief,
+            ):
+                issues["method"].append("empirical_report_without_verified_analysis")
         for task in tasks:
             if task.get("task_type") == "report_writing" or task.get("status") != "completed":
                 continue

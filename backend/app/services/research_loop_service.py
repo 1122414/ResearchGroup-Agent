@@ -27,6 +27,7 @@ from .experiment_domain_service import experiment_domain_service
 from .evidence_pipeline_service import EvidencePipelineService
 from .knowledge_graph_service import knowledge_graph_service
 from .research_loop_critic_service import research_loop_critic_service
+from .research_method_registry_service import research_method_registry_service
 from .run_event_service import run_event_service
 from .task_graph_service import task_graph_service
 
@@ -241,6 +242,7 @@ class ResearchLoopService:
         evidence = EvidenceRepository.get_by_run(run_id)
         results = ExperimentResultRepository.get_by_run(run_id)
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
+        tasks = TaskRepository.get_all(run_id=run_id)
         usage = self._loop_usage_summary(run_id)
         auditable_claims = [item for item in claims if item["status"] != "retracted"]
         supported = [item for item in auditable_claims if item["status"] == "supported"]
@@ -256,7 +258,14 @@ class ResearchLoopService:
         citation_source_count = self._unique_source_count(linked_sources)
         coverage = len(supported) / len(auditable_claims) if auditable_claims else 0.0
         publishable = [item for item in results if (item.get("metrics") or {}).get("publishable") is True]
-        actionable_high = self._actionable_high_uncertainties(uncertainties, bool(publishable))
+        analyses = research_method_registry_service.verified_analysis_artifacts(tasks, brief)
+        result_requirement = research_method_registry_service.result_evidence_requirement(brief)
+        method_result_ready = bool(
+            result_requirement == "none"
+            or (result_requirement == "publishable_experiment" and publishable)
+            or (result_requirement == "verified_analysis" and analyses)
+        )
+        actionable_high = self._actionable_high_uncertainties(uncertainties, method_result_ready)
         thesis_requirements = brief.get("thesis_requirements") or {}
         thesis_confirmed = thesis_requirements.get("status") == "confirmed"
         required_claims = max(1, int(thesis_requirements.get("minimum_supported_claims") or 1))
@@ -268,6 +277,10 @@ class ResearchLoopService:
             "contested_claim_count": len([item for item in claims if item["status"] == "contested"]),
             "active_hypothesis_count": len([item for item in hypotheses if item["status"] in {"active", "proposed"}]),
             "publishable_experiment_count": len(publishable),
+            "verified_analysis_count": len(analyses),
+            "methodology_family": brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family"),
+            "result_evidence_requirement": result_requirement,
+            "method_result_ready": method_result_ready,
             "high_uncertainty_count": len(actionable_high),
             "citation_source_count": citation_source_count,
             "required_supported_claim_count": required_claims,
@@ -286,10 +299,7 @@ class ResearchLoopService:
             and values["contested_claim_count"] == 0 and values["high_uncertainty_count"] == 0
             and (not thesis_confirmed or len(supported) >= required_claims)
             and (not thesis_confirmed or citation_source_count >= required_references)
-            and (
-                brief.get("research_type") not in {"empirical", "mixed"}
-                or values["publishable_experiment_count"] > 0
-            )
+            and method_result_ready
         )
         return values
 
@@ -336,9 +346,10 @@ class ResearchLoopService:
                     "contested_claim" if claim["status"] == "contested" else "unsupported_claim",
                     claim["id"], f"核验 claim：{claim['statement']}", "literature_survey", 0.85,
                 ))
-        publishable_exists = any((item.get("metrics") or {}).get("publishable") is True for item in results)
+        result_requirement = state.get("result_evidence_requirement") or research_method_registry_service.result_evidence_requirement(brief)
+        method_result_ready = bool(state.get("method_result_ready"))
         actionable_uncertainty_ids = {
-            item["id"] for item in self._actionable_high_uncertainties(uncertainties, publishable_exists)
+            item["id"] for item in self._actionable_high_uncertainties(uncertainties, method_result_ready)
         }
         for uncertainty in uncertainties:
             if uncertainty["id"] in actionable_uncertainty_ids:
@@ -346,7 +357,7 @@ class ResearchLoopService:
                     "high_uncertainty", uncertainty["id"], uncertainty["description"], "literature_survey", 0.8,
                 ))
 
-        if brief.get("research_type") in {"empirical", "mixed"}:
+        if result_requirement == "publishable_experiment":
             supported_hypotheses = [item for item in hypotheses if item.get("status") == "supported"]
             protocol_hypothesis_ids = {item["hypothesis_id"] for item in protocols}
             publishable_result_ids = {
@@ -390,6 +401,12 @@ class ResearchLoopService:
             for hypothesis_id in protocol_hypothesis_ids - finding_hypothesis_ids:
                 if not any(hypothesis_id in item for item in human):
                     human.append(f"协议对应假设 {hypothesis_id} 尚无通过复现的 finding，需要诊断或人工介入")
+        elif result_requirement == "verified_analysis" and not method_result_ready:
+            gaps.append(self._gap(
+                "missing_verified_analysis", "run",
+                "当前方法范式尚无通过方法专用质量门和真实独立审查的可追溯分析工件",
+                "result_analysis", 0.95,
+            ))
 
         if state["source_count"] and not claims:
             gaps.append(self._gap("claim_synthesis", "run", "已有证据但尚未形成可核验 claim", "literature_survey", 0.75))
@@ -417,14 +434,14 @@ class ResearchLoopService:
         )
         return self._gap("thesis_evidence_coverage", "run", reason, "literature_survey", 0.9)
 
-    def _actionable_high_uncertainties(self, uncertainties: list[dict], publishable_exists: bool) -> list[dict]:
+    def _actionable_high_uncertainties(self, uncertainties: list[dict], method_result_ready: bool) -> list[dict]:
         return [
             item for item in uncertainties
             if item.get("status") == "open"
             and item.get("severity") == "high"
             and not self._is_scope_boundary(str(item.get("description") or ""))
             and not (
-                publishable_exists
+                method_result_ready
                 and any(
                     marker in str(item.get("description") or "").lower()
                     for marker in self.EXPERIMENT_QUESTION_MARKERS
@@ -559,6 +576,7 @@ class ResearchLoopService:
         gain += max(after.get("citation_source_count", 0) - before.get("citation_source_count", 0), 0) * 0.2
         gain += max(before.get("contested_claim_count", 0) - after.get("contested_claim_count", 0), 0) * 0.2
         gain += max(after.get("publishable_experiment_count", 0) - before.get("publishable_experiment_count", 0), 0) * 0.3
+        gain += max(after.get("verified_analysis_count", 0) - before.get("verified_analysis_count", 0), 0) * 0.3
         gain += max(before.get("high_uncertainty_count", 0) - after.get("high_uncertainty_count", 0), 0) * 0.2
         return round(min(gain, 1.0), 4)
 

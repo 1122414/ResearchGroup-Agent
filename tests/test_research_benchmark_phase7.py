@@ -634,3 +634,49 @@ def test_simulated_review_can_make_draft_but_not_publishable(monkeypatch):
         "run_1", "# Thesis\n\n## 参考文献\n", {"passed": True},
     )
     assert quality["publication_ready"] is True
+
+
+def test_quantitative_report_accepts_verified_analysis_instead_of_fake_experiment(monkeypatch):
+    evidence = {
+        "sources": [{"id": "s1", "metadata": {"citation_eligible": True}}],
+        "excerpts": [{"id": "p1", "source_id": "s1", "excerpt_type": "fulltext"}],
+        "links": [{"claim_id": "c1", "source_id": "s1", "excerpt_id": "p1", "relation_type": "supports"}],
+        "claims": [], "assessments": [],
+    }
+    artifact = {
+        "family": "quantitative", "input_hashes": ["input-sha"], "procedure": "deterministic",
+        "findings": [{"difference": 0.1}], "limitations": ["descriptive"],
+        "method_checks": {
+            name: {"status": "passed", "evidence": name}
+            for name in ("measurement_validity", "missing_data", "effect_size", "uncertainty", "robustness")
+        },
+    }
+    task = {
+        "id": "analysis", "task_type": "result_analysis", "status": "completed",
+        "outputs": [{"analysis_artifact": artifact}],
+        "review_result": {
+            "approved": True,
+            "quality_gates": {
+                "passed": True,
+                "layers": {"independent_review": {"passed": True, "simulation": False}},
+            },
+        },
+    }
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: evidence)
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [{"id": "c1", "status": "supported"}])
+    monkeypatch.setattr(ResearchBriefRepository, "get_by_run", lambda _run_id: {
+        "research_type": "empirical", "methodology_family": "quantitative",
+    })
+    monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [task])
+
+    quality = scientific_quality_gate_service.evaluate_report(
+        "run_quantitative", "# Thesis\n\n## 参考文献\n", {"passed": True},
+    )
+
+    assert quality["layers"]["method"]["passed"] is True
+    task["review_result"]["quality_gates"]["layers"]["independent_review"]["simulation"] = True
+    blocked = scientific_quality_gate_service.evaluate_report(
+        "run_quantitative", "# Thesis\n\n## 参考文献\n", {"passed": True},
+    )
+    assert blocked["layers"]["method"]["issues"] == ["empirical_report_without_verified_analysis"]

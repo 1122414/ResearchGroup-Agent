@@ -26,6 +26,51 @@ class ResearchMethodRegistryService:
         "mixed_methods": {"component_quality", "integration_design", "joint_display", "discordance_analysis", "meta_inference"},
     }
 
+    @staticmethod
+    def result_evidence_requirement(brief: dict) -> str:
+        family = brief.get("methodology_family") or (brief.get("methodology_profile") or {}).get("family")
+        if family in {"computational", "experimental"}:
+            return "publishable_experiment"
+        if family:
+            return "verified_analysis"
+        if brief.get("research_type") in {"empirical", "mixed"}:
+            return "publishable_experiment"
+        return "none"
+
+    def verified_analysis_artifacts(self, tasks: list[dict], brief: dict) -> list[dict]:
+        completed_revision_parents = {
+            task.get("revision_of_task_id")
+            for task in tasks
+            if task.get("status") == "completed" and task.get("revision_of_task_id")
+        }
+        verified: list[dict] = []
+        seen: set[str] = set()
+        for task in tasks:
+            review = task.get("review_result") or {}
+            quality = review.get("quality_gates") or {}
+            independent = (quality.get("layers") or {}).get("independent_review") or {}
+            outputs = task.get("outputs") or []
+            latest = outputs[-1] if outputs and isinstance(outputs[-1], dict) else {}
+            artifact = latest.get("analysis_artifact") if isinstance(latest, dict) else None
+            if not (
+                task.get("task_type") == "result_analysis"
+                and task.get("status") == "completed"
+                and task.get("id") not in completed_revision_parents
+                and review.get("approved") is True
+                and quality.get("passed") is True
+                and independent.get("passed") is True
+                and independent.get("simulation") is False
+                and isinstance(artifact, dict)
+                and not self.validate_task(task, latest, brief)
+            ):
+                continue
+            identity = str(artifact.get("artifact_sha256") or artifact.get("artifact") or task.get("id"))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            verified.append(artifact)
+        return verified
+
     def requirements_for(self, brief: dict) -> dict:
         profile = brief.get("methodology_profile") or {}
         family = brief.get("methodology_family") or profile.get("family") or ""

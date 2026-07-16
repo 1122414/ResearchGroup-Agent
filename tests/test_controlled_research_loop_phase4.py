@@ -5,7 +5,9 @@ from backend.app.services.research_loop_service import research_loop_service
 from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.storage.repositories import (
-    ApprovalRequestRepository, LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository,
+    ApprovalRequestRepository, EvidenceRepository, ExperimentResultRepository, LLMUsageRepository,
+    ResearchBriefRepository, ResearchClaimRepository, ResearchHypothesisRepository,
+    ResearchUncertaintyRepository, RunEventRepository, RunRepository, TaskRepository,
 )
 
 
@@ -79,6 +81,67 @@ def test_new_unique_citation_counts_as_information_gain():
         {"status": "completed", "outputs": [{}]},
     )
     assert gain == 0.2
+
+
+def test_quantitative_analysis_satisfies_result_gate_without_experiment(monkeypatch):
+    artifact = {
+        "family": "quantitative", "input_hashes": ["input-sha"],
+        "procedure": "deterministic group comparison", "findings": [{"difference": 0.1}],
+        "limitations": ["descriptive only"],
+        "method_checks": {
+            name: {"status": "passed", "evidence": name}
+            for name in ("measurement_validity", "missing_data", "effect_size", "uncertainty", "robustness")
+        },
+        "artifact": "/tmp/analysis.json", "artifact_sha256": "analysis-sha",
+    }
+    analysis_task = {
+        "id": "analysis_revision", "task_type": "result_analysis", "status": "completed",
+        "outputs": [{"analysis_artifact": artifact}],
+        "review_result": {
+            "approved": True,
+            "quality_gates": {
+                "passed": True,
+                "layers": {"independent_review": {"passed": True, "simulation": False}},
+            },
+        },
+    }
+    brief = {
+        "research_type": "empirical", "methodology_family": "quantitative",
+        "thesis_requirements": {
+            "status": "confirmed", "minimum_supported_claims": 1, "minimum_references": 1,
+        },
+    }
+    monkeypatch.setattr(
+        "backend.app.services.research_loop_service.knowledge_graph_service.synchronize_review_status",
+        lambda _run_id: None,
+    )
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [{"id": "c1", "status": "supported"}])
+    monkeypatch.setattr(ResearchHypothesisRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(ResearchUncertaintyRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {
+        "sources": [{"id": "s1", "url": "https://example.test/source"}],
+        "excerpts": [{"id": "p1", "source_id": "s1"}],
+        "links": [{"claim_id": "c1", "source_id": "s1", "relation_type": "supports"}],
+    })
+    monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(ResearchBriefRepository, "get_by_run", lambda _run_id: brief)
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [analysis_task])
+    monkeypatch.setattr(research_loop_service, "_loop_usage_summary", lambda _run_id: {
+        "total_tokens": 0, "total_cost_usd": 0.0,
+    })
+
+    state = research_loop_service._state("run_quantitative")
+
+    assert state["publishable_experiment_count"] == 0
+    assert state["verified_analysis_count"] == 1
+    assert state["result_evidence_requirement"] == "verified_analysis"
+    assert state["method_result_ready"] is True
+    assert state["ready_to_report"] is True
+
+    analysis_task["review_result"]["quality_gates"]["layers"]["independent_review"]["simulation"] = True
+    blocked = research_loop_service._state("run_quantitative")
+    assert blocked["verified_analysis_count"] == 0
+    assert blocked["ready_to_report"] is False
 
 
 def test_duplicate_source_ids_with_same_url_count_once():
