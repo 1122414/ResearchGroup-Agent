@@ -830,7 +830,7 @@ class RunExecutionService:
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and reviewer == "independent_reviewer_model_paragraph_audit"
-                and repair_round < 3
+                and repair_round < 5
                 and task.get("outputs")
             ):
                 continue
@@ -840,6 +840,12 @@ class RunExecutionService:
             if not repaired["changes"]:
                 continue
             result = repaired["result"]
+            issue_count = len(
+                ((((task.get("review_result") or {}).get("quality_gates") or {}).get("layers") or {})
+                 .get("independent_review", {}).get("issues") or [])
+            )
+            words_before = thesis_chapter_service.word_count(task, task["outputs"][-1])
+            words_after = thesis_chapter_service.word_count(task, result)
             TaskRepository.update_status(
                 task["id"], "running", outputs=[result], blocked_reason=None,
                 review_result=None, review_feedback=None,
@@ -862,6 +868,8 @@ class RunExecutionService:
                 payload={
                     "round": repair_round + 1, "changes": repaired["changes"],
                     "unresolved_count": len(repaired["unresolved"]),
+                    "issue_count": issue_count,
+                    "word_count_before": words_before, "word_count_after": words_after,
                     "attempt_count": task.get("attempt_count"),
                 },
             )
