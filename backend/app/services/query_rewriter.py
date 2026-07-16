@@ -26,6 +26,8 @@ class QueryRewriter:
     async def rewrite(self, goal: str, task: dict | None = None, feedback: str = "") -> list[str]:
         goal = primary_goal(str(goal or "")).strip()
         title = str((task or {}).get("title") or "").strip()
+        if title.startswith("[循环R"):
+            title = ""
         base = " ".join(item for item in [goal, title] if item).strip()
         limit = max(1, settings.research_agent_max_queries_per_iteration)
 
@@ -43,7 +45,7 @@ class QueryRewriter:
         return queries[:limit]
 
     async def _llm_rewrite(self, base: str, feedback: str, limit: int) -> list[str]:
-        feedback_block = f"\n上一轮审核反馈（请据此补检索缺口）：{feedback}" if feedback else ""
+        feedback_block = f"\n上一轮审核反馈（请据此补检索缺口）：{feedback[:1200]}" if feedback else ""
         prompt = (
             "你是科研检索专家。请把下面的研究目标改写为 "
             f"{limit} 条精确、可直接用于学术检索引擎的查询语句。"

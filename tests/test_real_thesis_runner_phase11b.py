@@ -17,6 +17,7 @@ from benchmarks.run_real_thesis import (
 from backend.app.services.research_contract_service import research_contract_service
 from backend.app.api.routes_runs import _persist_attachment_sources, _save_and_extract_attachments
 from backend.app.services.artifact_manifest_service import artifact_manifest_service
+from backend.app.services.evidence_pipeline_service import evidence_pipeline_service
 from backend.app.storage.repositories import EvidenceRepository, FullTextDocumentRepository
 
 
@@ -137,6 +138,7 @@ def test_traceable_attachment_becomes_hashed_primary_evidence(tmp_path):
     assert _persist_attachment_sources(run_id, extracted) == 1
     evidence = EvidenceRepository.get_by_run(run_id)
     source = evidence["sources"][0]
+    assert source["id"].startswith("source_")
     assert source["title"].startswith("World Bank education expenditure")
     assert source["source_type"] == "dataset"
     assert source["metadata"]["origin"] == "user_attachment"
@@ -145,3 +147,6 @@ def test_traceable_attachment_becomes_hashed_primary_evidence(tmp_path):
     assert len(source["metadata"]["snapshot_sha256"]) == 64
     assert evidence["excerpts"] and evidence["excerpts"][0]["excerpt_type"] == "fulltext"
     assert FullTextDocumentRepository.get_by_run(run_id)[0]["parser"] == "uploaded_snapshot"
+
+    normalized_again = evidence_pipeline_service._normalize_source(source, {"run_id": run_id, "id": "task_literature"})
+    assert normalized_again["id"] == source["id"]

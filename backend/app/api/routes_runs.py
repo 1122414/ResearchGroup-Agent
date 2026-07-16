@@ -253,12 +253,8 @@ def _persist_attachment_sources(run_id: str, attachments: list[dict]) -> int:
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         snapshot_hash = hashlib.sha256(path.read_bytes()).hexdigest()
         metadata = _attachment_bibliography(item, text)
-        source_id = f"attachment_source_{run_id.removeprefix('run_')}_{content_hash[:10]}"
-        document_id = f"attachment_document_{run_id.removeprefix('run_')}_{content_hash[:10]}"
-        now = datetime.now().isoformat()
-        EvidenceRepository.upsert_source(
+        source = evidence_pipeline_service._normalize_source(
             {
-                "id": source_id, "run_id": run_id, "task_id": None,
                 "title": metadata["title"], "authors": metadata["authors"],
                 "year": metadata["year"], "venue": metadata["venue"],
                 "doi": None, "url": source_url, "source_type": metadata["source_type"],
@@ -271,7 +267,15 @@ def _persist_attachment_sources(run_id: str, attachments: list[dict]) -> int:
                     "verification_status": "user_attachment_integrity_verified",
                     "citation_eligible": True, "content": text[:2000],
                 },
-                "created_at": now,
+            },
+            {"run_id": run_id, "id": None},
+        )
+        source_id = source["id"]
+        document_id = f"attachment_document_{run_id.removeprefix('run_')}_{content_hash[:10]}"
+        now = datetime.now().isoformat()
+        EvidenceRepository.upsert_source(
+            {
+                **source, "run_id": run_id, "task_id": None, "created_at": now,
             }
         )
         FullTextDocumentRepository.insert(

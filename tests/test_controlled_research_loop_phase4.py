@@ -63,13 +63,30 @@ def test_snapshot_stops_instead_of_repeating_same_action(monkeypatch):
     assert "已执行过" in snapshot["stop_reason"]
 
 
-def test_completed_bounded_negative_result_counts_as_small_information_gain():
+def test_completed_bounded_negative_result_has_no_information_gain():
     gain = research_loop_service._information_gain(
         _state(),
         _state(),
         {"status": "completed", "outputs": [{"insufficient_evidence": True}]},
     )
-    assert gain == 0.05
+    assert gain == 0.0
+
+
+def test_new_unique_citation_counts_as_information_gain():
+    gain = research_loop_service._information_gain(
+        _state(citation_source_count=2),
+        _state(citation_source_count=3),
+        {"status": "completed", "outputs": [{}]},
+    )
+    assert gain == 0.2
+
+
+def test_duplicate_source_ids_with_same_url_count_once():
+    sources = [
+        {"id": "attachment_source_1", "title": "Dataset", "url": "https://example.org/data?a=1", "metadata": {}},
+        {"id": "source_2", "title": "Dataset", "url": "https://example.org/data?a=2", "metadata": {"canonical_id": "attachment_source_1"}},
+    ]
+    assert research_loop_service._unique_source_count(sources) == 1
 
 
 def test_thesis_contract_creates_evidence_coverage_gap_without_lowering_thresholds():

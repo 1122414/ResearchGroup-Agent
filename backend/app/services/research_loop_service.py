@@ -24,6 +24,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .experiment_domain_service import experiment_domain_service
+from .evidence_pipeline_service import EvidencePipelineService
 from .research_loop_critic_service import research_loop_critic_service
 from .run_event_service import run_event_service
 from .task_graph_service import task_graph_service
@@ -242,10 +243,15 @@ class ResearchLoopService:
         auditable_claims = [item for item in claims if item["status"] != "retracted"]
         supported = [item for item in auditable_claims if item["status"] == "supported"]
         supported_ids = {item["id"] for item in supported}
-        citation_source_count = len({
-            item["source_id"] for item in evidence["links"]
-            if item.get("claim_id") in supported_ids and item.get("relation_type") == "supports"
-        })
+        sources_by_id = {item["id"]: item for item in evidence["sources"]}
+        linked_sources = [
+            sources_by_id[item["source_id"]]
+            for item in evidence["links"]
+            if item.get("claim_id") in supported_ids
+            and item.get("relation_type") == "supports"
+            and item.get("source_id") in sources_by_id
+        ]
+        citation_source_count = self._unique_source_count(linked_sources)
         coverage = len(supported) / len(auditable_claims) if auditable_claims else 0.0
         publishable = [item for item in results if (item.get("metrics") or {}).get("publishable") is True]
         actionable_high = self._actionable_high_uncertainties(uncertainties, bool(publishable))
@@ -254,7 +260,8 @@ class ResearchLoopService:
         required_claims = max(1, int(thesis_requirements.get("minimum_supported_claims") or 1))
         required_references = max(1, int(thesis_requirements.get("minimum_references") or 1))
         values = {
-            "source_count": len(evidence["sources"]), "passage_count": len(evidence["excerpts"]),
+            "source_count": self._unique_source_count(evidence["sources"]),
+            "passage_count": len(evidence["excerpts"]),
             "claim_count": len(auditable_claims), "supported_claim_count": len(supported),
             "contested_claim_count": len([item for item in claims if item["status"] == "contested"]),
             "active_hypothesis_count": len([item for item in hypotheses if item["status"] in {"active", "proposed"}]),
@@ -283,6 +290,10 @@ class ResearchLoopService:
             )
         )
         return values
+
+    @staticmethod
+    def _unique_source_count(sources: list[dict]) -> int:
+        return len({EvidencePipelineService._source_identity(item) for item in sources})
 
     @staticmethod
     def _loop_usage_summary(run_id: str) -> dict:
@@ -543,11 +554,10 @@ class ResearchLoopService:
         gain = 0.0
         gain += max(after.get("passage_count", 0) - before.get("passage_count", 0), 0) * 0.05
         gain += max(after.get("supported_claim_count", 0) - before.get("supported_claim_count", 0), 0) * 0.2
+        gain += max(after.get("citation_source_count", 0) - before.get("citation_source_count", 0), 0) * 0.2
         gain += max(before.get("contested_claim_count", 0) - after.get("contested_claim_count", 0), 0) * 0.2
         gain += max(after.get("publishable_experiment_count", 0) - before.get("publishable_experiment_count", 0), 0) * 0.3
         gain += max(before.get("high_uncertainty_count", 0) - after.get("high_uncertainty_count", 0), 0) * 0.2
-        if task.get("status") == "completed" and task.get("outputs"):
-            gain = max(gain, 0.05)
         return round(min(gain, 1.0), 4)
 
     @staticmethod

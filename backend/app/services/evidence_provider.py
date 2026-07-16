@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -87,7 +88,7 @@ class EvidenceProvider:
 
     def _search_crossref(self, query: str) -> tuple[list[dict], str | None]:
         params = {
-            "query": query,
+            "query": self._scholarly_query(query),
             "rows": settings.evidence_search_max_results,
         }
         if settings.crossref_mailto:
@@ -142,6 +143,25 @@ class EvidenceProvider:
                 }
             )
         return normalized, None
+
+    @staticmethod
+    def _scholarly_query(query: str, max_terms: int = 16) -> str:
+        """Keep provider queries concise; Crossref handles concepts better than Boolean prose."""
+        ignored = {
+            "and", "or", "not", "the", "a", "an", "of", "for", "to", "in", "on",
+            "with", "by", "from", "study", "research", "analysis", "evidence", "review",
+        }
+        terms: list[str] = []
+        seen: set[str] = set()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", str(query or "")):
+            key = token.lower()
+            if key in ignored or key in seen:
+                continue
+            seen.add(key)
+            terms.append(token)
+            if len(terms) >= max_terms:
+                break
+        return " ".join(terms) or str(query or "")[:240]
 
     def _search_openalex(self, query: str) -> tuple[list[dict], str | None]:
         params = {

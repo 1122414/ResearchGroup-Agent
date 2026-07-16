@@ -548,6 +548,8 @@ class EvidencePipelineService:
         root_task = self._root_task(task)
         run = RunRepository.get_by_id(task.get("run_id")) or {}
         research_question = primary_goal(str(run.get("research_goal") or ""))
+        if research_question and str(root_task.get("title") or "").startswith("[循环R"):
+            return research_question.strip()
         description = str(root_task.get("description") or "").split("## 研究动作契约（非检索词）", 1)[0]
         return " ".join(
             item
@@ -696,10 +698,7 @@ class EvidencePipelineService:
         if doi:
             return f"doi:{doi}"
 
-        identifiers = [
-            metadata.get("canonical_id"), metadata.get("openalex_id"),
-            metadata.get("paper_id"), source.get("url"),
-        ]
+        identifiers = [metadata.get("openalex_id"), metadata.get("paper_id"), source.get("url")]
         for value in identifiers:
             text = str(value or "").strip().lower()
             arxiv = re.search(r"arxiv\.org/(?:abs|html|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?", text)
@@ -713,6 +712,10 @@ class EvidencePipelineService:
                 normalized = normalized.split("#", 1)[0].split("?", 1)[0].rstrip("/")
                 if normalized:
                     return f"id:{normalized}"
+
+        canonical_id = str(metadata.get("canonical_id") or "").strip().lower()
+        if canonical_id and not canonical_id.startswith(("source_", "attachment_source_")):
+            return f"id:{canonical_id}"
 
         title = re.sub(r"\W+", " ", str(source.get("title") or "").lower()).strip()
         authors = re.sub(r"\W+", " ", str(source.get("authors") or "").lower()).strip()
