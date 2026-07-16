@@ -458,7 +458,7 @@ class RunExecutionService:
             research_tasks = [task for task in tasks if not thesis_chapter_service.is_writing_task(task)]
             if not research_tasks:
                 return
-            before = [(task["id"], task.get("status")) for task in research_tasks]
+            before = self._execution_progress(research_tasks)
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="研究任务执行中")
             await self._execute_ready_tasks(run_id, research_tasks)
             await self._review_task_batch(run_id, research_tasks)
@@ -468,7 +468,7 @@ class RunExecutionService:
             latest_research = [task for task in refreshed if not thesis_chapter_service.is_writing_task(task)]
             if all(task.get("status") in {"completed", "failed"} for task in latest_research):
                 return
-            after = [(task["id"], task.get("status")) for task in latest_research]
+            after = self._execution_progress(latest_research)
             if after == before:
                 # No task changed state this round. Before giving up, try to break
                 # any revision dead-lock: tasks stuck in need_revision that can no
@@ -565,7 +565,7 @@ class RunExecutionService:
                 task for task in TaskRepository.get_all(run_id=run_id)
                 if thesis_chapter_service.is_writing_task(task)
             ]
-            before = [(task["id"], task.get("status")) for task in writing_tasks]
+            before = self._execution_progress(writing_tasks)
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="论文章节与总稿写作中")
             await self._execute_ready_tasks(run_id, writing_tasks)
             await self._review_task_batch(run_id, writing_tasks)
@@ -577,10 +577,18 @@ class RunExecutionService:
             ]
             if all(task.get("status") in {"completed", "failed", "archived"} for task in refreshed):
                 return
-            after = [(task["id"], task.get("status")) for task in refreshed]
+            after = self._execution_progress(refreshed)
             if after == before:
                 self._finalize_stuck_revisions(run_id, refreshed)
                 return
+
+    @staticmethod
+    def _execution_progress(tasks: list[dict]) -> list[tuple[str, str | None, int]]:
+        """Include persisted attempts so pending-to-pending revisions still count as progress."""
+        return [
+            (task["id"], task.get("status"), int(task.get("attempt_count") or 0))
+            for task in tasks
+        ]
 
     def _retry_transient_writing_failures(self, tasks: list[dict]) -> bool:
         changed = False

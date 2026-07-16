@@ -127,6 +127,15 @@ def test_run_executor_uses_isolated_research_loop_budget():
     )
 
 
+def test_execution_progress_distinguishes_pending_revision_attempts():
+    before = [{"id": "chapter", "status": "pending", "attempt_count": 5}]
+    after = [{"id": "chapter", "status": "pending", "attempt_count": 6}]
+
+    assert run_execution_service._execution_progress(before) != (
+        run_execution_service._execution_progress(after)
+    )
+
+
 def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
     monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     action = {
