@@ -307,6 +307,30 @@ def test_stuck_old_revision_cannot_fail_completed_family_descendants(monkeypatch
     assert failed_descendants == []
 
 
+def test_restart_revives_only_descendants_failed_by_superseded_revision(monkeypatch):
+    tasks = [
+        {"id": "root", "status": "completed", "revision_of_task_id": None},
+        {"id": "revision", "status": "completed", "revision_of_task_id": "root"},
+        {"id": "legacy_desc", "status": "failed", "blocked_reason": "前置任务失败，无法继续：旧返工耗尽"},
+        {"id": "real_failure", "status": "failed", "blocked_reason": "实验复现失败"},
+    ]
+    by_id = {item["id"]: item for item in tasks}
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: tasks)
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda task_id: by_id.get(task_id))
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: by_id[task_id].update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.task_graph_service.descendants",
+        lambda _run_id, _root_id: ["legacy_desc", "real_failure"],
+    )
+
+    assert run_execution_service._recover_superseded_revision_failures("run_loop") == 1
+    assert by_id["legacy_desc"]["status"] == "pending"
+    assert by_id["real_failure"]["status"] == "failed"
+
+
 def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_not():
     tasks = [
         {"id": "chapter_method", "title": "Methodology", "task_type": "thesis_chapter", "status": "failed"},

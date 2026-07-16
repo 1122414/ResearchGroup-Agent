@@ -59,6 +59,7 @@ class RunExecutionService:
             if len(recovered) >= max(1, settings.run_restart_recovery_limit):
                 break
             run_id = run["id"]
+            self._recover_superseded_revision_failures(run_id)
             for task in TaskRepository.get_all(run_id=run_id):
                 if task.get("status") not in {"running", "waiting_review"}:
                     continue
@@ -104,6 +105,7 @@ class RunExecutionService:
             else:
                 self._ensure_scheduling(tasks, run_id)
                 self._archive_superseded_revisions(run_id)
+                self._recover_superseded_revision_failures(run_id)
 
             if self._has_pending_approval(run_id):
                 return self._pause_for_confirmation(run_id)
@@ -451,6 +453,34 @@ class RunExecutionService:
                     "archived",
                     blocked_reason="已被同一返工链中通过审核的新版本取代。",
                 )
+
+    @staticmethod
+    def _recover_superseded_revision_failures(run_id: str) -> int:
+        """Revive descendants failed only by a legacy stale sibling after its family passed."""
+        tasks = TaskRepository.get_all(run_id=run_id)
+        completed_roots = {
+            task["revision_of_task_id"]
+            for task in tasks
+            if task.get("revision_of_task_id") and task.get("status") == "completed"
+        }
+        revived = 0
+        for root_id in completed_roots:
+            root = TaskRepository.get_by_id(root_id)
+            if not root or root.get("status") != "completed":
+                continue
+            for task_id in task_graph_service.descendants(run_id, root_id):
+                task = TaskRepository.get_by_id(task_id)
+                if not (
+                    task and task.get("status") == "failed"
+                    and str(task.get("blocked_reason") or "").startswith("前置任务失败")
+                ):
+                    continue
+                TaskRepository.update_status(
+                    task_id, "pending", blocked_reason=None,
+                    review_result=None, review_feedback=None,
+                )
+                revived += 1
+        return revived
 
     async def _execute_research_flow(self, run_id: str) -> None:
         while True:
