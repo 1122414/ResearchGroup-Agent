@@ -15,8 +15,9 @@ from benchmarks.run_real_thesis import (
     systematic_review_contract,
 )
 from backend.app.services.research_contract_service import research_contract_service
-from backend.app.api.routes_runs import _save_and_extract_attachments
+from backend.app.api.routes_runs import _persist_attachment_sources, _save_and_extract_attachments
 from backend.app.services.artifact_manifest_service import artifact_manifest_service
+from backend.app.storage.repositories import EvidenceRepository, FullTextDocumentRepository
 
 
 def test_real_thesis_contracts_freeze_actual_programme_limits():
@@ -115,3 +116,32 @@ def test_attachment_index_preserves_source_url_license_and_provenance(tmp_path):
     assert persisted[0]["source_url"] == "https://www.gutenberg.org/ebooks/1"
     assert persisted[0]["license"] == "public domain"
     assert persisted[0]["provenance"] == "Project Gutenberg ebook 1"
+
+
+def test_traceable_attachment_becomes_hashed_primary_evidence(tmp_path):
+    run_id = "run_attachment_evidence"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    artifact_manifest_service.initialize(run_dir, run_id=run_id, display_name="attachment evidence")
+    raw = json.dumps({
+        "title": "World Bank education expenditure snapshot by income group",
+        "records": [{"income_group": "HIC", "value": 5.1}] * 20,
+    }).encode()
+    extracted = _save_and_extract_attachments(run_id, [{
+        "name": "snapshot.json", "mime_type": "application/json", "size": len(raw),
+        "data_url": "data:application/json;base64," + base64.b64encode(raw).decode(),
+        "source_url": "https://api.worldbank.org/v2/indicator/example",
+        "license": "CC BY 4.0", "provenance": "World Bank API",
+    }], run_dir)
+
+    assert _persist_attachment_sources(run_id, extracted) == 1
+    evidence = EvidenceRepository.get_by_run(run_id)
+    source = evidence["sources"][0]
+    assert source["title"].startswith("World Bank education expenditure")
+    assert source["source_type"] == "dataset"
+    assert source["metadata"]["origin"] == "user_attachment"
+    assert source["metadata"]["citation_eligible"] is True
+    assert len(source["metadata"]["content_hash"]) == 64
+    assert len(source["metadata"]["snapshot_sha256"]) == 64
+    assert evidence["excerpts"] and evidence["excerpts"][0]["excerpt_type"] == "fulltext"
+    assert FullTextDocumentRepository.get_by_run(run_id)[0]["parser"] == "uploaded_snapshot"

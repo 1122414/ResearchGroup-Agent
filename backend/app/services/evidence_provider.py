@@ -115,6 +115,13 @@ class EvidenceProvider:
                 or []
             )
             year = published_parts[0][0] if published_parts and published_parts[0] else None
+            landing_url = item.get("URL")
+            links = [link for link in item.get("link") or [] if str(link.get("URL") or "").startswith("http")]
+            fulltext_link = next(
+                (link for link in links if "pdf" in str(link.get("content-type") or "").lower()),
+                links[0] if links else None,
+            )
+            fulltext_url = (fulltext_link or {}).get("URL")
             normalized.append(
                 {
                     "id": item.get("DOI") or "",
@@ -123,12 +130,14 @@ class EvidenceProvider:
                     "year": year,
                     "venue": (item.get("container-title") or [""])[0],
                     "doi": item.get("DOI"),
-                    "url": item.get("URL"),
+                    "url": fulltext_url or landing_url,
                     "source_type": "paper",
                     "metadata": {
                         "provider": "crossref",
                         "type": item.get("type"),
                         "is_referenced_by_count": item.get("is-referenced-by-count"),
+                        "landing_page_url": landing_url,
+                        "fulltext_url": fulltext_url,
                     },
                 }
             )
@@ -159,7 +168,15 @@ class EvidenceProvider:
                 if authorship.get("author", {}).get("display_name")
             )
             primary_location = item.get("primary_location") or {}
-            source = primary_location.get("source") or {}
+            best_oa_location = item.get("best_oa_location") or {}
+            source = (best_oa_location.get("source") or primary_location.get("source") or {})
+            fulltext_url = best_oa_location.get("pdf_url") or primary_location.get("pdf_url")
+            landing_url = (
+                best_oa_location.get("landing_page_url")
+                or primary_location.get("landing_page_url")
+                or item.get("doi")
+                or item.get("id")
+            )
             normalized.append(
                 {
                     "id": self._normalize_doi(item.get("doi")) or item.get("id") or "",
@@ -168,13 +185,15 @@ class EvidenceProvider:
                     "year": item.get("publication_year"),
                     "venue": source.get("display_name") or "",
                     "doi": self._normalize_doi(item.get("doi")),
-                    "url": primary_location.get("landing_page_url") or item.get("doi") or item.get("id"),
+                    "url": fulltext_url or landing_url,
                     "source_type": "paper",
                     "metadata": {
                         "provider": "openalex",
                         "openalex_id": item.get("id"),
                         "cited_by_count": item.get("cited_by_count"),
                         "type": item.get("type"),
+                        "landing_page_url": landing_url,
+                        "fulltext_url": fulltext_url,
                     },
                 }
             )

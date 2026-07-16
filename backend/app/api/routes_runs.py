@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import shutil
 import traceback
@@ -238,6 +239,92 @@ def _save_and_extract_attachments(run_id: str, attachments: list[dict], artifact
     return extracted
 
 
+def _persist_attachment_sources(run_id: str, attachments: list[dict]) -> int:
+    """Register traceable uploaded snapshots as local primary evidence."""
+    count = 0
+    for item in attachments:
+        source_url = str(item.get("source_url") or "").strip()
+        text = str(item.get("extracted_markdown") or "").strip()
+        if not source_url or len(text) < 200:
+            continue
+        path = Path(str(item.get("path") or ""))
+        if not path.is_file():
+            continue
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        snapshot_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        metadata = _attachment_bibliography(item, text)
+        source_id = f"attachment_source_{run_id.removeprefix('run_')}_{content_hash[:10]}"
+        document_id = f"attachment_document_{run_id.removeprefix('run_')}_{content_hash[:10]}"
+        now = datetime.now().isoformat()
+        EvidenceRepository.upsert_source(
+            {
+                "id": source_id, "run_id": run_id, "task_id": None,
+                "title": metadata["title"], "authors": metadata["authors"],
+                "year": metadata["year"], "venue": metadata["venue"],
+                "doi": None, "url": source_url, "source_type": metadata["source_type"],
+                "metadata": {
+                    "provider": "local_attachment", "origin": "user_attachment",
+                    "attachment_integrity_verified": True, "content_hash": content_hash,
+                    "snapshot_sha256": snapshot_hash,
+                    "local_snapshot": f"inputs/{path.name}", "license": item.get("license"),
+                    "declared_provenance": item.get("provenance") or source_url,
+                    "verification_status": "user_attachment_integrity_verified",
+                    "citation_eligible": True, "content": text[:2000],
+                },
+                "created_at": now,
+            }
+        )
+        FullTextDocumentRepository.insert(
+            {
+                "id": document_id, "run_id": run_id, "source_id": source_id,
+                "url": f"inputs/{path.name}", "content_hash": content_hash,
+                "parser": "uploaded_snapshot", "status": "parsed",
+                "char_count": len(text), "created_at": now,
+            }
+        )
+        for index, start in enumerate(range(0, len(text), settings.evidence_excerpt_max_chars)):
+            passage = text[start : start + settings.evidence_excerpt_max_chars].strip()
+            if not passage:
+                continue
+            EvidenceRepository.insert_excerpt(
+                {
+                    "id": f"attachment_excerpt_{uuid.uuid4().hex[:10]}", "run_id": run_id,
+                    "source_id": source_id, "excerpt": passage,
+                    "locator": f"inputs/{path.name}#chars={start}-{start + len(passage)}",
+                    "excerpt_type": "fulltext", "captured_at": now,
+                    "document_id": document_id, "section": "", "page_number": None,
+                    "paragraph_index": index, "content_hash": content_hash,
+                }
+            )
+        count += 1
+    return count
+
+
+def _attachment_bibliography(item: dict, text: str) -> dict:
+    payload = {}
+    if str(item.get("mime_type") or "") == "application/json" or str(item.get("name") or "").endswith(".json"):
+        try:
+            parsed = json.loads(text)
+            payload = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+    title = str(payload.get("title") or item.get("name") or "uploaded research material").strip()
+    authors = payload.get("authors") or payload.get("author") or ""
+    if isinstance(authors, list):
+        authors = ", ".join(str(author) for author in authors)
+    year = payload.get("year")
+    try:
+        year = int(year) if year not in (None, "") else None
+    except (TypeError, ValueError):
+        year = None
+    suffix = Path(str(item.get("name") or "")).suffix.lower()
+    return {
+        "title": title, "authors": str(authors), "year": year,
+        "venue": str(payload.get("publisher") or payload.get("venue") or ""),
+        "source_type": "dataset" if suffix in {".json", ".csv", ".tsv"} else "primary_source",
+    }
+
+
 @router.post("")
 async def create_run(req: RunCreateRequest):
     preflight = _preflight_attachments(req.attachments)
@@ -272,12 +359,15 @@ async def create_run(req: RunCreateRequest):
         "last_event_id": None,
     }
     RunRepository.insert(run)
+    attachment_sources = _persist_attachment_sources(run_id, extracted_attachments)
     research_state_service.ensure_initialized(run)
     seeded = _persist_seed_sources(run_id, req.seed_sources)
     run_event_service.emit(run_id, "run.created", "run", "运行已创建", "已保存研究目标，等待启动")
     if seeded:
         run_event_service.emit(run_id, "run.seed_sources", "run", "已导入种子文献", f"用户提供 {seeded} 篇种子文献作为研究起点")
-    return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "seed_sources": seeded, "preflight": preflight}
+    if attachment_sources:
+        run_event_service.emit(run_id, "run.attachment_sources", "evidence", "已冻结附件证据", f"登记 {attachment_sources} 个带来源 URL 的本地一手快照")
+    return {"run_id": run_id, "status": RunStatus.created.value, "display_name": artifact_meta["display_name"], "artifact_dir": artifact_meta["artifact_dir"], "seed_sources": seeded, "attachment_sources": attachment_sources, "preflight": preflight}
 
 
 def _persist_seed_sources(run_id: str, seeds: list[SeedSource]) -> int:

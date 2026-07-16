@@ -82,6 +82,53 @@ def test_verify_sources_respects_flag(monkeypatch):
     assert result[0]["metadata"]["doi_verification"]["status"] == "no_doi"
 
 
+def test_hashed_user_attachment_is_citation_eligible_without_claiming_remote_identity(monkeypatch):
+    monkeypatch.setattr(settings, "doi_verification_enabled", False)
+    source = {
+        "title": "Frozen official snapshot", "url": "https://example.test/api",
+        "metadata": {
+            "origin": "user_attachment", "provider": "local_attachment",
+            "attachment_integrity_verified": True, "content_hash": "a" * 64,
+        },
+    }
+
+    verified = source_verification_service.verify_sources([source])[0]
+
+    assert verified["metadata"]["verification_status"] == "user_attachment_integrity_verified"
+    assert verified["metadata"]["citation_eligible"] is True
+
+
+def test_loop_prompt_uses_one_bounded_passage_per_source():
+    sources = [{"id": "s1"}, {"id": "s2"}]
+    excerpts = [
+        {"id": "p1", "source_id": "s1", "excerpt": "irrelevant " * 400},
+        {"id": "p2", "source_id": "s1", "excerpt": "education expenditure result"},
+        {"id": "p3", "source_id": "s2", "excerpt": "income group comparison " * 200},
+    ]
+
+    selected = task_executor._bounded_loop_excerpts(sources, excerpts, "education expenditure income group")
+
+    assert [item["id"] for item in selected] == ["p2", "p3"]
+    assert all(len(item["excerpt"]) <= 1800 for item in selected)
+
+
+@pytest.mark.asyncio
+async def test_loop_structured_generation_gets_larger_bounded_output_budget():
+    observed = {}
+
+    class LLM:
+        async def generate(self, **kwargs):
+            observed.update(kwargs)
+            return '{"summary":"ok","claims":[]}'
+
+    result = await task_executor._generate_structured(
+        LLM(), "prompt", {"id": "loop", "run_id": "run_loop", "title": "[循环R1] 补证"}, "agent"
+    )
+
+    assert result["summary"] == "ok"
+    assert observed["max_tokens"] == settings.thesis_chapter_max_tokens
+
+
 def test_grounding_audit_detects_invalid_and_uncited(monkeypatch):
     monkeypatch.setattr(settings, "grounding_audit_enabled", True)
     report = "\n".join(

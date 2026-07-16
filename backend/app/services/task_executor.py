@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 
 from ..core.config import settings
@@ -98,6 +99,10 @@ class TaskExecutor:
             prompt_excerpts = [
                 item for item in evidence_bundle["excerpts"] if item.get("source_id") in prompt_source_ids
             ]
+            if str(task_title).startswith("[循环R"):
+                prompt_excerpts = self._bounded_loop_excerpts(
+                    prompt_sources, prompt_excerpts, evidence_bundle["query"]
+                )
             literature_grounding = f"""
 
 【学术诚信与证据边界】
@@ -119,6 +124,11 @@ class TaskExecutor:
 """
         collaborator_results = await collaborator_service.execute_all(task, literature_grounding)
         collaboration_context = self._collaboration_context(task, collaborator_results)
+        loop_output_requirement = (
+            "10. 补证任务只输出最多 5 条原子 claims；summary 不超过 300 字，"
+            "findings、risks、next_steps 各不超过 5 项，禁止复述全文。"
+            if str(task_title).startswith("[循环R") else ""
+        )
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
 任务标题：{task_title}
@@ -145,6 +155,7 @@ class TaskExecutor:
 7. 不要输出 Markdown，只返回 JSON。
 8. 若存在“方法专用工作包”，必须按 required_object 输出对应对象和全部字段；不得用 summary 代替。
 9. 若存在“论文章节写作契约”，必须输出 chapter 对象；不得自行添加 allowed_support 之外的事实或引用。
+{loop_output_requirement}
 """
 
         llm = create_llm_provider()
@@ -613,6 +624,7 @@ class TaskExecutor:
                 max_tokens=(
                     settings.thesis_chapter_max_tokens
                     if task.get("task_type") == "thesis_chapter"
+                    or str(task.get("title") or "").startswith("[循环R")
                     else None
                 ),
             )
@@ -628,6 +640,27 @@ class TaskExecutor:
                     f"待修复输出：{raw[:4000]}"
                 )
         raise ValueError(f"LLM structured output invalid after {attempts} attempt(s): {last_error}")
+
+    @staticmethod
+    def _bounded_loop_excerpts(sources: list[dict], excerpts: list[dict], query: str) -> list[dict]:
+        """Give each source one concise, most relevant passage in loop actions."""
+        tokens = {
+            token.lower() for token in re.findall(r"[\w\u4e00-\u9fff]+", str(query))
+            if len(token) > 2
+        }
+        selected: list[dict] = []
+        for source in sources:
+            candidates = [item for item in excerpts if item.get("source_id") == source.get("id")]
+            if not candidates:
+                continue
+            best = max(
+                candidates,
+                key=lambda item: len(tokens & set(re.findall(
+                    r"[\w\u4e00-\u9fff]+", str(item.get("excerpt") or "").lower()
+                ))),
+            )
+            selected.append({**best, "excerpt": str(best.get("excerpt") or "")[:1800]})
+        return selected
 
     def _parse_result(self, raw: str) -> dict:
         text = raw.strip()

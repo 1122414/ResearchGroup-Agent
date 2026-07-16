@@ -151,7 +151,11 @@ class BrowserResearchService:
         # are verified again by SourceVerificationService. Sending them through
         # an autonomous browser adds latency and repeated-tab failure modes
         # without strengthening citation identity.
-        untrusted = [source for source in sources if not BrowserResearchService._is_trusted_metadata_source(source)]
+        untrusted = [
+            source for source in sources
+            if not BrowserResearchService._is_trusted_metadata_source(source)
+            and not BrowserResearchService._is_integrity_verified_attachment(source)
+        ]
         return sorted(untrusted, key=priority)[:limit]
 
     @staticmethod
@@ -193,8 +197,22 @@ class BrowserResearchService:
         )
 
     @staticmethod
+    def _is_integrity_verified_attachment(source: dict) -> bool:
+        metadata = source.get("metadata") or {}
+        return bool(
+            metadata.get("origin") == "user_attachment"
+            and metadata.get("attachment_integrity_verified")
+            and metadata.get("content_hash")
+            and source.get("url")
+        )
+
+    @staticmethod
     def _is_fallback_eligible_source(source: dict) -> bool:
-        return BrowserResearchService._is_trusted_metadata_source(source) or BrowserResearchService._is_search_metadata_source(source)
+        return (
+            BrowserResearchService._is_integrity_verified_attachment(source)
+            or BrowserResearchService._is_trusted_metadata_source(source)
+            or BrowserResearchService._is_search_metadata_source(source)
+        )
 
     @staticmethod
     def _fallback_verification_record(

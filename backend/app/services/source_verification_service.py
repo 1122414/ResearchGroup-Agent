@@ -36,6 +36,13 @@ class SourceVerificationService:
     @staticmethod
     def _citation_status(source: dict, metadata: dict, doi_verdict: dict | None) -> tuple[str, bool]:
         """Classify citation identity without pretending metadata proves content."""
+        if (
+            metadata.get("origin") == "user_attachment"
+            and metadata.get("attachment_integrity_verified")
+            and metadata.get("content_hash")
+            and source.get("url")
+        ):
+            return "user_attachment_integrity_verified", True
         if doi_verdict and doi_verdict.get("status") in {"mismatch", "unresolved"}:
             return f"doi_{doi_verdict['status']}", False
         if doi_verdict and doi_verdict.get("verified"):

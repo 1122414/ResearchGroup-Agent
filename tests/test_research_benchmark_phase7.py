@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+import json
 import time
 
 from backend.app.core.config import settings
@@ -70,6 +71,51 @@ def test_remote_evidence_search_uses_its_own_bounded_timeout(monkeypatch):
     assert observed["timeout"] < settings.llm_timeout
 
 
+def test_scholarly_providers_prefer_declared_open_fulltext_urls(monkeypatch):
+    payloads = [
+        {
+            "message": {"items": [{
+                "DOI": "10.1000/open", "title": ["Open article"],
+                "URL": "https://doi.org/10.1000/open",
+                "link": [{"URL": "https://publisher.test/open.pdf", "content-type": "application/pdf"}],
+            }]},
+        },
+        {
+            "results": [{
+                "id": "https://openalex.org/W1", "display_name": "OpenAlex article",
+                "authorships": [], "primary_location": {"landing_page_url": "https://doi.org/10.1000/oa"},
+                "best_oa_location": {"pdf_url": "https://repository.test/oa.pdf", "source": {"display_name": "Repository"}},
+            }],
+        },
+    ]
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+    monkeypatch.setattr(
+        "backend.app.services.evidence_provider.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(payloads.pop(0)),
+    )
+
+    crossref, _ = evidence_provider._search_crossref("open article")
+    openalex, _ = evidence_provider._search_openalex("open article")
+
+    assert crossref[0]["url"] == "https://publisher.test/open.pdf"
+    assert crossref[0]["metadata"]["landing_page_url"].startswith("https://doi.org/")
+    assert openalex[0]["url"] == "https://repository.test/oa.pdf"
+    assert openalex[0]["venue"] == "Repository"
+
+
 @pytest.mark.asyncio
 async def test_browser_discovery_is_only_a_zero_result_fallback(monkeypatch):
     monkeypatch.setattr(
@@ -124,6 +170,28 @@ async def test_trusted_scholarly_metadata_skips_autonomous_browser(monkeypatch):
     }]
     verified = await BrowserResearchService().verify_candidates("RAG chunking", sources)
     assert [source["id"] for source in verified] == ["paper"]
+
+
+@pytest.mark.asyncio
+async def test_hashed_attachment_snapshot_skips_redundant_browser_identity_check(monkeypatch):
+    async def unexpected_agent_call(*_args, **_kwargs):
+        raise AssertionError("a frozen user snapshot must not be discarded by browser availability")
+
+    monkeypatch.setattr(settings, "browser_research_enabled", True)
+    monkeypatch.setattr(settings, "browser_research_provider_mode", "browser_use")
+    monkeypatch.setattr(settings, "browser_verification_enabled", True)
+    monkeypatch.setattr(BrowserResearchService, "_run_agent", unexpected_agent_call)
+    sources = [{
+        "id": "attachment", "title": "Official data snapshot", "url": "https://example.test/api",
+        "source_type": "dataset", "metadata": {
+            "provider": "local_attachment", "origin": "user_attachment",
+            "attachment_integrity_verified": True, "content_hash": "a" * 64,
+        },
+    }]
+
+    verified = await BrowserResearchService().verify_candidates("official data", sources)
+
+    assert [source["id"] for source in verified] == ["attachment"]
 
 
 @pytest.mark.asyncio

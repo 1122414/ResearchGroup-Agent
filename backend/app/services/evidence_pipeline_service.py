@@ -209,15 +209,15 @@ class EvidencePipelineService:
             return []
         return [
             source for source in EvidenceRepository.get_by_run(run_id)["sources"]
-            if (source.get("metadata") or {}).get("origin") == "user_seed"
+            if (source.get("metadata") or {}).get("origin") in {"user_seed", "user_attachment"}
         ]
 
     @staticmethod
     def _prioritize_seed_sources(sources: list[dict]) -> list[dict]:
-        """Keep user-selected scholarly starting points ahead of result truncation."""
+        """Keep frozen user starting materials ahead of result truncation."""
         return sorted(
             sources,
-            key=lambda source: (source.get("metadata") or {}).get("origin") != "user_seed",
+            key=lambda source: (source.get("metadata") or {}).get("origin") not in {"user_seed", "user_attachment"},
         )
 
     async def _gather(self, queries: list[str]) -> tuple[list[dict], list[dict], int]:
