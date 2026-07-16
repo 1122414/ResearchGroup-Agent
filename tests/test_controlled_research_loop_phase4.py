@@ -603,6 +603,50 @@ def test_v3_global_exact_issue_gets_one_bounded_repair(monkeypatch):
     assert events == ["revision.v3_global_exact_repair"]
 
 
+def test_late_support_binding_requires_every_issue_to_name_verified_style_id(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 7, "owner_agent": "writer",
+        "outputs": [{"chapter": {}}],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit_v2",
+            "issues": [{
+                "target": "p1", "reason": "support available",
+                "required_change": "bind experiment:verified to p1",
+            }],
+        }}}},
+    }
+    events = []
+    monkeypatch.setattr(run_execution_service, "_task_event_count", lambda *_args: 5)
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.surgical_repair",
+        lambda *_args: {
+            "result": {"chapter": {}},
+            "changes": [{"target": "p1", "operation": "bind", "support_ids": ["experiment:verified"]}],
+            "unresolved": [],
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.word_count", lambda *_args: 500,
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.OutputRepository.insert", lambda _output: None,
+    )
+    monkeypatch.setattr(run_execution_service, "_revive_dependency_descendants", lambda *_args: None)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_surgical_chapter_repair([task]) is True
+    assert events == ["revision.late_support_binding"]
+
+
 def test_legacy_direct_entailment_audit_rechecks_without_spending_surgical_round(monkeypatch):
     task = {
         "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",

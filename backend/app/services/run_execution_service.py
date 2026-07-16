@@ -924,11 +924,11 @@ class RunExecutionService:
                 and self._has_task_event(task, "revision.global_editorial_repair")
                 and not self._has_task_event(task, "revision.post_editorial_evidence_repair")
             )
-            issue_text = json.dumps(
+            current_issues = (
                 (((task.get("review_result") or {}).get("quality_gates") or {}).get("layers") or {})
-                .get("independent_review", {}).get("issues") or [],
-                ensure_ascii=False,
-            ).casefold()
+                .get("independent_review", {}).get("issues") or []
+            )
+            issue_text = json.dumps(current_issues, ensure_ascii=False).casefold()
             contract_migration = (
                 repair_round >= 5
                 and reviewer == "independent_reviewer_model_paragraph_audit_v2"
@@ -941,6 +941,21 @@ class RunExecutionService:
                 and any(marker in issue_text for marker in ("删除", "移除", "delete", "remove"))
                 and any(marker in issue_text for marker in ("'", "‘", "“"))
                 and not self._has_task_event(task, "revision.v3_global_exact_repair")
+            )
+            late_support_binding = (
+                repair_round >= 5
+                and reviewer == "independent_reviewer_model_paragraph_audit_v2"
+                and bool(current_issues)
+                and all(
+                    any(marker in str(issue.get("required_change") or "").casefold() for marker in (
+                        "bind", "绑定", "补绑",
+                    ))
+                    and any(prefix in str(issue.get("required_change") or "") for prefix in (
+                        "claim_", "experiment:", "brief:",
+                    ))
+                    for issue in current_issues
+                )
+                and not self._has_task_event(task, "revision.late_support_binding")
             )
             legacy_v2_global = reviewer == "independent_reviewer_model" and any(
                 self._has_task_event(task, event_type)
@@ -962,7 +977,8 @@ class RunExecutionService:
                 and (self._is_paragraph_audit_reviewer(reviewer) or editorial_eligible)
                 and (
                     repair_round < 5 or post_restoration or post_editorial
-                    or contract_migration or v3_global_exact or editorial_eligible
+                    or contract_migration or v3_global_exact or late_support_binding
+                    or editorial_eligible
                 )
                 and task.get("outputs")
             ):
@@ -973,7 +989,7 @@ class RunExecutionService:
                 )
                 if (
                     repair_round < 5 or post_restoration or post_editorial
-                    or contract_migration or v3_global_exact
+                    or contract_migration or v3_global_exact or late_support_binding
                 )
                 else {"result": task["outputs"][-1], "changes": [], "unresolved": []}
             )
@@ -1010,9 +1026,11 @@ class RunExecutionService:
             event_type = "revision.global_editorial_repair" if editorial else (
                 "revision.frozen_method_contract_migration" if contract_migration else (
                 "revision.v3_global_exact_repair" if v3_global_exact else (
+                "revision.late_support_binding" if late_support_binding else (
                 "revision.post_editorial_evidence_repair" if post_editorial else (
                 "revision.post_restoration_surgical_repair"
                 if post_restoration else "revision.surgical_chapter_repair"
+                )
                 )
                 )
                 )
@@ -1022,8 +1040,10 @@ class RunExecutionService:
                 "执行一次性全局确定编辑" if editorial else (
                     "冻结方法合同升级后执行一次性证据复查" if contract_migration else (
                     "v3 全局审稿逐字问题执行一次性修复" if v3_global_exact else (
+                    "对已验证支持执行一次性迟到补绑" if late_support_binding else (
                     "全局编辑后执行一次性证据外科复查" if post_editorial else (
                         "恢复段落执行一次性 v2 外科修复" if post_restoration else "章节执行单调外科修复"
+                    )
                     )
                     )
                     )
@@ -1040,6 +1060,7 @@ class RunExecutionService:
                     "post_editorial": post_editorial,
                     "contract_migration": contract_migration,
                     "v3_global_exact": v3_global_exact,
+                    "late_support_binding": late_support_binding,
                     "editorial": editorial,
                 },
             )
