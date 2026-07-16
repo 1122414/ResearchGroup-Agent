@@ -5,9 +5,11 @@ from backend.app.services.research_loop_service import research_loop_service
 from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.storage.repositories import (
-    ApprovalRequestRepository, EvidenceRepository, ExperimentResultRepository, LLMUsageRepository,
+    ApprovalRequestRepository, EvidenceRepository, ExperimentFindingRepository,
+    ExperimentProtocolRepository, ExperimentResultRepository, LLMUsageRepository,
     ResearchBriefRepository, ResearchClaimRepository, ResearchHypothesisRepository,
-    ResearchUncertaintyRepository, RunEventRepository, RunRepository, TaskRepository,
+    ResearchUncertaintyRepository, ReviewDecisionRepository, RunEventRepository, RunRepository,
+    TaskRepository,
 )
 
 
@@ -96,7 +98,10 @@ def test_quantitative_analysis_satisfies_result_gate_without_experiment(monkeypa
     }
     analysis_task = {
         "id": "analysis_revision", "task_type": "result_analysis", "status": "completed",
-        "outputs": [{"analysis_artifact": artifact}],
+        "outputs": [{
+            "analysis_artifact": artifact,
+            "knowledge_graph": {"claim_ids": ["c1"]},
+        }],
         "review_result": {
             "approved": True,
             "quality_gates": {
@@ -115,7 +120,15 @@ def test_quantitative_analysis_satisfies_result_gate_without_experiment(monkeypa
         "backend.app.services.research_loop_service.knowledge_graph_service.synchronize_review_status",
         lambda _run_id: None,
     )
-    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [{"id": "c1", "status": "supported"}])
+    rejected_task = {
+        "id": "rejected_search", "task_type": "literature_survey", "status": "need_revision",
+        "outputs": [{"knowledge_graph": {"claim_ids": ["rejected_draft"]}}],
+        "review_result": {"approved": False},
+    }
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [
+        {"id": "c1", "status": "supported"},
+        {"id": "rejected_draft", "status": "draft", "statement": "Rejected hallucination"},
+    ])
     monkeypatch.setattr(ResearchHypothesisRepository, "get_by_run", lambda _run_id: [])
     monkeypatch.setattr(ResearchUncertaintyRepository, "get_by_run", lambda _run_id: [])
     monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {
@@ -125,7 +138,14 @@ def test_quantitative_analysis_satisfies_result_gate_without_experiment(monkeypa
     })
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [])
     monkeypatch.setattr(ResearchBriefRepository, "get_by_run", lambda _run_id: brief)
-    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [analysis_task])
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [analysis_task, rejected_task])
+    monkeypatch.setattr(ReviewDecisionRepository, "get_by_run", lambda _run_id: [
+        {"task_id": "analysis_revision", "approved": True},
+        {"task_id": "rejected_search", "approved": False},
+    ])
+    monkeypatch.setattr(ExperimentProtocolRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(ExperimentFindingRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     monkeypatch.setattr(research_loop_service, "_loop_usage_summary", lambda _run_id: {
         "total_tokens": 0, "total_cost_usd": 0.0,
     })
@@ -134,9 +154,15 @@ def test_quantitative_analysis_satisfies_result_gate_without_experiment(monkeypa
 
     assert state["publishable_experiment_count"] == 0
     assert state["verified_analysis_count"] == 1
+    assert state["claim_count"] == 1
+    assert state["staged_claim_count"] == 1
+    assert state["claim_coverage"] == 1.0
     assert state["result_evidence_requirement"] == "verified_analysis"
     assert state["method_result_ready"] is True
     assert state["ready_to_report"] is True
+    gaps, human = research_loop_service._gaps("run_quantitative", state)
+    assert gaps == []
+    assert human == []
 
     analysis_task["review_result"]["quality_gates"]["layers"]["independent_review"]["simulation"] = True
     blocked = research_loop_service._state("run_quantitative")

@@ -236,9 +236,15 @@ class ResearchLoopService:
 
     def _state(self, run_id: str) -> dict:
         knowledge_graph_service.synchronize_review_status(run_id)
-        claims = ResearchClaimRepository.get_by_run(run_id)
-        hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
-        uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
+        scope = knowledge_graph_service.reviewed_graph_scope(run_id)
+        all_claims = ResearchClaimRepository.get_by_run(run_id)
+        claims = knowledge_graph_service.filter_reviewed_records(all_claims, "claims", scope)
+        hypotheses = knowledge_graph_service.filter_reviewed_records(
+            ResearchHypothesisRepository.get_by_run(run_id), "hypotheses", scope,
+        )
+        uncertainties = knowledge_graph_service.filter_reviewed_records(
+            ResearchUncertaintyRepository.get_by_run(run_id), "uncertainties", scope,
+        )
         evidence = EvidenceRepository.get_by_run(run_id)
         results = ExperimentResultRepository.get_by_run(run_id)
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
@@ -274,6 +280,7 @@ class ResearchLoopService:
             "source_count": self._unique_source_count(evidence["sources"]),
             "passage_count": len(evidence["excerpts"]),
             "claim_count": len(auditable_claims), "supported_claim_count": len(supported),
+            "staged_claim_count": len(all_claims) - len(claims),
             "contested_claim_count": len([item for item in claims if item["status"] == "contested"]),
             "active_hypothesis_count": len([item for item in hypotheses if item["status"] in {"active", "proposed"}]),
             "publishable_experiment_count": len(publishable),
@@ -328,9 +335,16 @@ class ResearchLoopService:
         }
 
     def _gaps(self, run_id: str, state: dict) -> tuple[list[dict], list[str]]:
-        claims = ResearchClaimRepository.get_by_run(run_id)
-        hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
-        uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
+        scope = knowledge_graph_service.reviewed_graph_scope(run_id)
+        claims = knowledge_graph_service.filter_reviewed_records(
+            ResearchClaimRepository.get_by_run(run_id), "claims", scope,
+        )
+        hypotheses = knowledge_graph_service.filter_reviewed_records(
+            ResearchHypothesisRepository.get_by_run(run_id), "hypotheses", scope,
+        )
+        uncertainties = knowledge_graph_service.filter_reviewed_records(
+            ResearchUncertaintyRepository.get_by_run(run_id), "uncertainties", scope,
+        )
         protocols = ExperimentProtocolRepository.get_by_run(run_id)
         findings = ExperimentFindingRepository.get_by_run(run_id)
         results = ExperimentResultRepository.get_by_run(run_id)

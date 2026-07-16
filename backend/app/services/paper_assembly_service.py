@@ -18,6 +18,7 @@ from ..storage.repositories import (
     ResearchUncertaintyRepository,
     TaskRepository,
 )
+from .knowledge_graph_service import knowledge_graph_service
 
 _SURVEY_MARKERS = ("综述", "调研", "survey", "review", "github", "landscape", "现状", "对比")
 
@@ -62,9 +63,16 @@ class PaperAssemblyService:
         goal_brief = title if len(title) <= 80 else title[:77] + "..."
 
         evidence = EvidenceRepository.get_by_run(run_id)
-        claims = self._dedupe_records(ResearchClaimRepository.get_by_run(run_id), "statement", "status")
-        hypotheses = self._dedupe_records(ResearchHypothesisRepository.get_by_run(run_id), "statement")
-        uncertainties = self._dedupe_records(ResearchUncertaintyRepository.get_by_run(run_id), "description")
+        review_scope = knowledge_graph_service.reviewed_graph_scope(run_id)
+        claims = self._dedupe_records(knowledge_graph_service.filter_reviewed_records(
+            ResearchClaimRepository.get_by_run(run_id), "claims", review_scope,
+        ), "statement", "status")
+        hypotheses = self._dedupe_records(knowledge_graph_service.filter_reviewed_records(
+            ResearchHypothesisRepository.get_by_run(run_id), "hypotheses", review_scope,
+        ), "statement")
+        uncertainties = self._dedupe_records(knowledge_graph_service.filter_reviewed_records(
+            ResearchUncertaintyRepository.get_by_run(run_id), "uncertainties", review_scope,
+        ), "description")
         experiment_results = ExperimentResultRepository.get_by_run(run_id)
         experiment_protocols = ExperimentProtocolRepository.get_by_run(run_id)
         brief = ResearchBriefRepository.get_by_run(run_id) or {}

@@ -219,39 +219,19 @@ class KnowledgeGraphService:
 
     def synchronize_review_status(self, run_id: str) -> None:
         """Demote legacy graph objects whose producing task has not passed review."""
-        staged = {"claims": set(), "hypotheses": set(), "uncertainties": set()}
-        approved = {key: set() for key in staged}
-        latest_reviews = {
-            item["task_id"]: item for item in ReviewDecisionRepository.get_by_run(run_id)
-        }
-        approved_outputs: list[tuple[dict, dict]] = []
-        for task in TaskRepository.get_all(run_id=run_id):
-            reviewed = latest_reviews.get(task["id"]) or {}
-            target = (
-                approved
-                if task.get("status") == "completed" and reviewed.get("approved") is True
-                else staged
-            )
-            for output in task.get("outputs") or []:
-                graph = output.get("knowledge_graph") or {}
-                if target is approved:
-                    approved_outputs.append((task, output))
-                target["claims"].update(graph.get("claim_ids") or [])
-                target["hypotheses"].update(graph.get("hypothesis_ids") or [])
-                target["uncertainties"].update(graph.get("uncertainty_ids") or [])
-                staged["claims"].update(graph.get("claim_ids") or [])
-                staged["hypotheses"].update(graph.get("hypothesis_ids") or [])
-                staged["uncertainties"].update(graph.get("uncertainty_ids") or [])
+        scope, approved_outputs = self._review_scope(run_id)
+        known = scope["known"]
+        approved = scope["approved"]
         now = datetime.now().isoformat()
-        for claim_id in staged["claims"] - approved["claims"]:
+        for claim_id in known["claims"] - approved["claims"]:
             ResearchClaimRepository.update(
                 claim_id, status="draft", confidence=0.0, evidence_ids=[], updated_at=now,
             )
-        for hypothesis_id in staged["hypotheses"] - approved["hypotheses"]:
+        for hypothesis_id in known["hypotheses"] - approved["hypotheses"]:
             ResearchHypothesisRepository.update(
                 hypothesis_id, status="staged", confidence=0.0, updated_at=now,
             )
-        for uncertainty_id in staged["uncertainties"] - approved["uncertainties"]:
+        for uncertainty_id in known["uncertainties"] - approved["uncertainties"]:
             ResearchUncertaintyRepository.update_status(uncertainty_id, "staged")
         if approved_outputs:
             # Local import avoids a module cycle while keeping restart replay
@@ -261,6 +241,39 @@ class KnowledgeGraphService:
             for task, output in approved_outputs:
                 ReviewService._promote_reviewed_graph(output)
                 ReviewService._promote_artifact_claims(task, output)
+
+    def reviewed_graph_scope(self, run_id: str) -> dict:
+        scope, _ = self._review_scope(run_id)
+        return scope
+
+    @staticmethod
+    def filter_reviewed_records(records: list[dict], kind: str, scope: dict) -> list[dict]:
+        known = (scope.get("known") or {}).get(kind) or set()
+        approved = (scope.get("approved") or {}).get(kind) or set()
+        return [item for item in records if item.get("id") not in known or item.get("id") in approved]
+
+    @staticmethod
+    def _review_scope(run_id: str) -> tuple[dict, list[tuple[dict, dict]]]:
+        known = {"claims": set(), "hypotheses": set(), "uncertainties": set()}
+        approved = {key: set() for key in known}
+        latest_reviews = {
+            item["task_id"]: item for item in ReviewDecisionRepository.get_by_run(run_id)
+        }
+        approved_outputs: list[tuple[dict, dict]] = []
+        for task in TaskRepository.get_all(run_id=run_id):
+            reviewed = latest_reviews.get(task["id"]) or {}
+            is_approved = task.get("status") == "completed" and reviewed.get("approved") is True
+            for output in task.get("outputs") or []:
+                graph = output.get("knowledge_graph") or {}
+                if is_approved:
+                    approved_outputs.append((task, output))
+                    approved["claims"].update(graph.get("claim_ids") or [])
+                    approved["hypotheses"].update(graph.get("hypothesis_ids") or [])
+                    approved["uncertainties"].update(graph.get("uncertainty_ids") or [])
+                known["claims"].update(graph.get("claim_ids") or [])
+                known["hypotheses"].update(graph.get("hypothesis_ids") or [])
+                known["uncertainties"].update(graph.get("uncertainty_ids") or [])
+        return {"known": known, "approved": approved}, approved_outputs
 
     @staticmethod
     def _task_object_id(prefix: str, task_id: str | None, normalized_text: str) -> str:

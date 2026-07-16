@@ -146,6 +146,9 @@ def test_unapproved_legacy_task_cannot_leave_supported_claim(monkeypatch):
     assert claim["status"] == "draft"
     assert claim["evidence_ids"] == []
 
+    scope = knowledge_graph_service.reviewed_graph_scope(run_id)
+    assert knowledge_graph_service.filter_reviewed_records([claim], "claims", scope) == []
+
 
 def test_approved_artifact_claim_survives_restart_synchronization(monkeypatch):
     run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
