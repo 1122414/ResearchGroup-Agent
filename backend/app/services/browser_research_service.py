@@ -348,7 +348,7 @@ Find verifiable academic or authoritative web sources for this research query:
 {query}
 
 Instructions:
-1. Use web search and open result pages when needed.
+1. If the query contains priority candidate URLs, open those directly before using a search engine; otherwise use web search and open result pages when needed.
 2. Prefer academic metadata pages, publisher pages, DOI pages, arXiv, OpenAlex, Crossref, Semantic Scholar, official government or official venue pages.
 3. Return at most {settings.browser_use_max_candidates} sources.
 4. Each source must include a real URL that can be opened again.

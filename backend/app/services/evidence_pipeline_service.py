@@ -91,7 +91,7 @@ class EvidencePipelineService:
             and not browser_already_attempted
             and not self._browser_supplement_attempted(task)
         ):
-            discovery_query = self._browser_discovery_query(task, queries, query)
+            discovery_query = self._browser_discovery_query(task, queries, query, normalized)
             browser_sources = await browser_research_service.discover(discovery_query)
             browser_count += len(browser_sources)
             raw_sources.extend(browser_sources)
@@ -283,12 +283,41 @@ class EvidencePipelineService:
         )
 
     @staticmethod
-    def _browser_discovery_query(task: dict, queries: list[str], fallback: str) -> str:
+    def _browser_discovery_query(
+        task: dict,
+        queries: list[str],
+        fallback: str,
+        candidates: list[dict] | None = None,
+    ) -> str:
         concise = next((item for item in queries if 40 <= len(item) <= 300), "")
-        if concise:
+        if not concise:
+            run = RunRepository.get_by_id(task.get("run_id")) or {}
+            concise = primary_goal(str(run.get("research_goal") or "")) or fallback
+        limit = max(int(settings.browser_use_max_candidates), 0)
+        direct_candidates = []
+        for candidate in candidates or []:
+            metadata = candidate.get("metadata") or {}
+            if (
+                len(direct_candidates) >= limit
+                or not candidate.get("url")
+                or metadata.get("origin") == "user_attachment"
+                or not (
+                    candidate.get("doi")
+                    or metadata.get("provider") in {"crossref", "openalex", "arxiv", "semantic_scholar"}
+                )
+            ):
+                continue
+            direct_candidates.append(
+                f"- {str(candidate.get('title') or 'untitled')[:300]} | {candidate['url']}"
+            )
+        if not direct_candidates:
             return concise
-        run = RunRepository.get_by_id(task.get("run_id")) or {}
-        return primary_goal(str(run.get("research_goal") or "")) or fallback
+        return (
+            f"{concise}\n\n"
+            "Priority candidates already found by structured scholarly search. "
+            "Open these URLs directly before using any search engine, and return only evidence visible on the opened page:\n"
+            + "\n".join(direct_candidates)
+        )
 
     def _record_search_protocol(self, task: dict, queries: list[str], attempts: list[dict]) -> str | None:
         run_id = task.get("run_id")

@@ -386,6 +386,45 @@ def test_browser_supplement_depends_on_relevant_grounded_titles(monkeypatch):
     assert evidence_pipeline_service._needs_browser_supplement(relevant, query) is False
 
 
+def test_browser_supplement_opens_ranked_scholarly_candidates_first(monkeypatch):
+    monkeypatch.setattr(settings, "browser_use_max_candidates", 2)
+    query = "Compare public education expenditure across income groups"
+    candidates = [
+        {
+            "title": "Uploaded indicator extract",
+            "url": "https://api.example.test/indicator.csv",
+            "metadata": {"origin": "user_attachment"},
+        },
+        {
+            "title": "Education expenditure and public outcomes",
+            "doi": "10.1000/education.1",
+            "url": "https://doi.org/10.1000/education.1",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "title": "Government spending on education",
+            "url": "https://openalex.org/W123",
+            "metadata": {"provider": "openalex"},
+        },
+        {
+            "title": "Third candidate beyond the configured limit",
+            "doi": "10.1000/education.3",
+            "url": "https://doi.org/10.1000/education.3",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    discovery_query = evidence_pipeline_service._browser_discovery_query(
+        {"run_id": None}, [query], query, candidates,
+    )
+
+    assert "https://doi.org/10.1000/education.1" in discovery_query
+    assert "https://openalex.org/W123" in discovery_query
+    assert "api.example.test" not in discovery_query
+    assert "10.1000/education.3" not in discovery_query
+    assert discovery_query.index("doi.org") < discovery_query.index("openalex.org")
+
+
 @pytest.mark.asyncio
 async def test_slow_structured_search_does_not_block_control_event_loop(monkeypatch):
     observed = {"tick": False, "responsive_during_call": False}
