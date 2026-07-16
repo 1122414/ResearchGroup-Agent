@@ -288,3 +288,31 @@ def test_first_exhaustive_paragraph_audit_can_recheck_existing_output_once(monke
     assert task["status"] == "running"
     assert task["attempt_count"] == 5
     assert events == ["review.paragraph_audit_recheck"]
+
+
+def test_legacy_chapter_gets_one_final_rewrite_after_structural_floor_migration(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 6, "owner_agent": "writer",
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit",
+        }}}},
+    }
+    events = []
+
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.task_recovery_service.reopen_thesis_in_place",
+        lambda item, _review: {**item, "status": "pending"},
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_structural_floor_migration([task]) is True
+    assert task["attempt_count"] == 6
+    assert events == ["revision.structural_floor_migration"]
+
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: True)
+    assert run_execution_service._retry_structural_floor_migration([task]) is False

@@ -297,8 +297,10 @@ class TaskExecutor:
                 "你是学术章节编辑。只扩展下方 chapter 正文，返回合法 JSON："
                 '{"summary":"expanded","claims":[],"chapter":{...}}。'
                 f"当前正文约 {best_count} 词，硬性最低 {minimum} 词；请留出余量扩展到至少 {minimum + 80} 词。"
-                "保留所有已有事实边界、数值、段落 ID 和 support_ids，只可深化论证、方法理由、"
-                "结果含义、效度边界和局限；不得新增来源、数值、实验结果或 support_id，不得重复凑字。"
+                "保留所有已有事实边界、数值、段落 ID 和 support_ids。新增事实句只能逐句改写该段"
+                "support_ids 对应的 statement 或工件字段，不得补充机制、因果、效果解释或领域常识；"
+                "transition/limitation 只能组织已有论点和明确研究边界，不得偷带新事实。"
+                "不得新增来源、数值、实验结果或 support_id，不得重复凑字。"
                 "summary 必须简短，claims 必须为空数组，把 token 用于 chapter。\n\n"
                 + thesis_chapter_service.context_for_task(task)
                 + "\n\n【待扩展 chapter】\n"

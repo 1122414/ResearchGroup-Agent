@@ -554,6 +554,7 @@ class RunExecutionService:
             if not writing_tasks:
                 return
             self._retry_first_paragraph_audit(writing_tasks)
+            self._retry_structural_floor_migration(writing_tasks)
             self._retry_transient_writing_failures(writing_tasks)
             writing_tasks = [
                 task for task in TaskRepository.get_all(run_id=run_id)
@@ -782,6 +783,33 @@ class RunExecutionService:
                 "按完整分段协议重新审核章节",
                 "复用现有章节正文，只重跑一次分段审计，不增加章节执行次数。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
+        return changed
+
+    def _retry_structural_floor_migration(self, tasks: list[dict]) -> bool:
+        """Give a legacy chapter one final rewrite after removing the false per-chapter institutional floor."""
+        changed = False
+        for task in tasks:
+            reviewer = (
+                ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+                .get("independent_review", {}).get("reviewer")
+            )
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and int(task.get("attempt_count") or 0) == 6
+                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and not self._has_task_event(task, "revision.structural_floor_migration")
+            ):
+                continue
+            reopened = task_recovery_service.reopen_thesis_in_place(task, task.get("review_result") or {})
+            run_event_service.emit(
+                task["run_id"], "revision.structural_floor_migration", "review",
+                "章节按全文字数契约做最终迁移修复",
+                "院校字数改由全文硬门验收；复用现有正文和完整分段清单，仅允许最后一次删除型修复。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+                payload={"reopened_task_id": reopened["id"], "attempt_count": task.get("attempt_count")},
             )
             changed = True
         return changed

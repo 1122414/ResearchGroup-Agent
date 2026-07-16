@@ -196,12 +196,10 @@ class ThesisChapterService:
 
     def minimum_word_count(self, task: dict) -> int:
         budget = int(self.spec_from_task(task).get("word_budget") or 0)
-        brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
-        requirements = brief.get("thesis_requirements") or {}
-        target = int(requirements.get("target_word_count") or 0)
-        institutional_minimum = int(requirements.get("minimum_word_count") or 0)
-        ratio = max(0.7, institutional_minimum / target) if target > 0 else 0.7
-        return math.ceil(budget * min(ratio, 1.0))
+        # Institutions constrain the dissertation as a whole, not every chapter
+        # by the same ratio. Keep a substantive structural floor here and enforce
+        # the exact institutional range after deterministic full-thesis assembly.
+        return max(500, math.ceil(budget * 0.5)) if budget else 500
 
     @staticmethod
     def word_count(task: dict, latest: dict) -> int:

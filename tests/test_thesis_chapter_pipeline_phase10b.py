@@ -177,7 +177,8 @@ async def test_short_chapter_gets_bounded_monotonic_expansion(monkeypatch):
     assert result["summary"] == "short"
     assert result["claims"] == [{"statement": "keep"}]
     assert len(calls) == 1
-    assert "硬性最低 700 词" in calls[0]["prompt"]
+    assert "硬性最低 500 词" in calls[0]["prompt"]
+    assert "不得补充机制、因果、效果解释或领域常识" in calls[0]["prompt"]
     assert "original prompt" not in calls[0]["prompt"]
     assert calls[0]["max_tokens"] == 8192
 
@@ -237,7 +238,7 @@ def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):
     assert "chapter_paragraph_count_insufficient" in issues
 
 
-def test_chapter_minimum_tracks_frozen_institutional_word_floor(tmp_path):
+def test_chapter_minimum_is_structural_while_institutional_floor_stays_at_full_thesis(tmp_path):
     run_id, _ = _run_with_thesis(tmp_path, ["Analysis"])
     brief = ResearchBriefRepository.get_by_run(run_id)
     requirements = dict(brief["thesis_requirements"])
@@ -245,7 +246,8 @@ def test_chapter_minimum_tracks_frozen_institutional_word_floor(tmp_path):
     ResearchBriefRepository.update(run_id, thesis_requirements=requirements)
     task = thesis_chapter_service.ensure_tasks(run_id)[0]
 
-    assert thesis_chapter_service.minimum_word_count(task) == 2800
+    assert thesis_chapter_service.minimum_word_count(task) == 1500
+    assert (ResearchBriefRepository.get_by_run(run_id)["thesis_requirements"])["minimum_word_count"] == 2800
 
 
 def test_total_length_adjustment_targets_largest_excess_chapter(monkeypatch):
