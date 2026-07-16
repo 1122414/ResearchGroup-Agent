@@ -446,6 +446,32 @@ def test_global_editorial_repair_is_deterministic_and_artifact_verified(monkeypa
     assert any(item["operation"] == "delete_duplicate" for item in repaired["changes"])
 
 
+def test_surgical_repair_refuses_unit_deletion_that_conflicts_with_bound_artifact(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(
+        thesis_chapter_service, "_canonical_artifact_text",
+        lambda _run_id: '{"chunk_size":100,"unit":"characters","avg_chunk_chars":86}',
+    )
+    latest = {"chapter": {"sections": [{"heading": "Pilot", "paragraphs": [{
+        "id": "pilot", "paragraph_type": "method",
+        "support_ids": ["experiment:verified"],
+        "text": "The strategy uses 100 characters each.",
+    }]}]}}
+    issue = {
+        "target": "pilot", "reason": "unit unsupported",
+        "required_change": "删除 '100 characters each' 并改为 '100 each'",
+    }
+
+    repaired = thesis_chapter_service.surgical_repair(
+        {"run_id": "run"}, latest,
+        {"quality_gates": {"layers": {"independent_review": {"issues": [issue]}}}},
+    )
+
+    assert repaired["changes"] == []
+    assert repaired["unresolved"] == [issue]
+    assert repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]["text"] == latest["chapter"]["sections"][0]["paragraphs"][0]["text"]
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

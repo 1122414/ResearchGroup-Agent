@@ -248,6 +248,15 @@ class ThesisChapterService:
                 unresolved.append(issue)
                 continue
             original = str(paragraph.get("text") or "")
+            if (
+                "character" in instruction.casefold()
+                and any(str(item).startswith("experiment:") for item in paragraph.get("support_ids") or [])
+                and self._artifact_supports_replacement(
+                    "100 characters", self._canonical_artifact_text(task.get("run_id")),
+                )
+            ):
+                unresolved.append(issue)
+                continue
             fragments = self._exact_deletion_fragments(original, instruction)
             if fragments:
                 revised = original

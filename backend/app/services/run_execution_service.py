@@ -885,6 +885,11 @@ class RunExecutionService:
                 and self._has_task_event(task, "revision.advisor_paragraph_restoration")
                 and not self._has_task_event(task, "revision.post_restoration_surgical_repair")
             )
+            post_editorial = (
+                repair_round >= 5
+                and self._has_task_event(task, "revision.global_editorial_repair")
+                and not self._has_task_event(task, "revision.post_editorial_evidence_repair")
+            )
             legacy_v2_global = reviewer == "independent_reviewer_model" and any(
                 self._has_task_event(task, event_type)
                 for event_type in (
@@ -900,7 +905,7 @@ class RunExecutionService:
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and (self._is_paragraph_audit_reviewer(reviewer) or editorial_eligible)
-                and (repair_round < 5 or post_restoration or editorial_eligible)
+                and (repair_round < 5 or post_restoration or post_editorial or editorial_eligible)
                 and task.get("outputs")
             ):
                 continue
@@ -908,7 +913,7 @@ class RunExecutionService:
                 thesis_chapter_service.surgical_repair(
                     task, task["outputs"][-1], task.get("review_result") or {},
                 )
-                if repair_round < 5 or post_restoration
+                if repair_round < 5 or post_restoration or post_editorial
                 else {"result": task["outputs"][-1], "changes": [], "unresolved": []}
             )
             editorial = False
@@ -942,13 +947,17 @@ class RunExecutionService:
                 task["run_id"], task.get("revision_of_task_id") or task["id"],
             )
             event_type = "revision.global_editorial_repair" if editorial else (
+                "revision.post_editorial_evidence_repair" if post_editorial else (
                 "revision.post_restoration_surgical_repair"
                 if post_restoration else "revision.surgical_chapter_repair"
+                )
             )
             run_event_service.emit(
                 task["run_id"], event_type, "review",
                 "执行一次性全局确定编辑" if editorial else (
-                    "恢复段落执行一次性 v2 外科修复" if post_restoration else "章节执行单调外科修复"
+                    "全局编辑后执行一次性证据外科复查" if post_editorial else (
+                        "恢复段落执行一次性 v2 外科修复" if post_restoration else "章节执行单调外科修复"
+                    )
                 ),
                 f"删除或补绑 {len(repaired['changes'])} 项；未解析 {len(repaired['unresolved'])} 项。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
@@ -959,6 +968,7 @@ class RunExecutionService:
                     "word_count_before": words_before, "word_count_after": words_after,
                     "attempt_count": task.get("attempt_count"),
                     "post_restoration": post_restoration,
+                    "post_editorial": post_editorial,
                     "editorial": editorial,
                 },
             )

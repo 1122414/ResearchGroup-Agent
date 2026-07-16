@@ -583,6 +583,7 @@ def test_large_artifact_support_is_compacted_to_relevant_frozen_facts():
     support = {
         "id": "experiment:verified",
         "protocol": {"method_details": {
+            "strategies": {"fixed_overlap": {"chunk_size": 100, "overlap": 30}},
             "window_size": "100 characters", "overlap": "30 characters",
         }},
         "rows": [{"strategy": "fixed overlap", "mrr_at_10": 1.0}],
@@ -597,6 +598,7 @@ def test_large_artifact_support_is_compacted_to_relevant_frozen_facts():
     rendered = json.dumps(view, ensure_ascii=False)
     assert view["id"] == "experiment:verified"
     assert view["compacted_for_paragraph_audit"] is True
+    assert view["frozen_method_contract"]["strategies"]["fixed_overlap"]["chunk_size"] == 100
     assert "window_size" in rendered
     assert "100 characters" in rendered
     assert "overlap" in rendered

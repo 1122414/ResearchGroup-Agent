@@ -311,6 +311,12 @@ class IndependentReviewerService:
         selected.sort(key=lambda item: item[1])
         return {
             "id": support.get("id"),
+            "frozen_method_contract": {
+                "strategies": (((support.get("protocol") or {}).get("method_details") or {}).get("strategies")),
+                "baselines": (support.get("protocol") or {}).get("baselines"),
+                "retrieval_configuration": support.get("retrieval_configuration"),
+                "benchmark_design": support.get("benchmark_design"),
+            },
             "fact_view": [
                 {"path": path[:160], "value": value}
                 for _score, _index, path, value in selected
