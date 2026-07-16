@@ -484,6 +484,16 @@ def test_ready_tasks_archives_revision_after_root_completed(monkeypatch):
     assert updates == [("stale", "archived", {"blocked_reason": "根任务已终态，该返工分支已失效。"})]
 
 
+def test_terminal_failed_revision_does_not_lock_explicitly_recovered_root(monkeypatch):
+    root = {"id": "root", "run_id": "run", "status": "pending", "revision_of_task_id": None}
+    failed = {"id": "failed_revision", "run_id": "run", "status": "failed", "revision_of_task_id": "root"}
+    monkeypatch.setattr(TaskDependencyRepository, "get_for_task", lambda _task_id: [])
+
+    ready = task_graph_service.ready_tasks([root, failed])
+
+    assert [item["id"] for item in ready] == ["root"]
+
+
 def test_failed_critical_dependency_propagates_to_descendants(monkeypatch):
     tasks = {
         "child": {"id": "child", "status": "blocked"},

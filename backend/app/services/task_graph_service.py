@@ -76,7 +76,11 @@ class TaskGraphService:
         pending_revisions = {
             task["revision_of_task_id"]
             for task in tasks
-            if task.get("revision_of_task_id") and task.get("status") != "completed"
+            if task.get("revision_of_task_id")
+            and task.get("status") in {
+                "pending", "assigned", "blocked", "running",
+                "waiting_subagent", "waiting_review", "need_revision",
+            }
         }
         ready: list[dict] = []
         for task in tasks:
