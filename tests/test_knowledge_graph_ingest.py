@@ -4,11 +4,14 @@ from datetime import datetime
 import pytest
 
 from backend.app.services.knowledge_graph_service import knowledge_graph_service
+from backend.app.services.review_service import ReviewService
 from backend.app.storage.repositories import (
     EvidenceRepository,
+    ReviewDecisionRepository,
     ResearchClaimRepository,
     ResearchHypothesisRepository,
     ResearchUncertaintyRepository,
+    TaskRepository,
 )
 from backend.app.storage import init_db
 
@@ -88,13 +91,29 @@ def test_ingest_creates_claims_links_and_filters_fabricated_sources():
 
     claims = ResearchClaimRepository.get_by_run(run_id)
     grounded = next(c for c in claims if "Grounded" in c["statement"])
-    # Linked claim resolves its evidence source id from the link evaluation.
-    assert good_source in grounded["evidence_ids"]
+    # Evidence is linked, but the claim remains staged until task review passes.
+    assert grounded["status"] == "draft"
+    assert grounded["evidence_ids"] == []
 
     hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
     assert any("H1" in h["statement"] for h in hypotheses)
+    assert hypotheses[0]["status"] == "staged"
     uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)
     assert any(u["severity"] == "high" for u in uncertainties)
+    assert uncertainties[0]["status"] == "staged"
+
+    ReviewService._promote_reviewed_graph({
+        "knowledge_graph": {
+            "claim_ids": [item["id"] for item in graph["claims"]],
+            "hypothesis_ids": [item["id"] for item in graph["hypotheses"]],
+            "uncertainty_ids": [item["id"] for item in graph["uncertainties"]],
+        }
+    })
+    grounded = ResearchClaimRepository.get_by_id(grounded["id"])
+    assert grounded["status"] == "supported"
+    assert grounded["evidence_ids"] == [good_source]
+    assert ResearchHypothesisRepository.get_by_run(run_id)[0]["status"] == "proposed"
+    assert ResearchUncertaintyRepository.get_by_run(run_id)[0]["status"] == "open"
 
     knowledge_graph_service.ingest_task_result(task, result)
 
@@ -102,6 +121,30 @@ def test_ingest_creates_claims_links_and_filters_fabricated_sources():
     assert len(ResearchHypothesisRepository.get_by_run(run_id)) == 1
     assert len(ResearchUncertaintyRepository.get_by_run(run_id)) == 1
     assert len(EvidenceRepository.get_by_run(run_id)["links"]) == 1
+
+
+def test_unapproved_legacy_task_cannot_leave_supported_claim(monkeypatch):
+    run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
+    claim_id = f"claim_{uuid.uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    ResearchClaimRepository.insert({
+        "id": claim_id, "run_id": run_id, "statement": "Rejected task claim",
+        "status": "supported", "evidence_ids": ["source_x"], "confidence": 1.0,
+        "created_at": now, "updated_at": now,
+    })
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [{
+        "id": "rejected_task", "status": "need_revision",
+        "outputs": [{"knowledge_graph": {"claim_ids": [claim_id]}}],
+    }])
+    monkeypatch.setattr(ReviewDecisionRepository, "get_by_run", lambda _run_id: [{
+        "task_id": "rejected_task", "approved": False,
+    }])
+
+    knowledge_graph_service.synchronize_review_status(run_id)
+
+    claim = ResearchClaimRepository.get_by_id(claim_id)
+    assert claim["status"] == "draft"
+    assert claim["evidence_ids"] == []
 
 
 def test_partially_entailed_claim_stays_in_audit_not_knowledge_graph():

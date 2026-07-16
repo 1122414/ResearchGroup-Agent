@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 
 from ..core.logger import logger
 from ..storage.repositories import (
     EvidenceRepository,
+    ReviewDecisionRepository,
     ResearchClaimRepository,
     ResearchHypothesisRepository,
     ResearchUncertaintyRepository,
+    TaskRepository,
 )
 from .claim_evaluation_service import claim_evaluation_service
 
@@ -19,9 +22,8 @@ class KnowledgeGraphService:
     Without this, task_executor only writes opaque JSON blobs, leaving the
     research loop, grounding checks, evidence section and final report with no
     structured claims/hypotheses/evidence links to operate on. This service
-    turns a task result into ResearchClaim / EvidenceLink / Hypothesis /
-    Uncertainty rows, then re-evaluates each claim against its evidence so the
-    rest of the system has real research state to reason over.
+    turns a task result into staged ResearchClaim / EvidenceLink / Hypothesis /
+    Uncertainty rows. ReviewService promotes them only after all quality gates pass.
     """
 
     def ingest_task_result(self, task: dict, result: dict) -> dict:
@@ -46,12 +48,12 @@ class KnowledgeGraphService:
             and str(item.get("excerpt") or "").strip()
         }
 
-        created_hypotheses = self._ingest_hypotheses(run_id, result)
+        created_hypotheses = self._ingest_hypotheses(run_id, task, result)
         created_claims, link_count = self._ingest_claims(
             run_id, task, result, valid_source_ids, excerpt_by_id,
             created_hypotheses, evidence["links"],
         )
-        created_uncertainties = self._ingest_uncertainties(run_id, result)
+        created_uncertainties = self._ingest_uncertainties(run_id, task, result)
 
         logger.info(
             "[KnowledgeGraph] ingested | task_id=%s | claims=%d | links=%d | hypotheses=%d | uncertainties=%d",
@@ -68,31 +70,34 @@ class KnowledgeGraphService:
             "evidence_links": link_count,
         }
 
-    def _ingest_hypotheses(self, run_id: str, result: dict) -> list[dict]:
+    def _ingest_hypotheses(self, run_id: str, task: dict, result: dict) -> list[dict]:
         now = datetime.now().isoformat()
         created: list[dict] = []
-        existing = {
-            self._normalize(item.get("statement")): item
-            for item in ResearchHypothesisRepository.get_by_run(run_id)
-        }
         for item in self._as_dicts(result.get("hypotheses")):
             statement = str(item.get("statement") or "").strip()
             key = self._normalize(statement)
-            if not key or key in existing:
+            if not key:
+                continue
+            hypothesis_id = self._task_object_id("hypothesis", task.get("id"), key)
+            existing = ResearchHypothesisRepository.get_by_id(hypothesis_id)
+            if existing:
+                ResearchHypothesisRepository.update(
+                    hypothesis_id, status="staged", confidence=0.0, updated_at=now,
+                )
+                created.append(ResearchHypothesisRepository.get_by_id(hypothesis_id))
                 continue
             hypothesis = {
-                "id": f"hypothesis_{uuid.uuid4().hex[:10]}",
+                "id": hypothesis_id,
                 "run_id": run_id,
                 "statement": statement[:600],
                 "rationale": str(item.get("rationale") or "")[:600],
-                "status": "proposed",
+                "status": "staged",
                 "confidence": 0.0,
                 "created_at": now,
                 "updated_at": now,
             }
             ResearchHypothesisRepository.insert(hypothesis)
             created.append(hypothesis)
-            existing[key] = hypothesis
         return created
 
     def _ingest_claims(
@@ -109,10 +114,6 @@ class KnowledgeGraphService:
         default_hypothesis_id = created_hypotheses[0]["id"] if created_hypotheses else None
         created: list[dict] = []
         link_count = 0
-        existing_claims = {
-            self._normalize(item.get("statement")): item
-            for item in ResearchClaimRepository.get_by_run(run_id)
-        }
         link_keys = {
             (link.get("claim_id"), link.get("source_id"), link.get("excerpt_id"), link.get("relation_type"))
             for link in existing_links
@@ -126,11 +127,15 @@ class KnowledgeGraphService:
             key = self._normalize(statement)
             if not key:
                 continue
-            existing_claim = existing_claims.get(key)
+            claim_id = self._task_object_id("claim", task.get("id"), key)
+            existing_claim = ResearchClaimRepository.get_by_id(claim_id)
             if existing_claim:
-                claim_id = existing_claim["id"]
+                if existing_claim.get("status") != "draft":
+                    ResearchClaimRepository.update(
+                        claim_id, status="draft", confidence=0.0,
+                        evidence_ids=[], updated_at=now,
+                    )
             else:
-                claim_id = f"claim_{uuid.uuid4().hex[:10]}"
                 claim = {
                     "id": claim_id,
                     "run_id": run_id,
@@ -143,7 +148,6 @@ class KnowledgeGraphService:
                     "updated_at": now,
                 }
                 ResearchClaimRepository.insert(claim)
-                existing_claims[key] = claim
             relation = str(item.get("relation") or "supports").lower()
             if relation not in {"supports", "opposes", "context"}:
                 relation = "supports"
@@ -174,39 +178,92 @@ class KnowledgeGraphService:
                 )
                 link_count += 1
                 link_keys.add(link_key)
-            evaluated = claim_evaluation_service.evaluate(claim_id) or ResearchClaimRepository.get_by_id(claim_id)
-            created.append(evaluated)
+            created.append(ResearchClaimRepository.get_by_id(claim_id))
         return created, link_count
 
-    def _ingest_uncertainties(self, run_id: str, result: dict) -> list[dict]:
+    def _ingest_uncertainties(self, run_id: str, task: dict, result: dict) -> list[dict]:
         now = datetime.now().isoformat()
         created: list[dict] = []
-        existing = {
-            self._normalize(item.get("description"))
-            for item in ResearchUncertaintyRepository.get_by_run(run_id)
-        }
         for item in self._as_dicts(result.get("uncertainties")):
             description = str(item.get("description") or item.get("statement") or "").strip()
             key = self._normalize(description)
-            if not key or key in existing:
+            if not key:
+                continue
+            uncertainty_id = self._task_object_id("uncertainty", task.get("id"), key)
+            existing = next(
+                (row for row in ResearchUncertaintyRepository.get_by_run(run_id) if row["id"] == uncertainty_id),
+                None,
+            )
+            if existing:
+                ResearchUncertaintyRepository.update_status(uncertainty_id, "staged")
+                created.append(next(
+                    row for row in ResearchUncertaintyRepository.get_by_run(run_id)
+                    if row["id"] == uncertainty_id
+                ))
                 continue
             severity = str(item.get("severity") or "medium").lower()
             if severity not in {"low", "medium", "high"}:
                 severity = "medium"
             uncertainty = {
-                "id": f"uncertainty_{uuid.uuid4().hex[:10]}",
+                "id": uncertainty_id,
                 "run_id": run_id,
                 "description": description[:600],
                 "category": str(item.get("category") or "research_question"),
                 "severity": severity,
-                "status": "open",
+                "status": "staged",
                 "created_at": now,
                 "resolved_at": None,
             }
             ResearchUncertaintyRepository.insert(uncertainty)
             created.append(uncertainty)
-            existing.add(key)
         return created
+
+    def synchronize_review_status(self, run_id: str) -> None:
+        """Demote legacy graph objects whose producing task has not passed review."""
+        staged = {"claims": set(), "hypotheses": set(), "uncertainties": set()}
+        approved = {key: set() for key in staged}
+        latest_reviews = {
+            item["task_id"]: item for item in ReviewDecisionRepository.get_by_run(run_id)
+        }
+        for task in TaskRepository.get_all(run_id=run_id):
+            reviewed = latest_reviews.get(task["id"]) or {}
+            target = (
+                approved
+                if task.get("status") == "completed" and reviewed.get("approved") is True
+                else staged
+            )
+            for output in task.get("outputs") or []:
+                graph = output.get("knowledge_graph") or {}
+                target["claims"].update(graph.get("claim_ids") or [])
+                target["hypotheses"].update(graph.get("hypothesis_ids") or [])
+                target["uncertainties"].update(graph.get("uncertainty_ids") or [])
+                staged["claims"].update(graph.get("claim_ids") or [])
+                staged["hypotheses"].update(graph.get("hypothesis_ids") or [])
+                staged["uncertainties"].update(graph.get("uncertainty_ids") or [])
+        now = datetime.now().isoformat()
+        for claim_id in staged["claims"] - approved["claims"]:
+            ResearchClaimRepository.update(
+                claim_id, status="draft", confidence=0.0, evidence_ids=[], updated_at=now,
+            )
+        for hypothesis_id in staged["hypotheses"] - approved["hypotheses"]:
+            ResearchHypothesisRepository.update(
+                hypothesis_id, status="staged", confidence=0.0, updated_at=now,
+            )
+        for uncertainty_id in staged["uncertainties"] - approved["uncertainties"]:
+            ResearchUncertaintyRepository.update_status(uncertainty_id, "staged")
+        for claim_id in approved["claims"]:
+            claim_evaluation_service.evaluate(claim_id)
+        for hypothesis_id in approved["hypotheses"]:
+            ResearchHypothesisRepository.update(
+                hypothesis_id, status="proposed", updated_at=now,
+            )
+        for uncertainty_id in approved["uncertainties"]:
+            ResearchUncertaintyRepository.update_status(uncertainty_id, "open")
+
+    @staticmethod
+    def _task_object_id(prefix: str, task_id: str | None, normalized_text: str) -> str:
+        digest = hashlib.sha256(f"{task_id or 'unscoped'}|{normalized_text}".encode()).hexdigest()[:10]
+        return f"{prefix}_{digest}"
 
     @staticmethod
     def _source_ids(item: dict) -> list[str]:

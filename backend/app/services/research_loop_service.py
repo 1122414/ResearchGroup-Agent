@@ -25,6 +25,7 @@ from ..storage.repositories import (
 )
 from .experiment_domain_service import experiment_domain_service
 from .evidence_pipeline_service import EvidencePipelineService
+from .knowledge_graph_service import knowledge_graph_service
 from .research_loop_critic_service import research_loop_critic_service
 from .run_event_service import run_event_service
 from .task_graph_service import task_graph_service
@@ -233,6 +234,7 @@ class ResearchLoopService:
         return validations
 
     def _state(self, run_id: str) -> dict:
+        knowledge_graph_service.synchronize_review_status(run_id)
         claims = ResearchClaimRepository.get_by_run(run_id)
         hypotheses = ResearchHypothesisRepository.get_by_run(run_id)
         uncertainties = ResearchUncertaintyRepository.get_by_run(run_id)

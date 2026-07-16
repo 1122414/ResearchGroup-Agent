@@ -1920,6 +1920,16 @@ class ResearchUncertaintyRepository:
         conn.close()
 
     @staticmethod
+    def update_status(uncertainty_id: str, status: str) -> None:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE research_uncertainties SET status = ?, resolved_at = NULL WHERE id = ?",
+            (status, uncertainty_id),
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
     def resolve_by_category(run_id: str, category: str, resolved_at: str) -> None:
         conn = get_connection()
         conn.execute(

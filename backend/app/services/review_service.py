@@ -8,10 +8,12 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import (
-    OutputRepository, ResearchClaimRepository, ResearchMilestoneRepository,
+    OutputRepository, ResearchClaimRepository, ResearchHypothesisRepository,
+    ResearchMilestoneRepository, ResearchUncertaintyRepository,
     ReviewDecisionRepository, RunRepository, TaskRepository,
 )
 from .artifact_manifest_service import artifact_manifest_service
+from .claim_evaluation_service import claim_evaluation_service
 from .scientific_quality_gate_service import scientific_quality_gate_service
 from .thesis_chapter_service import thesis_chapter_service
 
@@ -107,8 +109,22 @@ class ReviewService:
         )
         self._persist_review(task, review)
         if approved:
+            self._promote_reviewed_graph(latest)
             self._promote_artifact_claims(task, latest)
         return review
+
+    @staticmethod
+    def _promote_reviewed_graph(latest: dict) -> None:
+        graph = latest.get("knowledge_graph") or {}
+        now = datetime.now().isoformat()
+        for claim_id in graph.get("claim_ids") or []:
+            claim_evaluation_service.evaluate(claim_id)
+        for hypothesis_id in graph.get("hypothesis_ids") or []:
+            ResearchHypothesisRepository.update(
+                hypothesis_id, status="proposed", updated_at=now,
+            )
+        for uncertainty_id in graph.get("uncertainty_ids") or []:
+            ResearchUncertaintyRepository.update_status(uncertainty_id, "open")
 
     @staticmethod
     def _arbitrate_advisor(task: dict, latest: dict, review: dict, quality_gates: dict) -> dict:
