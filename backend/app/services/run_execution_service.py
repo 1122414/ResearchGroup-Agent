@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from ..storage.repositories import (
     AgentRepository,
     ApprovalRequestRepository,
     LLMUsageRepository,
+    OutputRepository,
     RunEventRepository,
     RunRepository,
     SubAgentRepository,
@@ -555,6 +557,7 @@ class RunExecutionService:
                 return
             self._retry_first_paragraph_audit(writing_tasks)
             self._retry_structural_floor_migration(writing_tasks)
+            self._retry_surgical_chapter_repair(writing_tasks)
             self._retry_transient_writing_failures(writing_tasks)
             writing_tasks = [
                 task for task in TaskRepository.get_all(run_id=run_id)
@@ -813,6 +816,76 @@ class RunExecutionService:
             )
             changed = True
         return changed
+
+    def _retry_surgical_chapter_repair(self, tasks: list[dict]) -> bool:
+        """Repair exhaustive audit findings without permitting any generated replacement prose."""
+        changed = False
+        for task in tasks:
+            reviewer = (
+                ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+                .get("independent_review", {}).get("reviewer")
+            )
+            repair_round = self._task_event_count(task, "revision.surgical_chapter_repair")
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and repair_round < 2
+                and task.get("outputs")
+            ):
+                continue
+            repaired = thesis_chapter_service.surgical_repair(
+                task, task["outputs"][-1], task.get("review_result") or {},
+            )
+            if not repaired["changes"]:
+                continue
+            result = repaired["result"]
+            TaskRepository.update_status(
+                task["id"], "running", outputs=[result], blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            OutputRepository.insert({
+                "id": f"out_{task['id']}", "output_type": "task_result",
+                "title": f"任务产出：{task.get('title', task['id'])}",
+                "content": json.dumps(result, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"), "task_id": task["id"],
+                "agent_id": task.get("owner_agent"), "created_at": datetime.now().isoformat(),
+            })
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "revision.surgical_chapter_repair", "review",
+                "章节执行单调外科修复",
+                f"删除或补绑 {len(repaired['changes'])} 项；未解析 {len(repaired['unresolved'])} 项。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+                payload={
+                    "round": repair_round + 1, "changes": repaired["changes"],
+                    "unresolved_count": len(repaired["unresolved"]),
+                    "attempt_count": task.get("attempt_count"),
+                },
+            )
+            changed = True
+        return changed
+
+    @staticmethod
+    def _task_event_count(task: dict, event_type: str) -> int:
+        return sum(
+            event.get("event_type") == event_type
+            for event in RunEventRepository.get_by_run(
+                task.get("run_id"), limit=100, task_id=task.get("id"),
+            )
+        )
+
+    @staticmethod
+    def _revive_dependency_descendants(run_id: str, root_task_id: str) -> None:
+        for task_id in task_graph_service.descendants(run_id, root_task_id):
+            task = TaskRepository.get_by_id(task_id)
+            if task and task.get("status") == "failed" and str(task.get("blocked_reason") or "").startswith("前置任务失败"):
+                TaskRepository.update_status(
+                    task_id, "pending", blocked_reason=None,
+                    review_result=None, review_feedback=None,
+                )
 
     @staticmethod
     def _has_task_event(task: dict, event_type: str) -> bool:

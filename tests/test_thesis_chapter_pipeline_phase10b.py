@@ -284,6 +284,50 @@ def test_chapter_gate_accepts_frozen_experiment_support(tmp_path, monkeypatch):
     assert thesis_chapter_service.validate_output(task, output) == []
 
 
+def test_surgical_chapter_repair_only_deletes_original_sentences_and_binds_verified_ids(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(
+        thesis_chapter_service, "artifact_support",
+        lambda _run_id: [{"id": "experiment:verified"}],
+    )
+    original = (
+        "The frozen pilot compares three strategies. "
+        "Overlapping chunks eliminate every boundary failure. "
+        "The conclusion remains limited to the frozen benchmark."
+    )
+    latest = {
+        "summary": "chapter", "claims": [],
+        "chapter": {"sections": [{"heading": "Scope", "paragraphs": [{
+            "id": "p1", "text": original, "paragraph_type": "claim",
+            "support_ids": ["brief:scope"],
+        }]}]},
+    }
+    review = {"quality_gates": {"layers": {"independent_review": {"issues": [
+        {
+            "target": "p1",
+            "reason": "'Overlapping chunks eliminate every boundary failure.' is not supported",
+            "required_change": "delete the unsupported sentence",
+        },
+        {
+            "target": "p1", "reason": "The pilot setup is available in experiment:verified",
+            "required_change": "bind 'experiment:verified'",
+        },
+    ]}}}}
+
+    repaired = thesis_chapter_service.surgical_repair(
+        {"run_id": "run"}, latest, review,
+    )
+    paragraph = repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]
+
+    assert paragraph["text"] == (
+        "The frozen pilot compares three strategies. "
+        "The conclusion remains limited to the frozen benchmark."
+    )
+    assert paragraph["support_ids"] == ["brief:scope", "experiment:verified"]
+    assert [item["operation"] for item in repaired["changes"]] == ["delete", "bind"]
+    assert repaired["unresolved"] == []
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

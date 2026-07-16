@@ -4,6 +4,7 @@ import json
 import math
 import re
 import uuid
+from copy import deepcopy
 from datetime import datetime
 
 from ..storage.repositories import (
@@ -193,6 +194,123 @@ class ThesisChapterService:
         if paragraph_count < 3:
             issues.append("chapter_paragraph_count_insufficient")
         return issues
+
+    def surgical_repair(self, task: dict, latest: dict, review: dict) -> dict:
+        """Apply only monotonic deletions and verified support bindings from paragraph audit issues."""
+        repaired = deepcopy(latest)
+        chapter = repaired.get("chapter") or {}
+        sections = chapter.get("sections") or []
+        paragraph_locations = {
+            str(paragraph.get("id") or ""): (section, paragraph)
+            for section in sections if isinstance(section, dict)
+            for paragraph in section.get("paragraphs") or [] if isinstance(paragraph, dict)
+        }
+        allowed_ids = {
+            item["id"] for item in ResearchClaimRepository.get_by_run(task.get("run_id"))
+            if item.get("status") == "supported"
+        }
+        allowed_ids.update(item["id"] for item in self.artifact_support(task.get("run_id")))
+        allowed_ids.update({"brief:research_question", "brief:objective", "brief:scope", "brief:methodology"})
+        issues = (
+            ((review.get("quality_gates") or {}).get("layers") or {})
+            .get("independent_review", {}).get("issues") or []
+        )
+        changes: list[dict] = []
+        unresolved: list[dict] = []
+        for issue in issues:
+            target = str(issue.get("target") or "")
+            location = paragraph_locations.get(target)
+            if not location:
+                unresolved.append(issue)
+                continue
+            section, paragraph = location
+            instruction = " ".join(
+                str(issue.get(key) or "") for key in ("reason", "required_change")
+            )
+            requested_ids = set(re.findall(
+                r"(?:claim_[A-Za-z0-9_]+|experiment:[A-Za-z0-9_]+|brief:[A-Za-z0-9_]+)",
+                instruction,
+            )) & allowed_ids
+            bind_requested = any(marker in instruction.casefold() for marker in (
+                "bind", "补绑", "绑定", "support_id",
+            ))
+            added_ids = sorted(requested_ids - set(paragraph.get("support_ids") or [])) if bind_requested else []
+            if added_ids:
+                paragraph["support_ids"] = [*(paragraph.get("support_ids") or []), *added_ids]
+                changes.append({"target": target, "operation": "bind", "support_ids": added_ids})
+                continue
+            delete_requested = any(marker in instruction.casefold() for marker in (
+                "delete", "remove", "删除", "移除", "无直接证据", "not directly", "not supported",
+            ))
+            if not delete_requested:
+                unresolved.append(issue)
+                continue
+            original = str(paragraph.get("text") or "")
+            sentence = self._deletion_sentence(original, instruction)
+            if not sentence:
+                unresolved.append(issue)
+                continue
+            revised = self._remove_exact_sentence(original, sentence)
+            if revised == original:
+                unresolved.append(issue)
+                continue
+            if revised:
+                paragraph["text"] = revised
+            else:
+                section["paragraphs"] = [item for item in section.get("paragraphs") or [] if item is not paragraph]
+                paragraph_locations.pop(target, None)
+            changes.append({"target": target, "operation": "delete", "text": sentence[:240]})
+        repaired["summary"] = "按独立分段审计执行单调外科修复；正文只删除原句或补绑已冻结支持。"
+        repaired["claims"] = []
+        return {"result": repaired, "changes": changes, "unresolved": unresolved}
+
+    @classmethod
+    def _deletion_sentence(cls, paragraph: str, instruction: str) -> str | None:
+        sentences = [item for item in re.split(r"(?<=[.!?。！？])\s+", paragraph.strip()) if item]
+        if not sentences:
+            return None
+        quoted = re.findall(r"['‘“]([^'’”]{8,})(?:['’”]|$)", instruction)
+        terms = cls._repair_terms(instruction)
+        scored = []
+        for index, sentence in enumerate(sentences):
+            lowered = sentence.casefold()
+            quote_score = max(
+                (100 + min(len(value), 100) for value in quoted if value.casefold() in lowered),
+                default=0,
+            )
+            if not quote_score:
+                quote_score = max(
+                    (60 for value in quoted if value[:32].casefold() in lowered),
+                    default=0,
+                )
+            overlap = len(terms & cls._repair_terms(sentence))
+            scored.append((quote_score + overlap * 4, overlap, -index, sentence))
+        score, overlap, _index, sentence = max(scored)
+        return sentence if score >= 60 or overlap >= 3 else None
+
+    @staticmethod
+    def _remove_exact_sentence(paragraph: str, sentence: str) -> str:
+        revised = paragraph.replace(sentence, "", 1)
+        return re.sub(r"\s+", " ", revised).strip()
+
+    @staticmethod
+    def _repair_terms(text: str) -> set[str]:
+        stop = {
+            "claim", "statement", "support", "supported", "directly", "bound", "available",
+            "delete", "remove", "phrase", "sentence", "evidence", "required", "change",
+            "该句", "该段", "删除", "支持", "证据", "表述", "直接", "短语",
+        }
+        lowered = text.casefold()
+        terms = {
+            token for token in re.findall(r"[a-z][a-z0-9_-]{4,}", lowered) if token not in stop
+        }
+        for sequence in re.findall(r"[\u4e00-\u9fff]{2,}", lowered):
+            terms.update(
+                sequence[index:index + 2]
+                for index in range(len(sequence) - 1)
+                if sequence[index:index + 2] not in stop
+            )
+        return terms
 
     def minimum_word_count(self, task: dict) -> int:
         budget = int(self.spec_from_task(task).get("word_budget") or 0)
