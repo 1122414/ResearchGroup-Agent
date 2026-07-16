@@ -6,6 +6,7 @@ import re
 import uuid
 from copy import deepcopy
 from datetime import datetime
+from difflib import SequenceMatcher
 
 from ..storage.repositories import (
     EvidenceRepository, ExperimentProtocolRepository, ExperimentResultRepository, ResearchBriefRepository, ResearchClaimRepository,
@@ -353,6 +354,135 @@ class ThesisChapterService:
             repaired["claims"] = []
         return {"result": repaired, "changes": changes}
 
+    def editorial_repair(self, task: dict, latest: dict, review: dict) -> dict:
+        """Apply one deterministic global-edit pass without generating replacement prose."""
+        repaired = deepcopy(latest)
+        paragraphs = [
+            paragraph
+            for section in (repaired.get("chapter") or {}).get("sections") or []
+            for paragraph in section.get("paragraphs") or []
+            if isinstance(paragraph, dict)
+        ]
+        by_id = {str(item.get("id") or ""): item for item in paragraphs}
+        artifact_text = self._canonical_artifact_text(task.get("run_id"))
+        issues = (
+            ((review.get("quality_gates") or {}).get("layers") or {})
+            .get("independent_review", {}).get("issues") or []
+        )
+        changes: list[dict] = []
+        for issue in issues:
+            instruction = " ".join(str(issue.get(key) or "") for key in ("target", "reason", "required_change"))
+            targets = [item for paragraph_id, item in by_id.items() if paragraph_id and paragraph_id in instruction]
+            replacements = re.findall(
+                r"['‘“]([^'’”]+)['’”]\s*(?:改为|replace(?:d)?\s+with)\s*['‘“]([^'’”]+)['’”]",
+                instruction,
+                re.IGNORECASE,
+            )
+            for old, new in replacements:
+                if not self._artifact_supports_replacement(new, artifact_text):
+                    continue
+                for paragraph in targets:
+                    text = str(paragraph.get("text") or "")
+                    if old in text:
+                        paragraph["text"] = text.replace(old, new, 1)
+                        changes.append({
+                            "target": paragraph["id"], "operation": "replace_verified",
+                            "old": old, "new": new,
+                        })
+            if any(marker in instruction.casefold() for marker in ("未来研究", "未来工作", "future research", "future work")):
+                for paragraph in targets:
+                    self._delete_matching_sentences(
+                        paragraph,
+                        r"\b(?:future (?:research|work)|subsequent (?:studies|experiments)|should (?:test|employ|explore|extend|investigate)|need for larger)\b",
+                        changes,
+                    )
+            if any(marker in instruction.casefold() for marker in ("重复", "duplicate", "redundan")) and len(targets) > 1:
+                self._delete_duplicate_sentence(targets, changes)
+            type_match = re.search(
+                r"(?:from|从)\s*['‘“]?([a-z_]+)['’”]?\s*(?:to|改为)\s*['‘“]?([a-z_]+)['’”]?",
+                instruction,
+                re.IGNORECASE,
+            )
+            if type_match and type_match.group(2).casefold() in {
+                "claim", "method", "interpretation", "transition", "limitation",
+            }:
+                old_type, new_type = type_match.group(1).casefold(), type_match.group(2).casefold()
+                for paragraph in targets:
+                    if str(paragraph.get("paragraph_type") or "").casefold() == old_type:
+                        paragraph["paragraph_type"] = new_type
+                        changes.append({
+                            "target": paragraph["id"], "operation": "set_paragraph_type", "value": new_type,
+                        })
+        for paragraph in paragraphs:
+            original = str(paragraph.get("text") or "")
+            cleaned = re.sub(r"^\s*[.。]+\s*", "", original)
+            cleaned = re.sub(r"\.{2,}", ".", cleaned)
+            cleaned = self._drop_malformed_sentences(cleaned)
+            if cleaned != original:
+                paragraph["text"] = cleaned
+                changes.append({"target": paragraph.get("id"), "operation": "clean_punctuation"})
+        if changes:
+            repaired["summary"] = "按全局审稿执行一次性确定性编辑；未生成自由正文。"
+            repaired["claims"] = []
+        return {"result": repaired, "changes": changes}
+
+    def _canonical_artifact_text(self, run_id: str) -> str:
+        compact = []
+        for item in self.artifact_support(run_id):
+            protocol = item.get("protocol") or {}
+            compact.append({
+                "strategies": (protocol.get("method_details") or {}).get("strategies"),
+                "baselines": protocol.get("baselines"),
+                "benchmark_design": item.get("benchmark_design"),
+                "rows": item.get("rows"),
+            })
+        return json.dumps(compact, ensure_ascii=False).casefold()
+
+    @staticmethod
+    def _artifact_supports_replacement(replacement: str, artifact_text: str) -> bool:
+        value = replacement.casefold()
+        if value in artifact_text:
+            return True
+        numbers = re.findall(r"\d+(?:\.\d+)?", value)
+        if numbers and not all(number in artifact_text for number in numbers):
+            return False
+        if re.search(r"\bcharacters?\b", value):
+            return any(marker in artifact_text for marker in ("字符", "_chars", "characters"))
+        if re.search(r"\btokens?\b", value):
+            return "token" in artifact_text
+        return False
+
+    @classmethod
+    def _delete_matching_sentences(cls, paragraph: dict, pattern: str, changes: list[dict]) -> None:
+        original = str(paragraph.get("text") or "")
+        deleted = [sentence for sentence in cls._sentence_parts(original) if re.search(pattern, sentence, re.IGNORECASE)]
+        revised = original
+        for sentence in deleted:
+            revised = cls._remove_exact_sentence(revised, sentence)
+        if revised != original:
+            paragraph["text"] = revised
+            changes.append({
+                "target": paragraph.get("id"), "operation": "delete_editorial",
+                "text": " | ".join(deleted)[:240],
+            })
+
+    @classmethod
+    def _delete_duplicate_sentence(cls, paragraphs: list[dict], changes: list[dict]) -> None:
+        earlier: list[str] = []
+        for paragraph in paragraphs:
+            for sentence in cls._sentence_parts(str(paragraph.get("text") or "")):
+                similarity = max(
+                    (SequenceMatcher(None, sentence.casefold(), prior.casefold()).ratio() for prior in earlier),
+                    default=0.0,
+                )
+                if similarity >= 0.8:
+                    paragraph["text"] = cls._remove_exact_sentence(str(paragraph.get("text") or ""), sentence)
+                    changes.append({
+                        "target": paragraph.get("id"), "operation": "delete_duplicate", "text": sentence[:240],
+                    })
+                    continue
+                earlier.append(sentence)
+
     @classmethod
     def _deletion_sentence(cls, paragraph: str, instruction: str) -> str | None:
         sentences = cls._sentence_parts(paragraph)
@@ -421,6 +551,8 @@ class ThesisChapterService:
         text = sentence.strip()
         lowered = text.casefold()
         if re.fullmatch(r"(?:the thesis|[a-z-]+ et al)\.?", lowered):
+            return True
+        if re.fullmatch(r"(?:however|therefore|moreover|additionally)\.", lowered):
             return True
         if lowered.endswith("et al.") and not re.search(
             r"\b(?:is|are|was|were|found|showed|reported|examined|demonstrated|improved)\b",

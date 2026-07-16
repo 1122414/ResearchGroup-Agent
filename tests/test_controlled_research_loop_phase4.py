@@ -421,6 +421,46 @@ def test_restored_chapter_gets_only_one_separate_v2_surgical_pass(monkeypatch):
     assert run_execution_service._retry_surgical_chapter_repair([task]) is False
 
 
+def test_exhausted_v2_surgery_can_use_one_global_editorial_pass(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 6, "owner_agent": "writer",
+        "outputs": [{"summary": "audited", "chapter": {}}],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit_v2",
+        }}}},
+    }
+    events = []
+    monkeypatch.setattr(run_execution_service, "_task_event_count", lambda *_args: 5)
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.editorial_repair",
+        lambda *_args: {
+            "result": {"summary": "edited", "chapter": {}},
+            "changes": [{"target": "p1", "operation": "clean_punctuation"}],
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.word_count",
+        lambda *_args: 600,
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.OutputRepository.insert", lambda _output: None,
+    )
+    monkeypatch.setattr(run_execution_service, "_revive_dependency_descendants", lambda *_args: None)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_surgical_chapter_repair([task]) is True
+    assert events == ["revision.global_editorial_repair"]
+
+
 def test_legacy_direct_entailment_audit_rechecks_without_spending_surgical_round(monkeypatch):
     task = {
         "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",

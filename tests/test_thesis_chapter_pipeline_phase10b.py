@@ -417,6 +417,35 @@ def test_surgical_repair_understands_no_bound_support_review_language(monkeypatc
     assert repaired["changes"][0]["operation"] == "delete"
 
 
+def test_global_editorial_repair_is_deterministic_and_artifact_verified(monkeypatch):
+    monkeypatch.setattr(
+        thesis_chapter_service, "_canonical_artifact_text",
+        lambda _run_id: '{"chunk_size":100,"overlap":30,"unit":"characters"}',
+    )
+    latest = {"chapter": {"sections": [{"heading": "Method", "paragraphs": [
+        {"id": "p1", "text": ". Chunks use 100 tokens each.", "paragraph_type": "claim", "support_ids": ["brief:methodology"]},
+        {"id": "p2", "text": "These conditions provide a minimal controlled comparison. Future work should test larger data.", "paragraph_type": "limitation", "support_ids": []},
+        {"id": "p3", "text": "The conditions provide a minimal controlled comparison. However.", "paragraph_type": "interpretation", "support_ids": []},
+    ]}]}}
+    issues = [
+        {"target": "p1", "reason": "unit mismatch", "required_change": "将 '100 tokens each' 改为 '100 characters each'"},
+        {"target": "p2 p3", "reason": "未来工作错放且内容重复", "required_change": "删除未来工作与重复部分"},
+        {"target": "p1", "reason": "type", "required_change": "从 'claim' 改为 'method'"},
+    ]
+
+    repaired = thesis_chapter_service.editorial_repair(
+        {"run_id": "run"}, latest,
+        {"quality_gates": {"layers": {"independent_review": {"issues": issues}}}},
+    )
+    paragraphs = repaired["result"]["chapter"]["sections"][0]["paragraphs"]
+
+    assert paragraphs[0]["text"] == "Chunks use 100 characters each."
+    assert paragraphs[0]["paragraph_type"] == "method"
+    assert "Future work" not in paragraphs[1]["text"]
+    assert "However." not in paragraphs[2]["text"]
+    assert any(item["operation"] == "delete_duplicate" for item in repaired["changes"])
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",
