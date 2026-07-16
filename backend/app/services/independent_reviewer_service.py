@@ -193,7 +193,7 @@ class IndependentReviewerService:
         )
         review = await self._ask_reviewer(base_prompt, task, verified_support_ids)
         if task.get("task_type") == "thesis_chapter":
-            review["reviewer"] = "independent_reviewer_model_paragraph_audit_v2_global"
+            review["reviewer"] = "independent_reviewer_model_paragraph_audit_v3_global"
         return review
 
     async def _review_thesis_support_batches(
@@ -479,6 +479,10 @@ class IndependentReviewerService:
             "算法、参数或数值必须拒绝。还应检查结构、论证连贯性、方法解释、结果边界和局限是否与章节职责相称。"
             "paragraph_support_audit 已由同一独立审稿角色分段穷尽完成且通过时，本轮只审结构、章节职责、"
             "内部一致性和研究边界，不得重复抽样审查证据绑定并制造下一轮零散问题。"
+            "不得仅因章节组织偏好拒绝有证据且有边界的内容：引言可以简要预览关键数值、方法和局限，"
+            "方法章可以解释设计理由、复现控制、诊断和方法局限；只有事实矛盾、必要结构缺失、明显破坏"
+            "论证的实质重复或大段内容完全与章节目标无关时才能列为 major。可选的搬章、合并和文风优化"
+            "应写入 summary 而不是 issues，不能因此判为不通过。"
             "字数、support ID 存在性和来源资格已经由确定性门校验，不得要求正文自报 word_count 或重复"
             "粘贴原始文献。引言、文献综述和结论不必重复逐 query 数据；方法与结果章节才应提供与职责相称的"
             "统计和复现细节。冻结受控 pilot 只要明确禁止开放域外推，就不得要求擅自扩大样本或增加新基线。"

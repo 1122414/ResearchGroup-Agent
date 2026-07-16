@@ -558,6 +558,7 @@ class RunExecutionService:
             self._retry_first_paragraph_audit(writing_tasks)
             self._retry_structural_floor_migration(writing_tasks)
             self._retry_epistemic_audit_migration(writing_tasks)
+            self._retry_global_scope_migration(writing_tasks)
             self._retry_advisor_paragraph_restoration(writing_tasks)
             self._retry_advisor_exact_cleanup(writing_tasks)
             self._retry_surgical_chapter_repair(writing_tasks)
@@ -871,6 +872,38 @@ class RunExecutionService:
             changed = True
         return changed
 
+    def _retry_global_scope_migration(self, tasks: list[dict]) -> bool:
+        """Re-review v2-global chapters after removing chapter-preference false failures."""
+        changed = False
+        for task in tasks:
+            reviewer = (
+                ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+                .get("independent_review", {}).get("reviewer")
+            )
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and reviewer == "independent_reviewer_model_paragraph_audit_v2_global"
+                and not self._has_task_event(task, "review.global_scope_migration")
+                and task.get("outputs")
+            ):
+                continue
+            TaskRepository.update_status(
+                task["id"], "running", blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "review.global_scope_migration", "review",
+                "按宽严适中的全局章节协议重新审核",
+                "复用现有正文；不因可选搬章或有边界的结果预览、方法理由和局限直接判死。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
+        return changed
+
     def _retry_surgical_chapter_repair(self, tasks: list[dict]) -> bool:
         """Repair exhaustive audit findings without permitting any generated replacement prose."""
         changed = False
@@ -910,7 +943,10 @@ class RunExecutionService:
                 )
             )
             editorial_eligible = (
-                (reviewer == "independent_reviewer_model_paragraph_audit_v2_global" or legacy_v2_global)
+                (reviewer in {
+                    "independent_reviewer_model_paragraph_audit_v2_global",
+                    "independent_reviewer_model_paragraph_audit_v3_global",
+                } or legacy_v2_global)
                 and not self._has_task_event(task, "revision.global_editorial_repair")
             )
             if not (

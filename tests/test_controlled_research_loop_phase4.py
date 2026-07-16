@@ -675,3 +675,30 @@ def test_passed_gate_advisor_exact_cleanup_reopens_without_attempt(monkeypatch):
     assert task["status"] == "running"
     assert task["attempt_count"] == 7
     assert events == ["revision.advisor_exact_cleanup"]
+
+
+def test_v2_global_failure_rechecks_once_under_balanced_scope(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 7, "owner_agent": "writer",
+        "revision_of_task_id": "root", "outputs": [{"chapter": {}}],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit_v2_global",
+        }}}},
+    }
+    events = []
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(run_execution_service, "_revive_dependency_descendants", lambda *_args: None)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_global_scope_migration([task]) is True
+    assert task["status"] == "running"
+    assert task["attempt_count"] == 7
+    assert events == ["review.global_scope_migration"]
