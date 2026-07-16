@@ -13,7 +13,6 @@ from ..storage.repositories import (
     ResearchUncertaintyRepository,
     TaskRepository,
 )
-from .claim_evaluation_service import claim_evaluation_service
 
 
 class KnowledgeGraphService:
@@ -225,6 +224,7 @@ class KnowledgeGraphService:
         latest_reviews = {
             item["task_id"]: item for item in ReviewDecisionRepository.get_by_run(run_id)
         }
+        approved_outputs: list[tuple[dict, dict]] = []
         for task in TaskRepository.get_all(run_id=run_id):
             reviewed = latest_reviews.get(task["id"]) or {}
             target = (
@@ -234,6 +234,8 @@ class KnowledgeGraphService:
             )
             for output in task.get("outputs") or []:
                 graph = output.get("knowledge_graph") or {}
+                if target is approved:
+                    approved_outputs.append((task, output))
                 target["claims"].update(graph.get("claim_ids") or [])
                 target["hypotheses"].update(graph.get("hypothesis_ids") or [])
                 target["uncertainties"].update(graph.get("uncertainty_ids") or [])
@@ -251,14 +253,14 @@ class KnowledgeGraphService:
             )
         for uncertainty_id in staged["uncertainties"] - approved["uncertainties"]:
             ResearchUncertaintyRepository.update_status(uncertainty_id, "staged")
-        for claim_id in approved["claims"]:
-            claim_evaluation_service.evaluate(claim_id)
-        for hypothesis_id in approved["hypotheses"]:
-            ResearchHypothesisRepository.update(
-                hypothesis_id, status="proposed", updated_at=now,
-            )
-        for uncertainty_id in approved["uncertainties"]:
-            ResearchUncertaintyRepository.update_status(uncertainty_id, "open")
+        if approved_outputs:
+            # Local import avoids a module cycle while keeping restart replay
+            # identical to the normal post-review promotion order.
+            from .review_service import ReviewService
+
+            for task, output in approved_outputs:
+                ReviewService._promote_reviewed_graph(output)
+                ReviewService._promote_artifact_claims(task, output)
 
     @staticmethod
     def _task_object_id(prefix: str, task_id: str | None, normalized_text: str) -> str:

@@ -147,6 +147,39 @@ def test_unapproved_legacy_task_cannot_leave_supported_claim(monkeypatch):
     assert claim["evidence_ids"] == []
 
 
+def test_approved_artifact_claim_survives_restart_synchronization(monkeypatch):
+    run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
+    claim_id = f"claim_{uuid.uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    statement = "Deterministic quantitative result"
+    ResearchClaimRepository.insert({
+        "id": claim_id, "run_id": run_id, "statement": statement,
+        "status": "draft", "evidence_ids": [], "confidence": 0.0,
+        "created_at": now, "updated_at": now,
+    })
+    output = {
+        "claims": [{
+            "statement": statement, "confidence": 0.9,
+            "provenance": {
+                "method_family": "quantitative", "input_hashes": ["input_sha"],
+                "analysis_artifact": "analysis.json", "analysis_artifact_sha256": "artifact_sha",
+            },
+        }],
+        "knowledge_graph": {"claim_ids": [claim_id]},
+    }
+    task = {"id": "approved_task", "run_id": run_id, "status": "completed", "outputs": [output]}
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [task])
+    monkeypatch.setattr(ReviewDecisionRepository, "get_by_run", lambda _run_id: [{
+        "task_id": "approved_task", "approved": True,
+    }])
+
+    knowledge_graph_service.synchronize_review_status(run_id)
+
+    claim = ResearchClaimRepository.get_by_id(claim_id)
+    assert claim["status"] == "supported"
+    assert claim["evidence_ids"] == ["analysis.json", "artifact_sha", "input_sha"]
+
+
 def test_partially_entailed_claim_stays_in_audit_not_knowledge_graph():
     run_id = f"run_kg_{uuid.uuid4().hex[:6]}"
     source_id = f"source_{uuid.uuid4().hex[:8]}"
