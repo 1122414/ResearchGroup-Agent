@@ -132,12 +132,29 @@ class IndependentReviewerService:
             # Evidence precedes the long chapter so a context cap can never
             # turn present support into a false "missing support" verdict.
             payload = {
-                "task": payload["task"],
+                "task": {
+                    key: task.get(key) for key in ("id", "title", "task_type")
+                },
                 "support_ids_verified_by_schema": sorted(verified_support_ids),
                 "allowed_support": allowed_support,
                 "allowed_contract_support": contract_support,
                 "allowed_artifact_support": artifact_support,
                 "deliverable": deliverable,
+            }
+            support_issues = await self._review_thesis_support_batches(
+                task, latest.get("chapter") or {}, allowed_support,
+                contract_support, artifact_support, verified_support_ids,
+            )
+            if support_issues:
+                return {
+                    "approved": False,
+                    "issues": support_issues,
+                    "summary": "分段证据审计发现需一次性修复的越界表述",
+                    "reviewer": "independent_reviewer_model_paragraph_audit",
+                    "simulation": False,
+                }
+            payload["paragraph_support_audit"] = {
+                "passed": True, "reviewed_in_bounded_batches": True,
             }
             review_scope = self._thesis_chapter_review_scope()
         elif not claims and not experiment:
@@ -174,6 +191,72 @@ class IndependentReviewerService:
             "summary 不超过 240 字；不要复述 passage、任务或实验数据。\n"
             + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:payload_limit]
         )
+        return await self._ask_reviewer(base_prompt, task, verified_support_ids)
+
+    async def _review_thesis_support_batches(
+        self,
+        task: dict,
+        chapter: dict,
+        allowed_support: list[dict],
+        contract_support: list[dict],
+        artifact_support: list[dict],
+        verified_support_ids: set[str],
+    ) -> list[dict]:
+        """Audit every thesis paragraph without truncating the chapter context."""
+        support_map = {
+            item["id"]: item
+            for item in [*allowed_support, *contract_support, *artifact_support]
+        }
+        paragraphs = [
+            {
+                "id": paragraph.get("id") or f"paragraph_{index}",
+                "text": paragraph.get("text"),
+                "paragraph_type": paragraph.get("paragraph_type"),
+                "support_ids": paragraph.get("support_ids") or [],
+            }
+            for index, paragraph in enumerate(
+                paragraph
+                for section in chapter.get("sections") or []
+                if isinstance(section, dict)
+                for paragraph in section.get("paragraphs") or []
+                if isinstance(paragraph, dict)
+            )
+        ]
+        issues: list[dict] = []
+        for offset in range(0, len(paragraphs), 6):
+            batch = paragraphs[offset:offset + 6]
+            used_ids = {
+                support_id for paragraph in batch
+                for support_id in paragraph.get("support_ids") or []
+            }
+            payload = {
+                "paragraphs": batch,
+                "bound_support": [support_map[item] for item in used_ids if item in support_map],
+                "support_ids_verified_by_schema": sorted(used_ids & verified_support_ids),
+            }
+            prompt = (
+                "你是论文段落证据审计员，未参与生成。逐段穷尽检查本批次全部段落，只能使用各段"
+                "support_ids 实际绑定的 bound_support，不得使用常识或其他段落的证据。检查每个事实、"
+                "因果、机制和解释性表述是否被直接蕴含；transition/limitation 也不得偷带新事实。"
+                "一次列出本批次全部 critical/major 越界，最多6条；不要报告文风或可选增强项。"
+                "required_change 必须精确指向段落 ID，并优先要求删除不受支持的最小短语；若已有匹配的"
+                "bound_support 才可要求修正 support_ids。只返回紧凑 JSON：approved、issues、summary。\n"
+                + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:24000]
+            )
+            review = await self._ask_reviewer(prompt, task, verified_support_ids)
+            issues.extend(review.get("issues") or [])
+        deduplicated = []
+        seen = set()
+        for issue in issues:
+            key = (issue.get("target"), issue.get("reason"), issue.get("required_change"))
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(issue)
+        return deduplicated[:18]
+
+    async def _ask_reviewer(
+        self, base_prompt: str, task: dict, verified_support_ids: set[str] | None = None,
+    ) -> dict:
         try:
             llm = create_llm_provider()
             attempts = min(max(int(settings.llm_structured_repair_attempts), 0), 1) + 1
@@ -185,8 +268,7 @@ class IndependentReviewerService:
                     run_id=task.get("run_id"), task_id=task.get("id"),
                 )
                 try:
-                    value = self._parse_json(raw)
-                    value = self._compact_review(value)
+                    value = self._compact_review(self._parse_json(raw))
                     if verified_support_ids:
                         value = self._filter_verified_support_issues(value, verified_support_ids)
                     if not self._valid_review(value):
@@ -199,18 +281,13 @@ class IndependentReviewerService:
                             f"{base_prompt}\n上次输出因过长或 JSON 非法（{last_error[:160]}）。"
                             "重新独立审查并严格压缩；不要复述上次输出。"
                         )
-            # Last transport-only fallback: preserve independent judgment while
-            # removing the verbose issue schema. This retries only the review,
-            # never the research or experiment task.
             raw = await llm.generate(
                 prompt=(
                     f"{base_prompt}\n前两次详细审稿结构均不可解析（{last_error[:160]}）。"
                     "现在只返回 {\"approved\": true/false, \"summary\": \"不超过240字的结论\"}。"
                 ),
-                schema=self.MINIMAL_SCHEMA,
-                role="independent_reviewer",
-                run_id=task.get("run_id"),
-                task_id=task.get("id"),
+                schema=self.MINIMAL_SCHEMA, role="independent_reviewer",
+                run_id=task.get("run_id"), task_id=task.get("id"),
             )
             value = self._parse_json(raw)
             if not isinstance(value, dict) or not isinstance(value.get("approved"), bool):
@@ -232,8 +309,7 @@ class IndependentReviewerService:
                     "required_change": "retry the independent review only or request human review",
                 }],
                 "summary": "independent reviewer returned invalid structure; fail closed",
-                "reviewer": "independent_reviewer_schema_guard",
-                "simulation": False,
+                "reviewer": "independent_reviewer_schema_guard", "simulation": False,
             }
 
     @staticmethod
@@ -284,6 +360,8 @@ class IndependentReviewerService:
             "或原始依据未提供，也不得把 brief:* ID 判为无效。逐段检查其 support_ids 所支撑的表述是否超出"
             "这些允许项。实验方法和数值若与 allowed_artifact_support 精确一致即可引用；若出现工件中没有的"
             "算法、参数或数值必须拒绝。还应检查结构、论证连贯性、方法解释、结果边界和局限是否与章节职责相称。"
+            "paragraph_support_audit 已由同一独立审稿角色分段穷尽完成且通过时，本轮只审结构、章节职责、"
+            "内部一致性和研究边界，不得重复抽样审查证据绑定并制造下一轮零散问题。"
             "字数、support ID 存在性和来源资格已经由确定性门校验，不得要求正文自报 word_count 或重复"
             "粘贴原始文献。引言、文献综述和结论不必重复逐 query 数据；方法与结果章节才应提供与职责相称的"
             "统计和复现细节。冻结受控 pilot 只要明确禁止开放域外推，就不得要求擅自扩大样本或增加新基线。"

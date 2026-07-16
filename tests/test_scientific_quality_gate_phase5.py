@@ -292,17 +292,79 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     )
 
     assert result["approved"] is True
-    assert '"chapter"' in prompts[0]
-    assert '"allowed_support"' in prompts[0]
-    assert '"allowed_contract_support"' in prompts[0]
-    assert '"allowed_artifact_support"' in prompts[0]
-    assert "experiment:verified" in prompts[0]
-    assert "frozen question" in prompts[0]
+    assert len(prompts) == 2
+    assert "逐段穷尽检查" in prompts[0]
+    assert "complete chapter body" in prompts[0]
     assert "bounded pilot result" in prompts[0]
-    assert "不得声称章节正文或原始依据未提供" in prompts[0]
-    assert "不得把 brief:* ID 判为无效" in prompts[0]
-    assert "工件中没有的" in prompts[0]
-    assert prompts[0].index('"allowed_artifact_support"') < prompts[0].index('"deliverable"')
+    assert '"chapter"' in prompts[-1]
+    assert '"allowed_support"' in prompts[-1]
+    assert '"allowed_contract_support"' in prompts[-1]
+    assert '"allowed_artifact_support"' in prompts[-1]
+    assert "experiment:verified" in prompts[-1]
+    assert "frozen question" in prompts[-1]
+    assert "bounded pilot result" in prompts[-1]
+    assert "不得声称章节正文或原始依据未提供" in prompts[-1]
+    assert "不得把 brief:* ID 判为无效" in prompts[-1]
+    assert "工件中没有的" in prompts[-1]
+    assert "paragraph_support_audit" in prompts[-1]
+    assert prompts[-1].index('"allowed_artifact_support"') < prompts[-1].index('"deliverable"')
+
+
+@pytest.mark.asyncio
+async def test_chapter_reviewer_collects_all_bounded_batch_support_issues(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            target = "p0" if '"id":"p0"' in prompt else "p6"
+            return json.dumps({
+                "approved": False,
+                "issues": [{
+                    "severity": "major", "target": target,
+                    "reason": f"{target} contains an unsupported mechanism",
+                    "required_change": f"delete the unsupported phrase in {target}",
+                }],
+                "summary": "support mismatch",
+            })
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchClaimRepository.get_by_run",
+        lambda _run_id: [{
+            "id": "claim_verified", "statement": "bounded result",
+            "status": "supported", "evidence_ids": ["source"],
+        }],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {},
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.thesis_chapter_service.artifact_support",
+        lambda _run_id: [],
+    )
+
+    result = await independent_reviewer_service.review_task(
+        {"id": "chapter", "run_id": "run", "task_type": "thesis_chapter"},
+        {"chapter": {"sections": [{"paragraphs": [
+            {
+                "id": f"p{index}", "text": f"paragraph {index} factual mechanism",
+                "paragraph_type": "claim", "support_ids": ["claim_verified"],
+            }
+            for index in range(7)
+        ]}]}},
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is False
+    assert result["reviewer"] == "independent_reviewer_model_paragraph_audit"
+    assert [item["target"] for item in result["issues"]] == ["p0", "p6"]
+    assert len(prompts) == 2
 
 
 @pytest.mark.asyncio
