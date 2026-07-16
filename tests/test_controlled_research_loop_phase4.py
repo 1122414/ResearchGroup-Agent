@@ -136,6 +136,22 @@ def test_execution_progress_distinguishes_pending_revision_attempts():
     )
 
 
+def test_task_event_guards_use_exact_unbounded_count(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        RunEventRepository, "count_task_events",
+        lambda run_id, task_id, event_type: calls.append((run_id, task_id, event_type)) or 2,
+    )
+    task = {"id": "chapter", "run_id": "run"}
+
+    assert run_execution_service._has_task_event(task, "revision.once") is True
+    assert run_execution_service._task_event_count(task, "revision.once") == 2
+    assert calls == [
+        ("run", "chapter", "revision.once"),
+        ("run", "chapter", "revision.once"),
+    ]
+
+
 def test_action_contract_is_not_mixed_into_search_query(monkeypatch):
     monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: None)
     action = {

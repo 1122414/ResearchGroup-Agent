@@ -1041,11 +1041,8 @@ class RunExecutionService:
 
     @staticmethod
     def _task_event_count(task: dict, event_type: str) -> int:
-        return sum(
-            event.get("event_type") == event_type
-            for event in RunEventRepository.get_by_run(
-                task.get("run_id"), limit=100, task_id=task.get("id"),
-            )
+        return RunEventRepository.count_task_events(
+            task.get("run_id"), task.get("id"), event_type,
         )
 
     @staticmethod
@@ -1064,12 +1061,9 @@ class RunExecutionService:
 
     @staticmethod
     def _has_task_event(task: dict, event_type: str) -> bool:
-        return any(
-            event.get("event_type") == event_type
-            for event in RunEventRepository.get_by_run(
-                task.get("run_id"), limit=100, task_id=task.get("id"),
-            )
-        )
+        return RunEventRepository.count_task_events(
+            task.get("run_id"), task.get("id"), event_type,
+        ) > 0
 
     def _can_reopen_thesis_in_place(self, task: dict, review: dict | None = None) -> bool:
         if task.get("task_type") != "thesis_chapter":

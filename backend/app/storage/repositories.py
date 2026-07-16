@@ -468,6 +468,16 @@ class RunEventRepository:
         conn.close()
         return _deserialize_run_event(row) if row else None
 
+    @staticmethod
+    def count_task_events(run_id: str, task_id: str, event_type: str) -> int:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT COUNT(*) AS total FROM run_events WHERE run_id = ? AND task_id = ? AND event_type = ?",
+            (run_id, task_id, event_type),
+        ).fetchone()
+        conn.close()
+        return int(row["total"] if row else 0)
+
 
 class LLMUsageRepository:
     @staticmethod
