@@ -87,9 +87,10 @@ class EvidenceProvider:
         return bool(settings.evidence_remote_search_enabled and settings.semantic_scholar_enabled)
 
     def _search_crossref(self, query: str) -> tuple[list[dict], str | None]:
+        result_limit = max(int(settings.evidence_search_max_results), 1)
         params = {
-            "query": self._scholarly_query(query),
-            "rows": settings.evidence_search_max_results,
+            "query.bibliographic": self._scholarly_query(query),
+            "rows": min(max(result_limit * 4, 20), 100),
         }
         if settings.crossref_mailto:
             params["mailto"] = settings.crossref_mailto
@@ -104,7 +105,7 @@ class EvidenceProvider:
             return [], exc.__class__.__name__
 
         normalized: list[dict] = []
-        for item in body.get("message", {}).get("items", [])[: settings.evidence_search_max_results]:
+        for item in body.get("message", {}).get("items", []):
             authors = ", ".join(
                 " ".join(part for part in [author.get("given", ""), author.get("family", "")] if part).strip()
                 for author in item.get("author", [])[:5]
@@ -142,7 +143,13 @@ class EvidenceProvider:
                     },
                 }
             )
-        return normalized, None
+        low_value_types = {"component", "reference-entry", "peer-review"}
+        substantive = [
+            item for item in normalized
+            if (item.get("metadata") or {}).get("type") not in low_value_types
+        ]
+        secondary = [item for item in normalized if item not in substantive]
+        return [*substantive, *secondary][:result_limit], None
 
     @staticmethod
     def _scholarly_query(query: str, max_terms: int = 16) -> str:
@@ -170,7 +177,7 @@ class EvidenceProvider:
 
     def _search_openalex(self, query: str) -> tuple[list[dict], str | None]:
         params = {
-            "search": query,
+            "search": self._scholarly_query(query),
             "per-page": settings.evidence_search_max_results,
         }
         if settings.openalex_mailto:
@@ -226,7 +233,7 @@ class EvidenceProvider:
 
     def _search_arxiv(self, query: str) -> tuple[list[dict], str | None]:
         params = {
-            "search_query": f"all:{query}",
+            "search_query": f"all:{self._scholarly_query(query)}",
             "start": 0,
             "max_results": settings.evidence_search_max_results,
         }
@@ -272,7 +279,7 @@ class EvidenceProvider:
 
     def _search_semantic_scholar(self, query: str) -> tuple[list[dict], str | None]:
         params = {
-            "query": query,
+            "query": self._scholarly_query(query),
             "limit": settings.evidence_search_max_results,
             "fields": "paperId,title,authors,year,venue,url,externalIds",
         }

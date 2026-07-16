@@ -61,6 +61,7 @@ def test_remote_evidence_search_uses_its_own_bounded_timeout(monkeypatch):
 
     def fake_urlopen(_request, timeout):
         observed["timeout"] = timeout
+        observed["url"] = _request.full_url
         return Response()
 
     monkeypatch.setattr("backend.app.services.evidence_provider.urllib.request.urlopen", fake_urlopen)
@@ -69,6 +70,42 @@ def test_remote_evidence_search_uses_its_own_bounded_timeout(monkeypatch):
     assert error is None
     assert observed["timeout"] == settings.evidence_search_timeout_seconds
     assert observed["timeout"] < settings.llm_timeout
+    assert "query.bibliographic=" in observed["url"]
+    assert f"rows={min(max(settings.evidence_search_max_results * 4, 20), 100)}" in observed["url"]
+
+
+def test_crossref_prioritizes_substantive_works_over_figure_components(monkeypatch):
+    payload = {"message": {"items": [
+        {
+            "DOI": "10.1000/figure", "title": ["Figure about public expenditure"],
+            "URL": "https://doi.org/10.1000/figure", "type": "component",
+        },
+        {
+            "DOI": "10.1000/article", "title": ["Education expenditure and public outcomes"],
+            "URL": "https://doi.org/10.1000/article", "type": "journal-article",
+        },
+    ]}}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(
+        "backend.app.services.evidence_provider.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    results, error = evidence_provider._search_crossref("government education expenditure GDP")
+
+    assert error is None
+    assert [item["doi"] for item in results[:2]] == ["10.1000/article", "10.1000/figure"]
 
 
 def test_scholarly_providers_prefer_declared_open_fulltext_urls(monkeypatch):

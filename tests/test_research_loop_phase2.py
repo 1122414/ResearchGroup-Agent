@@ -68,3 +68,15 @@ def test_crossref_query_keeps_topic_and_drops_comparison_scaffolding():
         "lower-middle-income countries descriptive statistics"
     )
     assert query == "government education expenditure GDP"
+
+
+def test_all_scholarly_providers_reuse_the_same_core_query():
+    import inspect
+
+    for method in (
+        evidence_provider._search_crossref,
+        evidence_provider._search_openalex,
+        evidence_provider._search_arxiv,
+        evidence_provider._search_semantic_scholar,
+    ):
+        assert "_scholarly_query(query)" in inspect.getsource(method)
