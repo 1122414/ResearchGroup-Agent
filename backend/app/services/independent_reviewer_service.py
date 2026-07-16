@@ -231,8 +231,14 @@ class IndependentReviewerService:
             }
             payload = {
                 "paragraphs": batch,
-                "bound_support": [support_map[item] for item in used_ids if item in support_map],
-                "available_support": list(support_map.values()),
+                "bound_support": [
+                    self._audit_support_view(support_map[item], batch)
+                    for item in used_ids if item in support_map
+                ],
+                "available_support": [
+                    self._audit_support_view(item, batch)
+                    for support_id, item in support_map.items() if support_id not in used_ids
+                ],
                 "support_ids_verified_by_schema": sorted(used_ids & verified_support_ids),
             }
             prompt = (
@@ -262,6 +268,58 @@ class IndependentReviewerService:
                 seen.add(key)
                 deduplicated.append(issue)
         return deduplicated[:18]
+
+    @classmethod
+    def _audit_support_view(cls, support: dict, batch: list[dict]) -> dict:
+        """Compact a large frozen artifact to facts relevant to the current paragraph batch."""
+        serialized = json.dumps(support, ensure_ascii=False, separators=(",", ":"))
+        if len(serialized) <= 6000:
+            return support
+        context = " ".join(str(item.get("text") or "") for item in batch)
+        context_terms = cls._audit_terms(context)
+        leaves: list[tuple[int, int, str, object]] = []
+
+        def walk(value, path: str = "") -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    walk(child, f"{path}.{key}" if path else str(key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value[:200]):
+                    walk(child, f"{path}[{index}]")
+            elif value is not None:
+                rendered = str(value)[:160]
+                terms = cls._audit_terms(f"{path} {rendered}")
+                overlap = len(context_terms & terms)
+                numeric = set(re.findall(r"\b\d+(?:\.\d+)?\b", context)) & set(
+                    re.findall(r"\b\d+(?:\.\d+)?\b", rendered)
+                )
+                essential = any(marker in path.casefold() for marker in (
+                    "summary", "research_question", "protocol_id", "publishable",
+                    "preregistration", "reproduction",
+                ))
+                leaves.append((overlap * 4 + len(numeric) * 8 + int(essential), len(leaves), path, rendered))
+
+        walk(support)
+        selected = sorted(leaves, key=lambda item: (-item[0], item[1]))[:32]
+        selected.sort(key=lambda item: item[1])
+        return {
+            "id": support.get("id"),
+            "fact_view": [
+                {"path": path[:160], "value": value}
+                for _score, _index, path, value in selected
+            ],
+            "compacted_for_paragraph_audit": True,
+        }
+
+    @staticmethod
+    def _audit_terms(text: str) -> set[str]:
+        lowered = text.casefold()
+        terms = {
+            token[:7] for token in re.findall(r"[a-z][a-z0-9_-]{4,}", lowered)
+        }
+        for sequence in re.findall(r"[\u4e00-\u9fff]{2,}", lowered):
+            terms.update(sequence[index:index + 2] for index in range(len(sequence) - 1))
+        return terms
 
     @staticmethod
     def _anchor_batch_issue_targets(review: dict, batch: list[dict]) -> dict:

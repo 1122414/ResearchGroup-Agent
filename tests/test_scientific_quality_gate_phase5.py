@@ -559,6 +559,30 @@ def test_chapter_batch_issue_is_anchored_to_quoted_paragraph():
     assert anchored["issues"][0]["target"] == "intro_2"
 
 
+def test_large_artifact_support_is_compacted_to_relevant_frozen_facts():
+    support = {
+        "id": "experiment:verified",
+        "protocol": {"method_details": {
+            "window_size": "100 characters", "overlap": "30 characters",
+        }},
+        "rows": [{"strategy": "fixed overlap", "mrr_at_10": 1.0}],
+        "noise": [{f"unused_{index}": "unrelated material " * 30} for index in range(80)],
+    }
+
+    view = independent_reviewer_service._audit_support_view(
+        support,
+        [{"text": "The fixed overlap strategy uses a 100 character window and 30 character overlap."}],
+    )
+
+    rendered = json.dumps(view, ensure_ascii=False)
+    assert view["id"] == "experiment:verified"
+    assert view["compacted_for_paragraph_audit"] is True
+    assert "window_size" in rendered
+    assert "100 characters" in rendered
+    assert "overlap" in rendered
+    assert len(rendered) < 9000
+
+
 def test_literature_reviewer_must_not_invent_missing_source_statistics():
     scope = independent_reviewer_service._literature_review_scope()
     assert "不是复现被引论文" in scope
