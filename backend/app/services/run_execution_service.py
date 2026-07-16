@@ -879,11 +879,17 @@ class RunExecutionService:
                 .get("independent_review", {}).get("reviewer")
             )
             repair_round = self._task_event_count(task, "revision.surgical_chapter_repair")
+            post_restoration = (
+                repair_round >= 5
+                and reviewer == "independent_reviewer_model_paragraph_audit_v2"
+                and self._has_task_event(task, "revision.advisor_paragraph_restoration")
+                and not self._has_task_event(task, "revision.post_restoration_surgical_repair")
+            )
             if not (
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and self._is_paragraph_audit_reviewer(reviewer)
-                and repair_round < 5
+                and (repair_round < 5 or post_restoration)
                 and task.get("outputs")
             ):
                 continue
@@ -913,9 +919,13 @@ class RunExecutionService:
             self._revive_dependency_descendants(
                 task["run_id"], task.get("revision_of_task_id") or task["id"],
             )
+            event_type = (
+                "revision.post_restoration_surgical_repair"
+                if post_restoration else "revision.surgical_chapter_repair"
+            )
             run_event_service.emit(
-                task["run_id"], "revision.surgical_chapter_repair", "review",
-                "章节执行单调外科修复",
+                task["run_id"], event_type, "review",
+                "恢复段落执行一次性 v2 外科修复" if post_restoration else "章节执行单调外科修复",
                 f"删除或补绑 {len(repaired['changes'])} 项；未解析 {len(repaired['unresolved'])} 项。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
                 payload={
@@ -924,6 +934,7 @@ class RunExecutionService:
                     "issue_count": issue_count,
                     "word_count_before": words_before, "word_count_after": words_after,
                     "attempt_count": task.get("attempt_count"),
+                    "post_restoration": post_restoration,
                 },
             )
             changed = True

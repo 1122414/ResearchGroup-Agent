@@ -396,6 +396,27 @@ def test_advisor_named_paragraphs_restore_exactly_from_persisted_previous_chapte
     assert restored["changes"] == [{"target": "p1", "operation": "restore_previous_exact"}]
 
 
+def test_surgical_repair_understands_no_bound_support_review_language(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    latest = {"chapter": {"sections": [{"heading": "Pilot", "paragraphs": [{
+        "id": "pilot", "paragraph_type": "claim", "support_ids": ["brief:methodology"],
+        "text": "Each query has a single correct document. The measured MRR was 1.0.",
+    }]}]}}
+    review = {"quality_gates": {"layers": {"independent_review": {"issues": [{
+        "target": "pilot",
+        "reason": "No bound support directly states that each query has a single correct document.",
+        "required_change": "No bound support directly states that each query has a single correct document.",
+    }]}}}}
+
+    repaired = thesis_chapter_service.surgical_repair(
+        {"run_id": "run"}, latest, review,
+    )
+
+    text = repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]["text"]
+    assert text == "The measured MRR was 1.0."
+    assert repaired["changes"][0]["operation"] == "delete"
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

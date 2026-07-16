@@ -241,6 +241,7 @@ class ThesisChapterService:
                 continue
             delete_requested = any(marker in instruction.casefold() for marker in (
                 "delete", "remove", "删除", "移除", "无直接证据", "not directly", "not supported",
+                "no bound support",
             ))
             if not delete_requested:
                 unresolved.append(issue)
