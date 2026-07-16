@@ -83,6 +83,41 @@ def test_literature_revision_reuses_frozen_fulltext_pool(monkeypatch):
     assert bundle["search_attempts"] == []
 
 
+def test_literature_revision_expands_search_when_review_requests_new_sources(monkeypatch):
+    service = EvidencePipelineService()
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda _task_id: {
+        "review_feedback": "请重新检索并补充更多相关的可核验来源",
+    })
+
+    bundle = service._frozen_revision_bundle({
+        "id": "revision", "run_id": "run_1", "revision_of_task_id": "root",
+    }, "education spending")
+
+    assert bundle is None
+
+
+def test_frozen_evidence_pool_is_ranked_for_current_question(monkeypatch):
+    service = EvidencePipelineService()
+    sources = [
+        {"id": "irrelevant", "title": "Particle physics report", "metadata": {}},
+        {"id": "relevant", "title": "Government education expenditure by income group", "metadata": {}},
+    ]
+    excerpts = [
+        {"id": "p1", "source_id": "irrelevant", "excerpt": "physics"},
+        {"id": "p2", "source_id": "relevant", "excerpt": "education expenditure"},
+    ]
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    monkeypatch.setattr(service, "_cumulative_grounded_evidence", lambda *_args: (sources, excerpts))
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {"assessments": []})
+
+    bundle = service._frozen_revision_bundle({
+        "id": "revision", "run_id": "run_1", "revision_of_task_id": "root",
+    }, "government education expenditure income group")
+
+    assert [item["id"] for item in bundle["sources"]] == ["relevant"]
+    assert [item["id"] for item in bundle["excerpts"]] == ["p2"]
+
+
 def test_revision_task_does_not_reuse_itself_as_next_revision(monkeypatch):
     monkeypatch.setattr(settings, "task_max_revision_rounds", 1)
 

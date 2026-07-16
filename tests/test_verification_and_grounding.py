@@ -141,6 +141,25 @@ def test_literature_policy_keeps_only_passage_grounded_claims(monkeypatch):
     assert checked["academic_integrity"]["dropped_ungrounded_claims"] == 1
 
 
+def test_literature_policy_accepts_structured_reference_screening_records(monkeypatch):
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    source = {"id": "source_ok", "metadata": {"citation_eligible": True}}
+    excerpt = {
+        "id": "excerpt_ok", "source_id": "source_ok", "excerpt": "A real passage",
+        "excerpt_type": "fulltext",
+    }
+    checked = research_integrity_service.apply_literature_policy(
+        {
+            "summary": "screened", "claims": [],
+            "references_used": [{"source_id": "source_ok", "status": "accepted", "note": "relevant"}],
+        },
+        [source], "query", "test", {"title": "literature review"}, [excerpt],
+    )
+
+    assert checked["academic_integrity"]["status"] == "passed"
+    assert checked["references_used"] == ["source_ok"]
+
+
 def test_contextual_absence_is_kept_as_note_not_research_claim(monkeypatch):
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
     source = {"id": "source_ok", "metadata": {"citation_eligible": True}}

@@ -82,9 +82,7 @@ class ResearchIntegrityService:
         valid_claims = [item for item in grounded_claims if item.get("relation") != "context"]
         dropped_claims = len(result.get("claims") or []) - len(grounded_claims)
 
-        references_used = result.get("references_used") or []
-        if not isinstance(references_used, list):
-            references_used = []
+        references_used = self._reference_ids(result.get("references_used"))
         if not references_used:
             references_used = [
                 source_id
@@ -92,7 +90,7 @@ class ResearchIntegrityService:
                 if isinstance(claim, dict)
                 for source_id in claim.get("evidence_source_ids") or []
             ]
-        normalized_refs = [str(item) for item in references_used]
+        normalized_refs = references_used
 
         grounded = dict(result)
         grounded["claims"] = valid_claims
@@ -163,9 +161,7 @@ class ResearchIntegrityService:
         allowed_ids: set[str],
         excerpts: list[dict],
     ) -> list[str]:
-        references_used = result.get("references_used") or []
-        if not isinstance(references_used, list):
-            references_used = []
+        references_used = cls._reference_ids(result.get("references_used"))
 
         violations: list[str] = []
         unknown_refs = sorted(set(str(item) for item in references_used) - allowed_ids)
@@ -268,6 +264,19 @@ class ResearchIntegrityService:
         if not isinstance(value, list):
             return []
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
+    def _reference_ids(value) -> list[str]:
+        """Accept model screening records without treating their JSON as a fabricated source ID."""
+        if not isinstance(value, list):
+            return []
+        ids = []
+        for item in value:
+            candidate = item.get("source_id") if isinstance(item, dict) else item
+            text = str(candidate or "").strip()
+            if text:
+                ids.append(text)
+        return ids
 
     @staticmethod
     def _insufficient_evidence_result(

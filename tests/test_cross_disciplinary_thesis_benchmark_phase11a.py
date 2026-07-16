@@ -101,9 +101,15 @@ def _spec(run_id: str | None = "run_real") -> dict:
     }
 
 
-def test_pending_registry_truthfully_reports_zero_of_five():
+def test_pending_registry_truthfully_reports_zero_of_five(tmp_path):
     service = CrossDisciplinaryThesisBenchmarkService()
-    path = Path(__file__).parents[1] / "benchmarks" / "thesis_projects.json"
+    path = tmp_path / "pending_registry.json"
+    path.write_text(json.dumps({
+        "projects": [
+            {"id": paradigm, "paradigm": paradigm, "run_id": None}
+            for paradigm in sorted(service.REQUIRED_PARADIGMS)
+        ],
+    }), encoding="utf-8")
 
     result = service.run(path)
 

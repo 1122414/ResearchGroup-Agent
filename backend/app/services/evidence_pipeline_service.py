@@ -101,6 +101,9 @@ class EvidencePipelineService:
         grounded_sources, grounded_excerpts = self._cumulative_grounded_evidence(
             task.get("run_id"), normalized,
         )
+        grounded_sources, grounded_excerpts = self._rank_grounded_bundle(
+            grounded_sources, grounded_excerpts, query,
+        )
         persisted["sources"] = grounded_sources
         persisted["excerpts"] = grounded_excerpts
         search_metrics = {
@@ -126,7 +129,10 @@ class EvidencePipelineService:
     def _frozen_revision_bundle(self, task: dict, query: str) -> dict | None:
         if not task.get("revision_of_task_id") or not task.get("run_id"):
             return None
+        if self._requires_evidence_expansion(self._revision_feedback(task)):
+            return None
         sources, excerpts = self._cumulative_grounded_evidence(task.get("run_id"), [])
+        sources, excerpts = self._rank_grounded_bundle(sources, excerpts, query)
         if len(sources) < max(int(settings.literature_min_grounded_sources), 1) or not excerpts:
             return None
         source_ids = {source["id"] for source in sources}
@@ -156,6 +162,22 @@ class EvidencePipelineService:
             "excerpts": excerpts,
             "assessments": assessments,
         }
+
+    def _rank_grounded_bundle(
+        self, sources: list[dict], excerpts: list[dict], query: str,
+    ) -> tuple[list[dict], list[dict]]:
+        ranked = self._rank_by_relevance(sources, query)
+        selected = {source["id"] for source in ranked}
+        return ranked, [item for item in excerpts if item.get("source_id") in selected]
+
+    @staticmethod
+    def _requires_evidence_expansion(feedback: str) -> bool:
+        text = str(feedback or "").casefold()
+        return any(marker in text for marker in (
+            "重新检索", "扩大检索", "补充检索", "补充可核验", "更多相关", "检索链路",
+            "retrieve more", "new retrieval", "expand the search", "broaden the search",
+            "more relevant source", "additional verified source",
+        ))
 
     @staticmethod
     def _seed_sources(run_id: str | None) -> list[dict]:
