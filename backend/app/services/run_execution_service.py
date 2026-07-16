@@ -462,6 +462,7 @@ class RunExecutionService:
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="研究任务执行中")
             await self._execute_ready_tasks(run_id, research_tasks)
             await self._review_task_batch(run_id, research_tasks)
+            self._archive_superseded_revisions(run_id)
             if self._has_pending_approval(run_id):
                 return
             refreshed = TaskRepository.get_all(run_id=run_id)
@@ -490,8 +491,21 @@ class RunExecutionService:
 
         Returns True if any task was finalized (caller should re-loop)."""
         changed = False
+        all_tasks = TaskRepository.get_all(run_id=run_id)
         for task in tasks:
             if task.get("status") != "need_revision":
+                continue
+            root_id = task.get("revision_of_task_id") or task["id"]
+            if any(
+                item.get("status") == "completed"
+                and (item["id"] == root_id or item.get("revision_of_task_id") == root_id)
+                for item in all_tasks
+            ):
+                TaskRepository.update_status(
+                    task["id"], "archived",
+                    blocked_reason="已被同一返工链中通过审核的新版本取代。",
+                )
+                changed = True
                 continue
             # Give the task one more chance only if a fresh revision round is
             # genuinely available (no live sibling, under the round cap). During
@@ -518,10 +532,8 @@ class RunExecutionService:
             )
             # Finalize the whole revision family (root + sibling revisions) so no
             # downstream dependent stays frozen waiting on a dead chain.
-            root_id = task.get("revision_of_task_id") or task["id"]
             family_ids = {root_id} | {
-                item["id"]
-                for item in TaskRepository.get_all(run_id=run_id)
+                item["id"] for item in all_tasks
                 if item.get("revision_of_task_id") == root_id
             }
             for fid in family_ids:
@@ -572,6 +584,7 @@ class RunExecutionService:
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="论文章节与总稿写作中")
             await self._execute_ready_tasks(run_id, writing_tasks)
             await self._review_task_batch(run_id, writing_tasks)
+            self._archive_superseded_revisions(run_id)
             if self._has_pending_approval(run_id):
                 return
             refreshed = [

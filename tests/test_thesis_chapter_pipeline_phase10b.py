@@ -148,6 +148,12 @@ async def test_chapter_generation_uses_longform_token_budget():
     )
     assert calls[0]["max_tokens"] is None
 
+    calls.clear()
+    await TaskExecutor()._generate_structured(
+        FakeLLM(), "prompt", {"task_type": "result_analysis"}, "analyst",
+    )
+    assert calls[0]["max_tokens"] == 8192
+
 
 @pytest.mark.asyncio
 async def test_short_chapter_gets_bounded_monotonic_expansion(monkeypatch):

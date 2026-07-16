@@ -281,6 +281,32 @@ def test_completed_revision_archives_older_failed_drafts(monkeypatch):
     assert [(task_id, status) for task_id, status, _fields in updates] == [("old", "archived")]
 
 
+def test_stuck_old_revision_cannot_fail_completed_family_descendants(monkeypatch):
+    tasks = [
+        {"id": "root", "revision_of_task_id": None, "status": "completed"},
+        {"id": "old", "revision_of_task_id": "root", "status": "need_revision"},
+        {"id": "new", "revision_of_task_id": "root", "status": "completed"},
+        {"id": "descendant", "revision_of_task_id": None, "status": "blocked"},
+    ]
+    by_id = {item["id"]: item for item in tasks}
+    failed_descendants = []
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: tasks)
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda task_id: by_id.get(task_id))
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: by_id[task_id].update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        run_execution_service, "_fail_dependency_descendants",
+        lambda *args: failed_descendants.append(args),
+    )
+
+    assert run_execution_service._finalize_stuck_revisions("run_loop", tasks) is True
+    assert by_id["old"]["status"] == "archived"
+    assert by_id["descendant"]["status"] == "blocked"
+    assert failed_descendants == []
+
+
 def test_failed_required_chapter_blocks_thesis_assembly_but_failed_sibling_does_not():
     tasks = [
         {"id": "chapter_method", "title": "Methodology", "task_type": "thesis_chapter", "status": "failed"},

@@ -124,10 +124,15 @@ class TaskExecutor:
 """
         collaborator_results = await collaborator_service.execute_all(task, literature_grounding)
         collaboration_context = self._collaboration_context(task, collaborator_results)
-        loop_output_requirement = (
+        compact_output_requirement = (
             "10. 补证任务只输出最多 5 条原子 claims；summary 不超过 300 字，"
             "findings、risks、next_steps 各不超过 5 项，禁止复述全文。"
-            if str(task_title).startswith("[循环R") else ""
+            if str(task_title).startswith("[循环R")
+            else (
+                "10. 结果分析的 summary 不超过 300 字，findings、risks、next_steps 各不超过 5 项；"
+                "按方法工作包给出必需对象，不要复述上游 JSON。"
+                if task_type == "result_analysis" else ""
+            )
         )
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
 
@@ -155,7 +160,7 @@ class TaskExecutor:
 7. 不要输出 Markdown，只返回 JSON。
 8. 若存在“方法专用工作包”，必须按 required_object 输出对应对象和全部字段；不得用 summary 代替。
 9. 若存在“论文章节写作契约”，必须输出 chapter 对象；不得自行添加 allowed_support 之外的事实或引用。
-{loop_output_requirement}
+{compact_output_requirement}
 """
 
         llm = create_llm_provider()
@@ -623,7 +628,7 @@ class TaskExecutor:
                 agent_id=owner_id,
                 max_tokens=(
                     settings.thesis_chapter_max_tokens
-                    if task.get("task_type") == "thesis_chapter"
+                    if task.get("task_type") in {"thesis_chapter", "result_analysis", "report_writing"}
                     or str(task.get("title") or "").startswith("[循环R")
                     else None
                 ),
