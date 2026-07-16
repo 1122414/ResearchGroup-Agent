@@ -472,6 +472,31 @@ def test_surgical_repair_refuses_unit_deletion_that_conflicts_with_bound_artifac
     assert repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]["text"] == latest["chapter"]["sections"][0]["paragraphs"][0]["text"]
 
 
+def test_surgical_repair_applies_only_artifact_verified_exact_replacement(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    monkeypatch.setattr(
+        thesis_chapter_service, "_canonical_artifact_text",
+        lambda _run_id: '{"chunk_size":100,"unit":"characters"}',
+    )
+    latest = {"chapter": {"sections": [{"heading": "Pilot", "paragraphs": [{
+        "id": "pilot", "paragraph_type": "method", "support_ids": ["experiment:verified"],
+        "text": "The method uses 100-token chunks.",
+    }]}]}}
+    review = {"quality_gates": {"layers": {"independent_review": {"issues": [{
+        "target": "pilot", "reason": "artifact unit mismatch",
+        "required_change": "将 '100-token chunks' 改为 '100-character chunks'",
+    }]}}}}
+
+    repaired = thesis_chapter_service.surgical_repair({"run_id": "run"}, latest, review)
+
+    paragraph = repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]
+    assert paragraph["text"] == "The method uses 100-character chunks."
+    assert repaired["changes"] == [{
+        "target": "pilot", "operation": "replace_verified",
+        "old": "100-token chunks", "new": "100-character chunks",
+    }]
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

@@ -216,6 +216,7 @@ class ThesisChapterService:
             ((review.get("quality_gates") or {}).get("layers") or {})
             .get("independent_review", {}).get("issues") or []
         )
+        artifact_text = self._canonical_artifact_text(task.get("run_id"))
         changes: list[dict] = []
         unresolved: list[dict] = []
         for issue in issues:
@@ -228,6 +229,20 @@ class ThesisChapterService:
             instruction = " ".join(
                 str(issue.get(key) or "") for key in ("reason", "required_change")
             )
+            original = str(paragraph.get("text") or "")
+            replacements = [
+                (old, new) for old, new in self._quoted_replacements(instruction)
+                if old in original and self._artifact_supports_replacement(new, artifact_text)
+            ]
+            if replacements:
+                revised = original
+                for old, new in replacements:
+                    revised = revised.replace(old, new, 1)
+                    changes.append({
+                        "target": target, "operation": "replace_verified", "old": old, "new": new,
+                    })
+                paragraph["text"] = revised
+                continue
             requested_ids = set(re.findall(
                 r"(?:claim_[A-Za-z0-9_]+|experiment:[A-Za-z0-9_]+|brief:[A-Za-z0-9_]+)",
                 instruction,
@@ -247,12 +262,11 @@ class ThesisChapterService:
             if not delete_requested:
                 unresolved.append(issue)
                 continue
-            original = str(paragraph.get("text") or "")
             if (
                 "character" in instruction.casefold()
                 and any(str(item).startswith("experiment:") for item in paragraph.get("support_ids") or [])
                 and self._artifact_supports_replacement(
-                    "100 characters", self._canonical_artifact_text(task.get("run_id")),
+                    "100 characters", artifact_text,
                 )
             ):
                 unresolved.append(issue)
@@ -382,11 +396,7 @@ class ThesisChapterService:
         for issue in issues:
             instruction = " ".join(str(issue.get(key) or "") for key in ("target", "reason", "required_change"))
             targets = [item for paragraph_id, item in by_id.items() if paragraph_id and paragraph_id in instruction]
-            replacements = re.findall(
-                r"['‘“]([^'’”]+)['’”]\s*(?:改为|replace(?:d)?\s+with)\s*['‘“]([^'’”]+)['’”]",
-                instruction,
-                re.IGNORECASE,
-            )
+            replacements = self._quoted_replacements(instruction)
             for old, new in replacements:
                 if not self._artifact_supports_replacement(new, artifact_text):
                     continue
@@ -460,6 +470,14 @@ class ThesisChapterService:
         if re.search(r"\btokens?\b", value):
             return "token" in artifact_text
         return False
+
+    @staticmethod
+    def _quoted_replacements(instruction: str) -> list[tuple[str, str]]:
+        return re.findall(
+            r"['‘“]([^'’”]+)['’”]\s*(?:改为|replace(?:d)?\s+with)\s*['‘“]([^'’”]+)['’”]",
+            instruction,
+            re.IGNORECASE,
+        )
 
     @classmethod
     def _delete_matching_sentences(cls, paragraph: dict, pattern: str, changes: list[dict]) -> None:
