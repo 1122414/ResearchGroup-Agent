@@ -563,6 +563,46 @@ def test_frozen_method_contract_migration_is_bounded(monkeypatch):
     assert events == ["revision.frozen_method_contract_migration"]
 
 
+def test_v3_global_exact_issue_gets_one_bounded_repair(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 7, "owner_agent": "writer",
+        "outputs": [{"chapter": {}}],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit_v3_global",
+            "issues": [{"target": "scope", "reason": "‘exact phrase’ extrapolates", "required_change": "删除该句"}],
+        }}}},
+    }
+    events = []
+    monkeypatch.setattr(run_execution_service, "_task_event_count", lambda *_args: 5)
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.surgical_repair",
+        lambda *_args: {
+            "result": {"chapter": {}}, "changes": [{"target": "p1", "operation": "delete"}],
+            "unresolved": [],
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.thesis_chapter_service.word_count", lambda *_args: 500,
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.OutputRepository.insert", lambda _output: None,
+    )
+    monkeypatch.setattr(run_execution_service, "_revive_dependency_descendants", lambda *_args: None)
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_surgical_chapter_repair([task]) is True
+    assert events == ["revision.v3_global_exact_repair"]
+
+
 def test_legacy_direct_entailment_audit_rechecks_without_spending_surgical_round(monkeypatch):
     task = {
         "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",

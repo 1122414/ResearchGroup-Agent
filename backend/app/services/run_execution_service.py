@@ -935,6 +935,13 @@ class RunExecutionService:
                 and any(marker in issue_text for marker in ("chunk_size", "overlap", "token", "character", "字符"))
                 and not self._has_task_event(task, "revision.frozen_method_contract_migration")
             )
+            v3_global_exact = (
+                repair_round >= 5
+                and reviewer == "independent_reviewer_model_paragraph_audit_v3_global"
+                and any(marker in issue_text for marker in ("删除", "移除", "delete", "remove"))
+                and any(marker in issue_text for marker in ("'", "‘", "“"))
+                and not self._has_task_event(task, "revision.v3_global_exact_repair")
+            )
             legacy_v2_global = reviewer == "independent_reviewer_model" and any(
                 self._has_task_event(task, event_type)
                 for event_type in (
@@ -955,7 +962,7 @@ class RunExecutionService:
                 and (self._is_paragraph_audit_reviewer(reviewer) or editorial_eligible)
                 and (
                     repair_round < 5 or post_restoration or post_editorial
-                    or contract_migration or editorial_eligible
+                    or contract_migration or v3_global_exact or editorial_eligible
                 )
                 and task.get("outputs")
             ):
@@ -964,7 +971,10 @@ class RunExecutionService:
                 thesis_chapter_service.surgical_repair(
                     task, task["outputs"][-1], task.get("review_result") or {},
                 )
-                if repair_round < 5 or post_restoration or post_editorial or contract_migration
+                if (
+                    repair_round < 5 or post_restoration or post_editorial
+                    or contract_migration or v3_global_exact
+                )
                 else {"result": task["outputs"][-1], "changes": [], "unresolved": []}
             )
             editorial = False
@@ -999,9 +1009,11 @@ class RunExecutionService:
             )
             event_type = "revision.global_editorial_repair" if editorial else (
                 "revision.frozen_method_contract_migration" if contract_migration else (
+                "revision.v3_global_exact_repair" if v3_global_exact else (
                 "revision.post_editorial_evidence_repair" if post_editorial else (
                 "revision.post_restoration_surgical_repair"
                 if post_restoration else "revision.surgical_chapter_repair"
+                )
                 )
                 )
             )
@@ -1009,8 +1021,10 @@ class RunExecutionService:
                 task["run_id"], event_type, "review",
                 "执行一次性全局确定编辑" if editorial else (
                     "冻结方法合同升级后执行一次性证据复查" if contract_migration else (
+                    "v3 全局审稿逐字问题执行一次性修复" if v3_global_exact else (
                     "全局编辑后执行一次性证据外科复查" if post_editorial else (
                         "恢复段落执行一次性 v2 外科修复" if post_restoration else "章节执行单调外科修复"
+                    )
                     )
                     )
                 ),
@@ -1025,6 +1039,7 @@ class RunExecutionService:
                     "post_restoration": post_restoration,
                     "post_editorial": post_editorial,
                     "contract_migration": contract_migration,
+                    "v3_global_exact": v3_global_exact,
                     "editorial": editorial,
                 },
             )

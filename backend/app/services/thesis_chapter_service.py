@@ -221,14 +221,22 @@ class ThesisChapterService:
         unresolved: list[dict] = []
         for issue in issues:
             target = str(issue.get("target") or "")
+            instruction = " ".join(
+                str(issue.get(key) or "") for key in ("reason", "required_change")
+            )
             location = paragraph_locations.get(target)
+            if not location:
+                quoted_locations = [
+                    (paragraph_id, candidate)
+                    for paragraph_id, candidate in paragraph_locations.items()
+                    if self._exact_deletion_fragments(str(candidate[1].get("text") or ""), instruction)
+                ]
+                if len(quoted_locations) == 1:
+                    target, location = quoted_locations[0]
             if not location:
                 unresolved.append(issue)
                 continue
             section, paragraph = location
-            instruction = " ".join(
-                str(issue.get(key) or "") for key in ("reason", "required_change")
-            )
             original = str(paragraph.get("text") or "")
             replacements = [
                 (old, new) for old, new in self._quoted_replacements(instruction)

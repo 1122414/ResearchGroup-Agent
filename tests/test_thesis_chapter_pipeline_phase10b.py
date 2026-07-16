@@ -517,6 +517,23 @@ def test_advisor_cleanup_requires_named_paragraph_and_exact_quote(monkeypatch):
     )["changes"] == []
 
 
+def test_surgical_repair_uniquely_anchors_global_semantic_target_by_exact_quote(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    latest = {"chapter": {"sections": [{"heading": "Limit", "paragraphs": [
+        {"id": "p1", "text": "Bounded limitation.", "paragraph_type": "limitation", "support_ids": []},
+        {"id": "p2", "text": "Evidence statement. Unsupported extrapolation.", "paragraph_type": "claim", "support_ids": ["brief:scope"]},
+    ]}]}}
+    review = {"quality_gates": {"layers": {"independent_review": {"issues": [{
+        "target": "scope extrapolation", "reason": "The phrase ‘Unsupported extrapolation.’ exceeds scope.",
+        "required_change": "删除 ‘Unsupported extrapolation.’",
+    }]}}}}
+
+    repaired = thesis_chapter_service.surgical_repair({"run_id": "run"}, latest, review)
+
+    assert repaired["result"]["chapter"]["sections"][0]["paragraphs"][1]["text"] == "Evidence statement."
+    assert repaired["changes"][0]["target"] == "p2"
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",
