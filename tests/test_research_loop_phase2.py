@@ -60,3 +60,11 @@ def test_crossref_query_removes_boolean_noise_and_is_bounded():
     assert "AND" not in query and " OR " not in query
     assert len(query.split()) <= 8
     assert "education" in query and "expenditure" in query
+
+
+def test_crossref_query_keeps_topic_and_drops_comparison_scaffolding():
+    query = evidence_provider._scholarly_query(
+        "government education expenditure percentage of GDP high-income vs "
+        "lower-middle-income countries descriptive statistics"
+    )
+    assert query == "government education expenditure GDP"

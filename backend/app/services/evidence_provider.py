@@ -150,6 +150,11 @@ class EvidenceProvider:
         ignored = {
             "and", "or", "not", "the", "a", "an", "of", "for", "to", "in", "on",
             "with", "by", "from", "study", "research", "analysis", "evidence", "review",
+            "percentage", "percent", "share", "versus", "vs", "between", "country",
+            "countries", "economy", "economies", "group", "groups", "comparative",
+            "comparison", "cross-country", "descriptive", "statistics", "statistical",
+            "high-income", "low-income", "middle-income", "lower-middle-income",
+            "upper-middle-income",
         }
         terms: list[str] = []
         seen: set[str] = set()
