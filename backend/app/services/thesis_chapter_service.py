@@ -269,13 +269,28 @@ class ThesisChapterService:
                 section["paragraphs"] = [item for item in section.get("paragraphs") or [] if item is not paragraph]
                 paragraph_locations.pop(target, None)
             changes.append({"target": target, "operation": "delete", "text": deleted[:240]})
+        for section in sections:
+            kept = []
+            for paragraph in section.get("paragraphs") or []:
+                original = str(paragraph.get("text") or "")
+                cleaned = self._drop_malformed_sentences(original)
+                if cleaned != original:
+                    changes.append({
+                        "target": str(paragraph.get("id") or ""),
+                        "operation": "delete_malformed",
+                        "text": self._deleted_text(original, cleaned)[:240],
+                    })
+                if cleaned:
+                    paragraph["text"] = cleaned
+                    kept.append(paragraph)
+            section["paragraphs"] = kept
         repaired["summary"] = "按独立分段审计执行单调外科修复；正文只删除原句或补绑已冻结支持。"
         repaired["claims"] = []
         return {"result": repaired, "changes": changes, "unresolved": unresolved}
 
     @classmethod
     def _deletion_sentence(cls, paragraph: str, instruction: str) -> str | None:
-        sentences = [item for item in re.split(r"(?<=[.!?。！？])\s+", paragraph.strip()) if item]
+        sentences = cls._sentence_parts(paragraph)
         if not sentences:
             return None
         quoted = re.findall(r"['‘“]([^'’”]{8,})(?:['’”]|$)", instruction)
@@ -295,7 +310,11 @@ class ThesisChapterService:
             overlap = len(terms & cls._repair_terms(sentence))
             scored.append((quote_score + overlap * 4, overlap, -index, sentence))
         score, overlap, _index, sentence = max(scored)
-        return sentence if score >= 60 or overlap >= 3 else None
+        if score >= 60 or overlap >= 3:
+            return sentence
+        if any(marker in instruction.casefold() for marker in ("删除该句", "delete the sentence")):
+            return sentences[-1]
+        return None
 
     @staticmethod
     def _exact_deletion_fragments(paragraph: str, instruction: str) -> list[str]:
@@ -313,6 +332,57 @@ class ThesisChapterService:
         text = re.sub(r",\s*,", ",", text)
         text = re.sub(r",\s*\.", ".", text)
         return text
+
+    @classmethod
+    def _drop_malformed_sentences(cls, paragraph: str) -> str:
+        sentences = cls._sentence_parts(paragraph)
+        kept = [sentence for sentence in sentences if not cls._is_malformed_sentence(sentence)]
+        return " ".join(kept).strip()
+
+    @staticmethod
+    def _sentence_parts(text: str) -> list[str]:
+        protected = re.sub(
+            r"\bet al\.(?=\s*(?:\(|[a-z]))", "et al<ETAL_DOT>", text.strip(),
+        )
+        protected = re.sub(r"(?<=\d)\.(?=\d)", "<DECIMAL_DOT>", protected)
+        parts = [item for item in re.split(r"(?<=[.!?。！？])\s+", protected) if item]
+        return [
+            item.replace("<ETAL_DOT>", ".").replace("<DECIMAL_DOT>", ".")
+            for item in parts
+        ]
+
+    @staticmethod
+    def _is_malformed_sentence(sentence: str) -> bool:
+        text = sentence.strip()
+        lowered = text.casefold()
+        if re.fullmatch(r"(?:the thesis|[a-z-]+ et al)\.?", lowered):
+            return True
+        if lowered.endswith("et al.") and not re.search(
+            r"\b(?:is|are|was|were|found|showed|reported|examined|demonstrated|improved)\b",
+            lowered,
+        ):
+            return True
+        if any(marker in lowered for marker in ("'s due", "but its.", " is,", " are,")):
+            return True
+        if " addresses by " in lowered or re.match(r"^work by\b", lowered):
+            return True
+        if re.search(r"\b(?:aims|seeks|intends)?\s*to\.$", lowered):
+            return True
+        if re.match(r"^[,;:]", text) or re.search(r"\bthe thesis\.?$", lowered):
+            return True
+        if ", which" in lowered:
+            prefix = lowered.split(", which", 1)[0]
+            if not re.search(r"\b(?:is|are|was|were|shows|showed|reports|reported|has|have|had)\b", prefix):
+                return True
+        return False
+
+    @staticmethod
+    def _deleted_text(original: str, cleaned: str) -> str:
+        remaining = cleaned
+        deleted = original
+        for part in ThesisChapterService._sentence_parts(remaining):
+            deleted = deleted.replace(part, "", 1)
+        return re.sub(r"\s+", " ", deleted).strip()
 
     @staticmethod
     def _remove_exact_sentence(paragraph: str, sentence: str) -> str:
@@ -343,7 +413,7 @@ class ThesisChapterService:
         # Institutions constrain the dissertation as a whole, not every chapter
         # by the same ratio. Keep a substantive structural floor here and enforce
         # the exact institutional range after deterministic full-thesis assembly.
-        return max(500, math.ceil(budget * 0.5)) if budget else 500
+        return max(300, math.ceil(budget * 0.3)) if budget else 300
 
     @staticmethod
     def word_count(task: dict, latest: dict) -> int:

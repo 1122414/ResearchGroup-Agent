@@ -166,6 +166,7 @@ async def test_short_chapter_gets_bounded_monotonic_expansion(monkeypatch):
         "description": '【thesis_chapter_spec】{"chapter_name":"Results","word_budget":1000}\n',
     }
     counts = iter([400, 780])
+    monkeypatch.setattr(thesis_chapter_service, "minimum_word_count", lambda _task: 500)
     monkeypatch.setattr(thesis_chapter_service, "word_count", lambda *_args: next(counts))
     monkeypatch.setattr(thesis_chapter_service, "validate_output", lambda *_args: [])
     result = await TaskExecutor()._expand_short_chapter(
@@ -207,6 +208,7 @@ async def test_chapter_expansion_rejects_shorter_draft_then_stops_after_second_r
             (output.get("chapter") or {}).get("marker")
         ],
     )
+    monkeypatch.setattr(thesis_chapter_service, "minimum_word_count", lambda _task: 500)
     monkeypatch.setattr(thesis_chapter_service, "validate_output", lambda *_args: [])
 
     result = await TaskExecutor()._expand_short_chapter(
@@ -246,7 +248,7 @@ def test_chapter_minimum_is_structural_while_institutional_floor_stays_at_full_t
     ResearchBriefRepository.update(run_id, thesis_requirements=requirements)
     task = thesis_chapter_service.ensure_tasks(run_id)[0]
 
-    assert thesis_chapter_service.minimum_word_count(task) == 1500
+    assert thesis_chapter_service.minimum_word_count(task) == 900
     assert (ResearchBriefRepository.get_by_run(run_id)["thesis_requirements"])["minimum_word_count"] == 2800
 
 
@@ -348,6 +350,21 @@ def test_surgical_chapter_repair_prefers_exact_phrases_over_deleting_supported_s
 
     assert text == "DPR improves retrieval accuracy on the frozen benchmark."
     assert "DPR improves retrieval accuracy" in text
+
+
+def test_malformed_cleanup_preserves_citation_sentences_and_drops_orphans():
+    text = (
+        "Karpukhin et al. (2020) reported a bounded result. "
+        "The thesis. Work by Zhou et al. (2026) and Smith et al. "
+        "The supported conclusion remains bounded."
+    )
+
+    cleaned = thesis_chapter_service._drop_malformed_sentences(text)
+
+    assert "Karpukhin et al. (2020) reported a bounded result." in cleaned
+    assert "The supported conclusion remains bounded." in cleaned
+    assert "The thesis." not in cleaned
+    assert "Work by Zhou" not in cleaned
 
 
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
