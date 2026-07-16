@@ -242,9 +242,9 @@ def test_completed_chapter_with_invalid_resolved_output_still_blocks_assembly(mo
     assert run_execution_service._invalid_required_chapters("run_loop") == [chapter]
 
 
-def test_thesis_in_place_revision_has_two_bounded_extra_attempts():
+def test_thesis_in_place_revision_remains_bounded_while_allowing_issue_reduction():
     task = {"task_type": "thesis_chapter", "attempt_count": 1}
     assert run_execution_service._can_reopen_thesis_in_place(task) is True
-    assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 2}) is True
-    assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 3}) is False
+    assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 4}) is True
+    assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 5}) is False
     assert run_execution_service._can_reopen_thesis_in_place({**task, "task_type": "literature_survey"}) is False

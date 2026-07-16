@@ -249,6 +249,12 @@ class TaskRecoveryService:
             "\n返工交付规则：逐项落实修改清单并提交可直接审核的完整最终交付物；"
             "协作者意见仅用于检查风险，不能替代父任务交付物。"
         )
+        if is_thesis_chapter:
+            instruction += (
+                "论文章节必须做最小定点修改：仅改审稿 target 指向的段落，未被指出的段落保持原文；"
+                "required_change 要求删除时直接删除对应短语，不得换成新的事实性形容词或推测；"
+                "新增或保留事实只能在 support_ids 的 statement/工件字段直接蕴含时进行。"
+            )
         if not feedback_text:
             return original or "根据导师反馈完成返工。"
         if not original:
