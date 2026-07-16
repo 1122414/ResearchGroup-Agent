@@ -293,23 +293,10 @@ class EvidencePipelineService:
         if not concise:
             run = RunRepository.get_by_id(task.get("run_id")) or {}
             concise = primary_goal(str(run.get("research_goal") or "")) or fallback
-        limit = max(int(settings.browser_use_max_candidates), 0)
-        direct_candidates = []
-        for candidate in candidates or []:
-            metadata = candidate.get("metadata") or {}
-            if (
-                len(direct_candidates) >= limit
-                or not candidate.get("url")
-                or metadata.get("origin") == "user_attachment"
-                or not (
-                    candidate.get("doi")
-                    or metadata.get("provider") in {"crossref", "openalex", "arxiv", "semantic_scholar"}
-                )
-            ):
-                continue
-            direct_candidates.append(
-                f"- {str(candidate.get('title') or 'untitled')[:300]} | {candidate['url']}"
-            )
+        direct_candidates = [
+            f"- {str(candidate.get('title') or 'untitled')[:300]} | {candidate['url']}"
+            for candidate in EvidencePipelineService._priority_browser_candidates(concise, candidates or [])
+        ]
         if not direct_candidates:
             return concise
         return (
@@ -318,6 +305,48 @@ class EvidencePipelineService:
             "Open these URLs directly before using any search engine, and return only evidence visible on the opened page:\n"
             + "\n".join(direct_candidates)
         )
+
+    @staticmethod
+    def _priority_browser_candidates(query: str, candidates: list[dict]) -> list[dict]:
+        limit = max(int(settings.browser_use_max_candidates), 0)
+        if not limit:
+            return []
+        scholarly = []
+        for candidate in candidates:
+            metadata = candidate.get("metadata") or {}
+            if (
+                not candidate.get("url")
+                or metadata.get("origin") == "user_attachment"
+                or not (
+                    candidate.get("doi")
+                    or metadata.get("provider") in {"crossref", "openalex", "arxiv", "semantic_scholar"}
+                )
+            ):
+                continue
+            scholarly.append(candidate)
+        core_tokens = EvidencePipelineService._relevance_tokens(evidence_provider._scholarly_query(query))
+        if not scholarly or not core_tokens:
+            return scholarly[:limit]
+        heading_tokens = [
+            set(re.findall(r"[\w\u4e00-\u9fff]+", str(item.get("title") or "").lower()))
+            for item in scholarly
+        ]
+        frequencies = {
+            token: sum(token in tokens for tokens in heading_tokens)
+            for token in core_tokens
+        }
+        represented = [count for count in frequencies.values() if count]
+        if not represented:
+            return []
+        rarest = min(represented)
+        anchors = {token for token, count in frequencies.items() if count == rarest}
+        minimum_overlap = min(3, len(core_tokens))
+        focused = [
+            candidate
+            for candidate, tokens in zip(scholarly, heading_tokens)
+            if len(tokens & core_tokens) >= minimum_overlap and tokens & anchors
+        ]
+        return focused[:limit]
 
     def _record_search_protocol(self, task: dict, queries: list[str], attempts: list[dict]) -> str | None:
         run_id = task.get("run_id")

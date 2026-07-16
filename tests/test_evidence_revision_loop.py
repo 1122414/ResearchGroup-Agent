@@ -2,6 +2,7 @@ import pytest
 
 from backend.app.core.config import settings
 from backend.app.services.browser_research_service import BrowserResearchService, BrowserVerificationResult
+from backend.app.services.browser_research_service import BrowserDiscoveryResult
 from backend.app.services.evidence_pipeline_service import EvidencePipelineService
 from backend.app.services.research_integrity_service import research_integrity_service
 from backend.app.services.review_service import review_service
@@ -57,6 +58,30 @@ async def test_browser_verification_keeps_trusted_metadata_when_verdicts_are_mis
         source["metadata"]["browser_verification"]["fallback"] == "trusted_scholarly_metadata"
         for source in verified[1:]
     )
+
+
+@pytest.mark.asyncio
+async def test_browser_discovery_drops_structured_output_rejected_by_judge(monkeypatch):
+    monkeypatch.setattr(settings, "browser_research_enabled", True)
+    monkeypatch.setattr(settings, "browser_research_provider_mode", "browser_use")
+
+    class JudgedFailure:
+        structured_output = BrowserDiscoveryResult(sources=[{
+            "title": "Invented from a failed download",
+            "url": "https://doi.org/10.1000/failed",
+            "evidence": "not visible on a page",
+        }])
+
+        @staticmethod
+        def is_validated():
+            return False
+
+    async def fake_run_agent(*_args, **_kwargs):
+        return JudgedFailure()
+
+    monkeypatch.setattr(BrowserResearchService, "_run_agent", fake_run_agent)
+
+    assert await BrowserResearchService().discover("failed source") == []
 
 
 def test_literature_revision_reuses_frozen_fulltext_pool(monkeypatch):

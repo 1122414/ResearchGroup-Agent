@@ -388,7 +388,7 @@ def test_browser_supplement_depends_on_relevant_grounded_titles(monkeypatch):
 
 def test_browser_supplement_opens_ranked_scholarly_candidates_first(monkeypatch):
     monkeypatch.setattr(settings, "browser_use_max_candidates", 2)
-    query = "Compare public education expenditure across income groups"
+    query = '"government education expenditure" "percentage of GDP" "high-income" "lower-middle-income"'
     candidates = [
         {
             "title": "Uploaded indicator extract",
@@ -396,13 +396,13 @@ def test_browser_supplement_opens_ranked_scholarly_candidates_first(monkeypatch)
             "metadata": {"origin": "user_attachment"},
         },
         {
-            "title": "Education expenditure and public outcomes",
+            "title": "Government education expenditure and public outcomes",
             "doi": "10.1000/education.1",
             "url": "https://doi.org/10.1000/education.1",
             "metadata": {"provider": "crossref"},
         },
         {
-            "title": "Government spending on education",
+            "title": "Public education expenditure as a percentage of GDP",
             "url": "https://openalex.org/W123",
             "metadata": {"provider": "openalex"},
         },
@@ -423,6 +423,41 @@ def test_browser_supplement_opens_ranked_scholarly_candidates_first(monkeypatch)
     assert "api.example.test" not in discovery_query
     assert "10.1000/education.3" not in discovery_query
     assert discovery_query.index("doi.org") < discovery_query.index("openalex.org")
+
+
+def test_browser_priority_candidates_require_rare_core_topic(monkeypatch):
+    monkeypatch.setattr(settings, "browser_use_max_candidates", 3)
+    query = '"government education expenditure" "percentage of GDP" "high-income" "lower-middle-income"'
+    candidates = [
+        {
+            "title": "Government expenditure on education as a share of GDP",
+            "doi": "10.1000/education", "url": "https://doi.org/10.1000/education",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "title": "Subnational government expenditure as a percentage of GDP",
+            "doi": "10.1000/subnational", "url": "https://doi.org/10.1000/subnational",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "title": "Creative thinking skills in science education",
+            "url": "https://openalex.org/W999", "metadata": {"provider": "openalex"},
+        },
+        {
+            "title": "Regional government expenditure as a percentage of GDP",
+            "doi": "10.1000/regional", "url": "https://doi.org/10.1000/regional",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "title": "Local government expenditure and GDP statistics",
+            "doi": "10.1000/local", "url": "https://doi.org/10.1000/local",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    focused = evidence_pipeline_service._priority_browser_candidates(query, candidates)
+
+    assert [item["doi"] for item in focused] == ["10.1000/education"]
 
 
 @pytest.mark.asyncio

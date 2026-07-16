@@ -63,6 +63,9 @@ class BrowserResearchService:
                 task=self._discovery_task(query),
                 output_model=BrowserDiscoveryResult,
             )
+            if self._judge_rejected(history):
+                logger.warning("[BrowserResearch] discover rejected by independent browser judge")
+                return []
             parsed = self._structured_output(history, BrowserDiscoveryResult)
         except Exception as exc:
             logger.warning("[BrowserResearch] discover failed | error=%s", exc)
@@ -105,6 +108,10 @@ class BrowserResearchService:
                 task=self._verification_task(query, limited),
                 output_model=BrowserVerificationResult,
             )
+            if self._judge_rejected(history):
+                logger.warning("[BrowserResearch] verification rejected by independent browser judge")
+                limited_ids = {id(source) for source in limited}
+                return [source for source in sources if id(source) not in limited_ids]
             parsed = self._structured_output(history, BrowserVerificationResult)
         except Exception as exc:
             logger.warning("[BrowserResearch] verify failed | error=%s", exc)
@@ -276,6 +283,16 @@ class BrowserResearchService:
                 result = close()
                 if hasattr(result, "__await__"):
                     await result
+
+    @staticmethod
+    def _judge_rejected(history) -> bool:
+        checker = getattr(history, "is_validated", None)
+        if not callable(checker):
+            return False
+        try:
+            return checker() is False
+        except Exception:  # noqa: BLE001
+            return False
 
     @staticmethod
     def _structured_output(history, output_model: type[BaseModel]):
