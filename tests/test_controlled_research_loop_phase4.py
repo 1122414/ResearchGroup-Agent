@@ -3,6 +3,7 @@ from backend.app.services.evidence_pipeline_service import evidence_pipeline_ser
 from backend.app.services.research_loop_critic_service import research_loop_critic_service
 from backend.app.services.research_loop_service import research_loop_service
 from backend.app.services.run_execution_service import run_execution_service
+from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.storage.repositories import (
     ApprovalRequestRepository, LLMUsageRepository, RunEventRepository, RunRepository, TaskRepository,
 )
@@ -105,6 +106,32 @@ def test_research_loop_budget_excludes_writing_and_includes_loop_revisions(monke
     assert research_loop_service._loop_usage_summary("run_loop") == {
         "total_tokens": 50, "total_cost_usd": 0.5,
     }
+
+
+def test_loop_action_family_is_single_shot_and_budget_visible(monkeypatch):
+    root = {"id": "loop", "title": "[循环R1] 补足证据", "run_id": "run_loop"}
+    revision = {
+        "id": "revision", "title": "返工：补足证据", "run_id": "run_loop",
+        "revision_of_task_id": "loop",
+    }
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda task_id: root if task_id == "loop" else None)
+
+    assert research_loop_service.is_loop_task(root) is True
+    assert research_loop_service.is_loop_task(revision) is True
+    assert task_recovery_service.can_create_revision(root) is False
+    assert task_recovery_service.create_revision_task(root, "仍需补证") is None
+
+
+def test_research_loop_selects_at_most_one_action_per_tool():
+    actions = [
+        {"id": "coverage", "selected_tool": "evidence_search"},
+        {"id": "uncertainty", "selected_tool": "evidence_search"},
+        {"id": "experiment", "selected_tool": "experiment_runner"},
+    ]
+
+    selected = research_loop_service._select_diverse_actions(actions, 3)
+
+    assert [item["id"] for item in selected] == ["coverage", "experiment"]
 
 
 def test_research_loop_actions_never_depend_on_writing_tasks():

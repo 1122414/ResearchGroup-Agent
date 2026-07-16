@@ -635,7 +635,7 @@ class RunExecutionService:
         owner = task.get("owner_agent")
         if not owner:
             return
-        if str(task.get("title") or "").startswith("[循环R"):
+        if research_loop_service.is_loop_task(task):
             usage = research_loop_service._loop_usage_summary(run_id)
             if (
                 usage["total_tokens"] >= settings.research_loop_max_tokens
@@ -661,7 +661,7 @@ class RunExecutionService:
                 run_event_service.emit(run_id, "subagent.completed", "subagent", "SubAgent 已完成", "结果已返回给研究生 Agent", task_id=task["id"], agent_id=owner)
             latest_task = TaskRepository.get_by_id(task["id"]) or task
             execution = task_executor.execute(latest_task)
-            if str(task.get("title") or "").startswith("[循环R"):
+            if research_loop_service.is_loop_task(task):
                 await asyncio.wait_for(execution, timeout=settings.research_loop_action_timeout_seconds)
             else:
                 await execution

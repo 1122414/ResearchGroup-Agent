@@ -91,6 +91,8 @@ class TaskRecoveryService:
         round never becomes executable again.
         """
         root_task = self._root_task(task)
+        if self._is_research_loop_root(root_task):
+            return False
         root_task_id = root_task["id"]
         run_tasks = TaskRepository.get_all(run_id=task["run_id"])
         existing_revisions = [
@@ -102,6 +104,8 @@ class TaskRecoveryService:
 
     def create_revision_task(self, task: dict, feedback: str | dict) -> dict | None:
         root_task = self._root_task(task)
+        if self._is_research_loop_root(root_task):
+            return None
         root_task_id = root_task["id"]
         existing_revisions = [
             item
@@ -161,6 +165,11 @@ class TaskRecoveryService:
         )
         task_graph_service.recompute_critical_path(task["run_id"])
         return revision_task
+
+    @staticmethod
+    def _is_research_loop_root(task: dict) -> bool:
+        """Loop actions are single-shot observations, not revision subprojects."""
+        return str(task.get("title") or "").startswith("[循环R")
 
     def reopen_for_thesis_length(self, task: dict, adjustment: dict) -> dict:
         root = self._root_task(task)

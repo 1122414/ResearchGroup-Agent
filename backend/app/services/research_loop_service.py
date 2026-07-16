@@ -114,7 +114,9 @@ class ResearchLoopService:
 
         current_tasks = TaskRepository.get_all(run_id=run_id)
         dependencies = self._research_dependencies(current_tasks)
-        selected = snapshot["approved_actions"][: settings.research_loop_max_tasks_per_round]
+        selected = self._select_diverse_actions(
+            snapshot["approved_actions"], settings.research_loop_max_tasks_per_round,
+        )
         round_number = snapshot["loop_rounds"] + 1
         now = datetime.now().isoformat()
         context = self._contract_context(run_id)
@@ -162,6 +164,39 @@ class ResearchLoopService:
             if item.get("task_type") not in {"report_writing", "thesis_chapter"}
             and item.get("status") == "completed"
         ]
+
+    @staticmethod
+    def _select_diverse_actions(actions: list[dict], limit: int) -> list[dict]:
+        """Avoid spending one round on several equivalent tool invocations."""
+        limit = max(int(limit), 0)
+        if not limit:
+            return []
+        selected: list[dict] = []
+        tools: set[str] = set()
+        for action in actions:
+            tool = str(action.get("selected_tool") or "")
+            if tool in tools:
+                continue
+            selected.append(action)
+            tools.add(tool)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    @staticmethod
+    def is_loop_task(task: dict) -> bool:
+        """Return whether a task belongs to a controlled-loop action family."""
+        current = task
+        visited: set[str] = set()
+        while current:
+            if str(current.get("title") or "").startswith("[循环R"):
+                return True
+            parent_id = current.get("revision_of_task_id")
+            if not parent_id or parent_id in visited:
+                return False
+            visited.add(parent_id)
+            current = TaskRepository.get_by_id(parent_id)
+        return False
 
     def validate_observations(self, run_id: str) -> list[dict]:
         events = RunEventRepository.get_by_run(run_id, limit=500, phase="research_loop")
