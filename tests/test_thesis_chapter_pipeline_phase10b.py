@@ -497,6 +497,26 @@ def test_surgical_repair_applies_only_artifact_verified_exact_replacement(monkey
     }]
 
 
+def test_advisor_cleanup_requires_named_paragraph_and_exact_quote(monkeypatch):
+    monkeypatch.setattr(ResearchClaimRepository, "get_by_run", lambda _run_id: [])
+    latest = {"chapter": {"sections": [{"heading": "Review", "paragraphs": [{
+        "id": "p1", "paragraph_type": "claim", "support_ids": ["brief:scope"],
+        "text": "Supported sentence. Unsupported historical sentence.",
+    }]}]}}
+
+    repaired = thesis_chapter_service.advisor_exact_cleanup(
+        {"run_id": "run"}, latest,
+        "请从 p1 删除 ‘Unsupported historical sentence.’，其余保持不变。",
+    )
+
+    paragraph = repaired["result"]["chapter"]["sections"][0]["paragraphs"][0]
+    assert paragraph["text"] == "Supported sentence."
+    assert repaired["changes"][0]["operation"] == "delete"
+    assert thesis_chapter_service.advisor_exact_cleanup(
+        {"run_id": "run"}, latest, "请改善 p1 的表达。",
+    )["changes"] == []
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

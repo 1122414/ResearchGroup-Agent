@@ -445,6 +445,32 @@ class ThesisChapterService:
             repaired["claims"] = []
         return {"result": repaired, "changes": changes}
 
+    def advisor_exact_cleanup(self, task: dict, latest: dict, feedback: str) -> dict:
+        """Delete only advisor-quoted text from explicitly named current paragraphs."""
+        if not any(marker in feedback.casefold() for marker in ("删除", "移除", "delete", "remove")):
+            return {"result": latest, "changes": [], "unresolved": []}
+        paragraphs = {
+            str(paragraph.get("id") or ""): paragraph
+            for section in (latest.get("chapter") or {}).get("sections") or []
+            for paragraph in section.get("paragraphs") or []
+            if isinstance(paragraph, dict) and paragraph.get("id")
+        }
+        issues = []
+        for paragraph_id, paragraph in paragraphs.items():
+            if paragraph_id not in feedback:
+                continue
+            if self._exact_deletion_fragments(str(paragraph.get("text") or ""), feedback):
+                issues.append({
+                    "severity": "major", "target": paragraph_id,
+                    "reason": feedback, "required_change": feedback,
+                })
+        if not issues:
+            return {"result": latest, "changes": [], "unresolved": []}
+        return self.surgical_repair(
+            task, latest,
+            {"quality_gates": {"layers": {"independent_review": {"issues": issues}}}},
+        )
+
     def _canonical_artifact_text(self, run_id: str) -> str:
         compact = []
         for item in self.artifact_support(run_id):
