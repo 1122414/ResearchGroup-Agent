@@ -232,6 +232,7 @@ class IndependentReviewerService:
             payload = {
                 "paragraphs": batch,
                 "bound_support": [support_map[item] for item in used_ids if item in support_map],
+                "available_support": list(support_map.values()),
                 "support_ids_verified_by_schema": sorted(used_ids & verified_support_ids),
             }
             prompt = (
@@ -239,15 +240,17 @@ class IndependentReviewerService:
                 "support_ids 实际绑定的 bound_support，不得使用常识或其他段落的证据。检查每个事实、"
                 "因果、机制和解释性表述是否被直接蕴含；transition/limitation 也不得偷带新事实。"
                 "一次列出本批次全部 critical/major 越界，最多6条；不要报告文风或可选增强项。"
-                "required_change 必须精确指向段落 ID，并优先要求删除不受支持的最小短语；若已有匹配的"
-                "bound_support 才可要求修正 support_ids。只返回紧凑 JSON：approved、issues、summary。\n"
-                + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:24000]
+                "available_support 只能用于提出修复：若其中有直接蕴含该表述的冻结支持，优先要求补绑其 ID；"
+                "否则删除不受支持的最小短语。required_change 和 target 必须写出段落 ID。"
+                "只返回紧凑 JSON：approved、issues、summary。\n"
+                + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             )
             review = await self._ask_reviewer(
                 prompt, task, verified_support_ids,
                 max_tokens=settings.thesis_chapter_max_tokens,
                 allow_minimal=False,
             )
+            review = self._anchor_batch_issue_targets(review, batch)
             issues.extend(review.get("issues") or [])
             if any(item.get("target") == "review_transport" for item in issues):
                 return [item for item in issues if item.get("target") == "review_transport"]
@@ -259,6 +262,34 @@ class IndependentReviewerService:
                 seen.add(key)
                 deduplicated.append(issue)
         return deduplicated[:18]
+
+    @staticmethod
+    def _anchor_batch_issue_targets(review: dict, batch: list[dict]) -> dict:
+        """Recover paragraph IDs when a reviewer returns an unhelpful `overall` target."""
+        paragraph_ids = [str(item.get("id") or "") for item in batch]
+        anchored = []
+        for issue in review.get("issues") or []:
+            target = str(issue.get("target") or "")
+            if target == "review_transport" or target in paragraph_ids:
+                anchored.append(issue)
+                continue
+            combined = " ".join(str(issue.get(key) or "") for key in ("target", "reason", "required_change"))
+            quoted = [
+                value.strip() for pair in re.findall(r"['\"‘“]([^'\"’”]{8,})['\"’”]", combined)
+                for value in ([pair] if isinstance(pair, str) else pair)
+            ]
+            words = set(re.findall(r"[A-Za-z][A-Za-z-]{4,}", combined.casefold()))
+            scored = []
+            for paragraph in batch:
+                text = str(paragraph.get("text") or "")
+                lowered = text.casefold()
+                score = sum(len(value) for value in quoted if value.casefold() in lowered)
+                score += 4 * len(words & set(re.findall(r"[A-Za-z][A-Za-z-]{4,}", lowered)))
+                scored.append((score, str(paragraph.get("id") or "")))
+            best_score, best_id = max(scored, default=(0, ""))
+            fallback = ",".join(paragraph_ids)[:60]
+            anchored.append({**issue, "target": best_id if best_score > 0 else fallback})
+        return {**review, "issues": anchored}
 
     async def _ask_reviewer(
         self,

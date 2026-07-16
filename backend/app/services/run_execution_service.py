@@ -553,6 +553,7 @@ class RunExecutionService:
             writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
             if not writing_tasks:
                 return
+            self._retry_first_paragraph_audit(writing_tasks)
             self._retry_transient_writing_failures(writing_tasks)
             writing_tasks = [
                 task for task in TaskRepository.get_all(run_id=run_id)
@@ -698,10 +699,14 @@ class RunExecutionService:
                 if review.get("requires_revision"):
                     revision_task = task_recovery_service.create_revision_task(latest_after_review, review)
                     if not revision_task:
-                        if self._can_reopen_thesis_in_place(latest_after_review):
+                        if self._can_reopen_thesis_in_place(latest_after_review, review):
+                            consolidation = int(latest_after_review.get("attempt_count") or 0) == 5
                             reopened = task_recovery_service.reopen_thesis_in_place(latest_after_review, review)
                             run_event_service.emit(
-                                run_id, "revision.reopened_in_place", "review", "论文章节末轮定点返工",
+                                run_id,
+                                "revision.paragraph_audit_consolidation" if consolidation else "revision.reopened_in_place",
+                                "review",
+                                "论文章节分段审计汇总返工" if consolidation else "论文章节末轮定点返工",
                                 review.get("feedback", "按独立审稿清单原地修改"),
                                 task_id=reopened["id"], agent_id=latest_task.get("owner_agent"),
                             )
@@ -752,9 +757,59 @@ class RunExecutionService:
                         approval_service.resolve(request["id"], True, resolved_by="system:auto")
                         TaskRepository.update_status(revision_task["id"], "pending", blocked_reason=None)
 
+    def _retry_first_paragraph_audit(self, tasks: list[dict]) -> bool:
+        """Re-review one legacy maxed chapter under the new exhaustive audit before rewriting it."""
+        changed = False
+        for task in tasks:
+            reviewer = (
+                ((task.get("review_result") or {}).get("quality_gates") or {}).get("layers", {})
+                .get("independent_review", {}).get("reviewer")
+            )
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and int(task.get("attempt_count") or 0) == 5
+                and reviewer == "independent_reviewer_model_paragraph_audit"
+                and not self._has_task_event(task, "review.paragraph_audit_recheck")
+            ):
+                continue
+            TaskRepository.update_status(
+                task["id"], "running", blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            run_event_service.emit(
+                task["run_id"], "review.paragraph_audit_recheck", "review",
+                "按完整分段协议重新审核章节",
+                "复用现有章节正文，只重跑一次分段审计，不增加章节执行次数。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
+        return changed
+
     @staticmethod
-    def _can_reopen_thesis_in_place(task: dict) -> bool:
-        return task.get("task_type") == "thesis_chapter" and int(task.get("attempt_count") or 0) < 5
+    def _has_task_event(task: dict, event_type: str) -> bool:
+        return any(
+            event.get("event_type") == event_type
+            for event in RunEventRepository.get_by_run(
+                task.get("run_id"), limit=100, task_id=task.get("id"),
+            )
+        )
+
+    def _can_reopen_thesis_in_place(self, task: dict, review: dict | None = None) -> bool:
+        if task.get("task_type") != "thesis_chapter":
+            return False
+        attempts = int(task.get("attempt_count") or 0)
+        if attempts < 5:
+            return True
+        reviewer = (
+            (((review or {}).get("quality_gates") or {}).get("layers") or {})
+            .get("independent_review", {}).get("reviewer")
+        )
+        return (
+            attempts == 5
+            and reviewer == "independent_reviewer_model_paragraph_audit"
+            and not self._has_task_event(task, "revision.paragraph_audit_consolidation")
+        )
 
     def request_cancel(self, run_id: str, reason: str = "用户取消运行") -> dict:
         run = RunRepository.get_by_id(run_id)

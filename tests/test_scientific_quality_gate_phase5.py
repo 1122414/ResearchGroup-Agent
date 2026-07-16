@@ -296,6 +296,7 @@ async def test_chapter_reviewer_receives_full_chapter_and_frozen_support(monkeyp
     assert "逐段穷尽检查" in prompts[0]
     assert "complete chapter body" in prompts[0]
     assert "bounded pilot result" in prompts[0]
+    assert '"available_support"' in prompts[0]
     assert '"chapter"' in prompts[-1]
     assert '"allowed_support"' in prompts[-1]
     assert '"allowed_contract_support"' in prompts[-1]
@@ -536,6 +537,26 @@ def test_independent_reviewer_normalizes_harmless_field_drift():
         }],
         "summary": "revision required",
     }
+
+
+def test_chapter_batch_issue_is_anchored_to_quoted_paragraph():
+    review = {
+        "approved": False,
+        "issues": [{
+            "severity": "major", "target": "overall",
+            "reason": "The phrase is not supported",
+            "required_change": "Delete 'dense embeddings capture semantic similarity'",
+        }],
+        "summary": "unsupported phrase",
+    }
+    batch = [
+        {"id": "intro_1", "text": "This paragraph discusses scope."},
+        {"id": "intro_2", "text": "Dense embeddings capture semantic similarity beyond exact matches."},
+    ]
+
+    anchored = independent_reviewer_service._anchor_batch_issue_targets(review, batch)
+
+    assert anchored["issues"][0]["target"] == "intro_2"
 
 
 def test_literature_reviewer_must_not_invent_missing_source_statistics():

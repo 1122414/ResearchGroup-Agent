@@ -242,9 +242,49 @@ def test_completed_chapter_with_invalid_resolved_output_still_blocks_assembly(mo
     assert run_execution_service._invalid_required_chapters("run_loop") == [chapter]
 
 
-def test_thesis_in_place_revision_remains_bounded_while_allowing_issue_reduction():
+def test_thesis_in_place_revision_remains_bounded_while_allowing_issue_reduction(monkeypatch):
     task = {"task_type": "thesis_chapter", "attempt_count": 1}
     assert run_execution_service._can_reopen_thesis_in_place(task) is True
     assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 4}) is True
     assert run_execution_service._can_reopen_thesis_in_place({**task, "attempt_count": 5}) is False
     assert run_execution_service._can_reopen_thesis_in_place({**task, "task_type": "literature_survey"}) is False
+
+    audit_review = {
+        "quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit",
+        }}},
+    }
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    assert run_execution_service._can_reopen_thesis_in_place(
+        {**task, "id": "chapter", "run_id": "run", "attempt_count": 5}, audit_review,
+    ) is True
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: True)
+    assert run_execution_service._can_reopen_thesis_in_place(
+        {**task, "id": "chapter", "run_id": "run", "attempt_count": 5}, audit_review,
+    ) is False
+
+
+def test_first_exhaustive_paragraph_audit_can_recheck_existing_output_once(monkeypatch):
+    task = {
+        "id": "chapter", "run_id": "run", "task_type": "thesis_chapter",
+        "status": "failed", "attempt_count": 5, "owner_agent": "writer",
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit",
+        }}}},
+    }
+    events = []
+
+    monkeypatch.setattr(run_execution_service, "_has_task_event", lambda *_args: False)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda _task_id, status, **fields: task.update(status=status, **fields),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_execution_service.run_event_service.emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_first_paragraph_audit([task]) is True
+    assert task["status"] == "running"
+    assert task["attempt_count"] == 5
+    assert events == ["review.paragraph_audit_recheck"]
