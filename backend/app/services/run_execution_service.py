@@ -664,7 +664,24 @@ class RunExecutionService:
                 TaskRepository.update_status(task["id"], "waiting_review")
                 run_event_service.emit(run_id, "review.started", "review", "导师开始审核", latest_task.get("title", ""), task_id=task["id"], agent_id=latest_task.get("owner_agent"))
                 review = await review_service.review(latest_task)
+                if review.get("review_mode") == "independent_review_transport_failure":
+                    run_event_service.emit(
+                        run_id, "review.transport_retry", "review", "独立审稿传输重试",
+                        "仅重试审核，不重做章节或增加章节执行次数。",
+                        task_id=task["id"], agent_id=latest_task.get("owner_agent"),
+                    )
+                    review = await review_service.review(TaskRepository.get_by_id(task["id"]) or latest_task)
                 run_event_service.emit(run_id, "review.completed", "review", "导师审核完成", review.get("feedback", ""), task_id=task["id"], agent_id=latest_task.get("owner_agent"), payload=review)
+                if review.get("review_mode") == "independent_review_transport_failure":
+                    reason = "独立审稿连续传输失败；已停止审核重试，章节正文未被判为科学不合格。"
+                    TaskRepository.update_status(
+                        task["id"], "failed", blocked_reason=reason, review_feedback=reason,
+                    )
+                    run_event_service.emit(
+                        run_id, "review.transport_exhausted", "review", "独立审稿传输重试耗尽",
+                        reason, task_id=task["id"], agent_id=latest_task.get("owner_agent"),
+                    )
+                    continue
                 latest_after_review = TaskRepository.get_by_id(task["id"]) or latest_task
                 created_skills = skill_reflection_service.capture_after_review(latest_after_review, review)
                 if created_skills:

@@ -4,8 +4,11 @@ from backend.app.core.config import settings
 from backend.app.services.browser_research_service import BrowserResearchService, BrowserVerificationResult
 from backend.app.services.evidence_pipeline_service import EvidencePipelineService
 from backend.app.services.research_integrity_service import research_integrity_service
+from backend.app.services.review_service import review_service
+from backend.app.services.run_event_service import run_event_service
+from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_recovery_service import task_recovery_service
-from backend.app.storage.repositories import EvidenceRepository, TaskRepository
+from backend.app.storage.repositories import EvidenceRepository, RunRepository, TaskRepository
 
 
 @pytest.mark.asyncio
@@ -172,6 +175,43 @@ def test_thesis_revision_description_keeps_complete_previous_chapter():
     assert '"chapter"' in description
     assert "p-last" in description
     assert "需要定点修改的末尾段落" in description
+
+
+@pytest.mark.asyncio
+async def test_review_transport_retry_does_not_consume_chapter_attempt(monkeypatch):
+    task = {
+        "id": "chapter_transport", "run_id": "run_transport", "title": "Introduction",
+        "task_type": "thesis_chapter", "status": "running", "attempt_count": 4,
+        "owner_agent": "writer", "outputs": [{"summary": "complete chapter"}],
+    }
+    review_calls = 0
+    events = []
+
+    async def failed_transport_review(_task):
+        nonlocal review_calls
+        review_calls += 1
+        return {
+            "approved": False, "requires_revision": False,
+            "review_mode": "independent_review_transport_failure",
+            "feedback": "empty reviewer response",
+        }
+
+    def update_status(_task_id, status, **fields):
+        task.update(status=status, **fields)
+
+    monkeypatch.setattr(RunRepository, "get_by_id", lambda _run_id: {"status": "executing"})
+    monkeypatch.setattr(TaskRepository, "get_by_id", lambda _task_id: dict(task))
+    monkeypatch.setattr(TaskRepository, "update_status", update_status)
+    monkeypatch.setattr(review_service, "review", failed_transport_review)
+    monkeypatch.setattr(run_event_service, "emit", lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type))
+
+    await run_execution_service._review_task_batch("run_transport", [dict(task)])
+
+    assert review_calls == 2
+    assert task["status"] == "failed"
+    assert task["attempt_count"] == 4
+    assert "review.transport_retry" in events
+    assert "review.transport_exhausted" in events
 
 
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):

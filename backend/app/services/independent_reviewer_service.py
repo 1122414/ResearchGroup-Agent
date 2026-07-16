@@ -243,8 +243,14 @@ class IndependentReviewerService:
                 "bound_support 才可要求修正 support_ids。只返回紧凑 JSON：approved、issues、summary。\n"
                 + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:24000]
             )
-            review = await self._ask_reviewer(prompt, task, verified_support_ids)
+            review = await self._ask_reviewer(
+                prompt, task, verified_support_ids,
+                max_tokens=settings.thesis_chapter_max_tokens,
+                allow_minimal=False,
+            )
             issues.extend(review.get("issues") or [])
+            if any(item.get("target") == "review_transport" for item in issues):
+                return [item for item in issues if item.get("target") == "review_transport"]
         deduplicated = []
         seen = set()
         for issue in issues:
@@ -255,7 +261,12 @@ class IndependentReviewerService:
         return deduplicated[:18]
 
     async def _ask_reviewer(
-        self, base_prompt: str, task: dict, verified_support_ids: set[str] | None = None,
+        self,
+        base_prompt: str,
+        task: dict,
+        verified_support_ids: set[str] | None = None,
+        max_tokens: int | None = None,
+        allow_minimal: bool = True,
     ) -> dict:
         try:
             llm = create_llm_provider()
@@ -266,6 +277,7 @@ class IndependentReviewerService:
                 raw = await llm.generate(
                     prompt=prompt, schema=self.SCHEMA, role="independent_reviewer",
                     run_id=task.get("run_id"), task_id=task.get("id"),
+                    max_tokens=max_tokens,
                 )
                 try:
                     value = self._compact_review(self._parse_json(raw))
@@ -281,6 +293,8 @@ class IndependentReviewerService:
                             f"{base_prompt}\n上次输出因过长或 JSON 非法（{last_error[:160]}）。"
                             "重新独立审查并严格压缩；不要复述上次输出。"
                         )
+            if not allow_minimal:
+                raise ValueError(last_error)
             raw = await llm.generate(
                 prompt=(
                     f"{base_prompt}\n前两次详细审稿结构均不可解析（{last_error[:160]}）。"
@@ -288,6 +302,7 @@ class IndependentReviewerService:
                 ),
                 schema=self.MINIMAL_SCHEMA, role="independent_reviewer",
                 run_id=task.get("run_id"), task_id=task.get("id"),
+                max_tokens=max_tokens,
             )
             value = self._parse_json(raw)
             if not isinstance(value, dict) or not isinstance(value.get("approved"), bool):

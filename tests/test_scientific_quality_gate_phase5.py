@@ -368,6 +368,54 @@ async def test_chapter_reviewer_collects_all_bounded_batch_support_issues(monkey
 
 
 @pytest.mark.asyncio
+async def test_chapter_support_audit_uses_chapter_token_budget_without_binary_fallback(monkeypatch):
+    calls = []
+
+    class EmptyReviewer:
+        async def generate(self, schema, max_tokens=None, **_kwargs):
+            calls.append((schema, max_tokens))
+            return ""
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(settings, "llm_structured_repair_attempts", 1)
+    monkeypatch.setattr(settings, "thesis_chapter_max_tokens", 8192)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: EmptyReviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchClaimRepository.get_by_run",
+        lambda _run_id: [{
+            "id": "claim_verified", "statement": "bounded result",
+            "status": "supported", "evidence_ids": ["source"],
+        }],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {},
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.thesis_chapter_service.artifact_support",
+        lambda _run_id: [],
+    )
+
+    result = await independent_reviewer_service.review_task(
+        {"id": "chapter", "run_id": "run", "task_type": "thesis_chapter"},
+        {"chapter": {"sections": [{"paragraphs": [{
+            "id": "p0", "text": "bounded factual paragraph",
+            "paragraph_type": "claim", "support_ids": ["claim_verified"],
+        }]}]}},
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is False
+    assert result["issues"][0]["target"] == "review_transport"
+    assert len(calls) == 2
+    assert all(schema == independent_reviewer_service.SCHEMA for schema, _ in calls)
+    assert all(max_tokens == 8192 for _, max_tokens in calls)
+
+
+@pytest.mark.asyncio
 async def test_thesis_reviewer_drops_false_unknown_issue_for_schema_verified_support(monkeypatch):
     class Reviewer:
         async def generate(self, **_kwargs):
