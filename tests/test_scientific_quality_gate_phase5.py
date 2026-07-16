@@ -539,6 +539,23 @@ def test_independent_reviewer_normalizes_harmless_field_drift():
     }
 
 
+def test_independent_reviewer_keeps_twelve_exhaustive_batch_issues():
+    issues = [
+        {
+            "severity": "major", "target": f"p{index}",
+            "reason": f"unsupported {index}", "required_change": "delete",
+        }
+        for index in range(12)
+    ]
+
+    value = independent_reviewer_service._compact_review({
+        "approved": False, "issues": issues, "summary": "batch audit",
+    })
+
+    assert len(value["issues"]) == 12
+    assert value["issues"][-1]["target"] == "p11"
+
+
 def test_chapter_batch_issue_is_anchored_to_quoted_paragraph():
     review = {
         "approved": False,

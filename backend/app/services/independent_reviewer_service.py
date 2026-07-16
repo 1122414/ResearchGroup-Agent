@@ -16,7 +16,7 @@ class IndependentReviewerService:
             "approved": {"type": "boolean"},
             "issues": {
                 "type": "array",
-                "maxItems": 6,
+                "maxItems": 12,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -245,7 +245,7 @@ class IndependentReviewerService:
                 "你是论文段落证据审计员，未参与生成。逐段穷尽检查本批次全部段落，只能使用各段"
                 "support_ids 实际绑定的 bound_support，不得使用常识或其他段落的证据。检查每个事实、"
                 "因果、机制和解释性表述是否被直接蕴含；transition/limitation 也不得偷带新事实。"
-                "一次列出本批次全部 critical/major 越界，最多6条；不要报告文风或可选增强项。"
+                "一次列出本批次全部 critical/major 越界，最多12条；不要报告文风或可选增强项。"
                 "available_support 只能用于提出修复：若其中有直接蕴含该表述的冻结支持，优先要求补绑其 ID；"
                 "否则删除不受支持的最小短语。required_change 和 target 必须写出段落 ID。"
                 "只返回紧凑 JSON：approved、issues、summary。\n"
@@ -267,7 +267,7 @@ class IndependentReviewerService:
             if key not in seen:
                 seen.add(key)
                 deduplicated.append(issue)
-        return deduplicated[:18]
+        return deduplicated[:36]
 
     @classmethod
     def _audit_support_view(cls, support: dict, batch: list[dict]) -> dict:
@@ -539,7 +539,7 @@ class IndependentReviewerService:
         if not isinstance(raw_issues, list):
             raw_issues = []
         compacted = []
-        for issue in raw_issues[:6]:
+        for issue in raw_issues[:12]:
             if not isinstance(issue, dict):
                 continue
             severity = str(issue.get("severity") or "major").lower()
