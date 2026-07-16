@@ -288,6 +288,70 @@ class ThesisChapterService:
         repaired["claims"] = []
         return {"result": repaired, "changes": changes, "unresolved": unresolved}
 
+    def restore_reviewed_paragraphs(self, task: dict, latest: dict, feedback: str) -> dict:
+        """Restore advisor-named paragraphs exactly from the persisted pre-revision chapter."""
+        marker = "上一版交付物（必须在此基础上修改，不得只复述缺口）："
+        description = str(task.get("description") or "")
+        marker_index = description.find(marker)
+        if marker_index < 0:
+            return {"result": latest, "changes": []}
+        object_start = description.find("{", marker_index + len(marker))
+        if object_start < 0:
+            return {"result": latest, "changes": []}
+        try:
+            previous, _end = json.JSONDecoder().raw_decode(description[object_start:])
+        except json.JSONDecodeError:
+            return {"result": latest, "changes": []}
+        previous_chapter = previous.get("chapter") if isinstance(previous, dict) else None
+        if not isinstance(previous_chapter, dict):
+            return {"result": latest, "changes": []}
+        historical_ids = {
+            str(paragraph.get("id") or "")
+            for section in previous_chapter.get("sections") or []
+            for paragraph in section.get("paragraphs") or []
+            if isinstance(paragraph, dict) and paragraph.get("id")
+        }
+        requested = {
+            paragraph_id for paragraph_id in historical_ids
+            if re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(paragraph_id)}(?![A-Za-z0-9_-])",
+                feedback,
+                re.IGNORECASE,
+            )
+        }
+        repaired = deepcopy(latest)
+        current_sections = (repaired.get("chapter") or {}).get("sections") or []
+        current_by_heading = {
+            str(section.get("heading") or ""): section
+            for section in current_sections if isinstance(section, dict)
+        }
+        changes = []
+        for previous_section in previous_chapter.get("sections") or []:
+            heading = str(previous_section.get("heading") or "")
+            current_section = current_by_heading.get(heading)
+            if not current_section:
+                continue
+            current_paragraphs = current_section.get("paragraphs") or []
+            for previous_index, paragraph in enumerate(previous_section.get("paragraphs") or []):
+                paragraph_id = str(paragraph.get("id") or "")
+                if paragraph_id not in requested:
+                    continue
+                restored = deepcopy(paragraph)
+                current_index = next(
+                    (index for index, item in enumerate(current_paragraphs) if str(item.get("id") or "") == paragraph_id),
+                    None,
+                )
+                if current_index is not None:
+                    current_paragraphs[current_index] = restored
+                else:
+                    current_paragraphs.insert(min(previous_index, len(current_paragraphs)), restored)
+                changes.append({"target": paragraph_id, "operation": "restore_previous_exact"})
+            current_section["paragraphs"] = current_paragraphs
+        if changes:
+            repaired["summary"] = "按导师保真意见从持久化上一版精确恢复点名段落；未生成新正文。"
+            repaired["claims"] = []
+        return {"result": repaired, "changes": changes}
+
     @classmethod
     def _deletion_sentence(cls, paragraph: str, instruction: str) -> str | None:
         sentences = cls._sentence_parts(paragraph)

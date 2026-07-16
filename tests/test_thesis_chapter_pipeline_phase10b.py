@@ -367,6 +367,35 @@ def test_malformed_cleanup_preserves_citation_sentences_and_drops_orphans():
     assert "Work by Zhou" not in cleaned
 
 
+def test_advisor_named_paragraphs_restore_exactly_from_persisted_previous_chapter():
+    previous = {
+        "chapter": {"sections": [{"heading": "Related Work", "paragraphs": [
+            {"id": "p1", "text": "exact supported historical paragraph", "support_ids": ["claim_1"]},
+            {"id": "p2", "text": "second historical paragraph", "support_ids": ["claim_2"]},
+        ]}]},
+    }
+    task = {
+        "description": (
+            "original\n上一版交付物（必须在此基础上修改，不得只复述缺口）：\n"
+            + json.dumps(previous, ensure_ascii=False)
+            + "\n返工交付规则：仅恢复点名内容"
+        ),
+    }
+    latest = {"chapter": {"sections": [{"heading": "Related Work", "paragraphs": [
+        {"id": "p2", "text": "current second paragraph", "support_ids": ["claim_2"]},
+    ]}]}}
+
+    restored = thesis_chapter_service.restore_reviewed_paragraphs(
+        task, latest, "请恢复 p1；其他段落保持当前版本。",
+    )
+    paragraphs = restored["result"]["chapter"]["sections"][0]["paragraphs"]
+
+    assert [item["id"] for item in paragraphs] == ["p1", "p2"]
+    assert paragraphs[0]["text"] == "exact supported historical paragraph"
+    assert paragraphs[1]["text"] == "current second paragraph"
+    assert restored["changes"] == [{"target": "p1", "operation": "restore_previous_exact"}]
+
+
 def test_experiment_support_includes_frozen_protocol(monkeypatch):
     monkeypatch.setattr(ExperimentResultRepository, "get_by_run", lambda _run_id: [{
         "id": "result_verified", "protocol_id": "protocol_verified", "status": "completed",

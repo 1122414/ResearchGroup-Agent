@@ -558,6 +558,7 @@ class RunExecutionService:
             self._retry_first_paragraph_audit(writing_tasks)
             self._retry_structural_floor_migration(writing_tasks)
             self._retry_epistemic_audit_migration(writing_tasks)
+            self._retry_advisor_paragraph_restoration(writing_tasks)
             self._retry_surgical_chapter_repair(writing_tasks)
             self._retry_transient_writing_failures(writing_tasks)
             writing_tasks = [
@@ -916,6 +917,51 @@ class RunExecutionService:
                     "word_count_before": words_before, "word_count_after": words_after,
                     "attempt_count": task.get("attempt_count"),
                 },
+            )
+            changed = True
+        return changed
+
+    def _retry_advisor_paragraph_restoration(self, tasks: list[dict]) -> bool:
+        """Restore only advisor-named historical paragraphs after evidence gates already passed."""
+        changed = False
+        for task in tasks:
+            review = task.get("review_result") or {}
+            feedback = str(review.get("feedback") or "")
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and (review.get("quality_gates") or {}).get("passed") is True
+                and any(marker in feedback.casefold() for marker in ("恢复", "restore"))
+                and not self._has_task_event(task, "revision.advisor_paragraph_restoration")
+                and task.get("outputs")
+            ):
+                continue
+            restoration = thesis_chapter_service.restore_reviewed_paragraphs(
+                task, task["outputs"][-1], feedback,
+            )
+            if not restoration["changes"]:
+                continue
+            result = restoration["result"]
+            TaskRepository.update_status(
+                task["id"], "running", outputs=[result], blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            OutputRepository.insert({
+                "id": f"out_{task['id']}", "output_type": "task_result",
+                "title": f"任务产出：{task.get('title', task['id'])}",
+                "content": json.dumps(result, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"), "task_id": task["id"],
+                "agent_id": task.get("owner_agent"), "created_at": datetime.now().isoformat(),
+            })
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "revision.advisor_paragraph_restoration", "review",
+                "从持久化上一版恢复导师点名段落",
+                "仅恢复历史原文与原 support_ids；随后重新执行分层证据审计。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+                payload={"changes": restoration["changes"]},
             )
             changed = True
         return changed
