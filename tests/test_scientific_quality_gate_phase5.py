@@ -618,6 +618,30 @@ def test_chapter_batch_issue_is_anchored_to_quoted_paragraph():
     assert anchored["issues"][0]["target"] == "intro_2"
 
 
+def test_chapter_batch_unlocated_deletion_is_review_transport_failure():
+    review = {
+        "approved": False,
+        "issues": [{
+            "severity": "major", "target": "intro_2", "reason": "",
+            "required_change": "Delete the unsupported phrase. No available support can be bound to justify it.",
+        }],
+        "summary": "unsupported phrase",
+    }
+    batch = [
+        {"id": "intro_1", "text": "This paragraph discusses scope."},
+        {"id": "intro_2", "text": "This paragraph makes several bounded observations."},
+    ]
+
+    anchored = independent_reviewer_service._anchor_batch_issue_targets(review, batch)
+
+    assert anchored["issues"] == [{
+        "severity": "major",
+        "target": "review_transport",
+        "reason": "independent reviewer requested deletion without identifying the unsupported text",
+        "required_change": "retry paragraph audit and quote the minimum exact phrase",
+    }]
+
+
 def test_large_artifact_support_is_compacted_to_relevant_frozen_facts():
     support = {
         "id": "experiment:verified",

@@ -401,10 +401,39 @@ class IndependentReviewerService:
     def _anchor_batch_issue_targets(review: dict, batch: list[dict]) -> dict:
         """Recover paragraph IDs when a reviewer returns an unhelpful `overall` target."""
         paragraph_ids = [str(item.get("id") or "") for item in batch]
+        paragraph_text = {
+            str(item.get("id") or ""): str(item.get("text") or "")
+            for item in batch
+        }
         anchored = []
         for issue in review.get("issues") or []:
             target = str(issue.get("target") or "")
             if target == "review_transport" or target in paragraph_ids:
+                instruction = str(issue.get("required_change") or "")
+                delete_requested = any(marker in instruction.casefold() for marker in (
+                    "delete", "remove", "删除", "移除",
+                ))
+                quoted = re.findall(r"['\"‘“]([^'\"’”]{4,})['\"’”]", instruction)
+                has_exact_locator = any(
+                    fragment in paragraph_text.get(target, "") for fragment in quoted
+                )
+                if (
+                    target != "review_transport"
+                    and delete_requested
+                    and not str(issue.get("reason") or "").strip()
+                    and not has_exact_locator
+                ):
+                    return {
+                        **review,
+                        "approved": False,
+                        "issues": [{
+                            "severity": "major",
+                            "target": "review_transport",
+                            "reason": "independent reviewer requested deletion without identifying the unsupported text",
+                            "required_change": "retry paragraph audit and quote the minimum exact phrase",
+                        }],
+                        "summary": "independent review issue was not actionable",
+                    }
                 anchored.append(issue)
                 continue
             combined = " ".join(str(issue.get(key) or "") for key in ("target", "reason", "required_change"))
