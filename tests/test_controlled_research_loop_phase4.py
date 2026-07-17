@@ -361,6 +361,24 @@ def test_frozen_scope_limitations_do_not_trigger_research_loop():
     assert research_loop_service._is_scope_boundary("当前冻结数据集的输入哈希尚未核验") is False
 
 
+def test_declared_noncausal_boundary_does_not_block_descriptive_study():
+    uncertainty = {
+        "id": "u1", "status": "open", "severity": "high",
+        "description": "The relationship remains debated, with limited causal evidence.",
+    }
+    descriptive_brief = {
+        "methodology_profile": {"quality_criteria": ["non-causal interpretation"]},
+        "scope_out": ["Causal effects of income classification"],
+    }
+
+    assert research_loop_service._actionable_high_uncertainties(
+        [uncertainty], True, descriptive_brief,
+    ) == []
+    assert research_loop_service._actionable_high_uncertainties(
+        [uncertainty], True, {"scope_out": []},
+    ) == [uncertainty]
+
+
 def test_supported_cross_language_hypothesis_is_not_retested():
     proposed = {"statement": "固定重叠分割相比无分割基线能提升 MRR 至少 5%。"}
     supported = {"statement": "Fixed overlapping segmentation improves MRR over the no-split baseline by at least 5%."}

@@ -271,7 +271,9 @@ class ResearchLoopService:
             or (result_requirement == "publishable_experiment" and publishable)
             or (result_requirement == "verified_analysis" and analyses)
         )
-        actionable_high = self._actionable_high_uncertainties(uncertainties, method_result_ready)
+        actionable_high = self._actionable_high_uncertainties(
+            uncertainties, method_result_ready, brief,
+        )
         thesis_requirements = brief.get("thesis_requirements") or {}
         thesis_confirmed = thesis_requirements.get("status") == "confirmed"
         required_claims = max(1, int(thesis_requirements.get("minimum_supported_claims") or 1))
@@ -363,7 +365,9 @@ class ResearchLoopService:
         result_requirement = state.get("result_evidence_requirement") or research_method_registry_service.result_evidence_requirement(brief)
         method_result_ready = bool(state.get("method_result_ready"))
         actionable_uncertainty_ids = {
-            item["id"] for item in self._actionable_high_uncertainties(uncertainties, method_result_ready)
+            item["id"] for item in self._actionable_high_uncertainties(
+                uncertainties, method_result_ready, brief,
+            )
         }
         for uncertainty in uncertainties:
             if uncertainty["id"] in actionable_uncertainty_ids:
@@ -448,12 +452,17 @@ class ResearchLoopService:
         )
         return self._gap("thesis_evidence_coverage", "run", reason, "literature_survey", 0.9)
 
-    def _actionable_high_uncertainties(self, uncertainties: list[dict], method_result_ready: bool) -> list[dict]:
+    def _actionable_high_uncertainties(
+        self, uncertainties: list[dict], method_result_ready: bool, brief: dict | None = None,
+    ) -> list[dict]:
         return [
             item for item in uncertainties
             if item.get("status") == "open"
             and item.get("severity") == "high"
             and not self._is_scope_boundary(str(item.get("description") or ""))
+            and not self._is_frozen_noncausal_boundary(
+                str(item.get("description") or ""), brief or {},
+            )
             and not (
                 method_result_ready
                 and any(
@@ -462,6 +471,22 @@ class ResearchLoopService:
                 )
             )
         ]
+
+    @staticmethod
+    def _is_frozen_noncausal_boundary(text: str, brief: dict) -> bool:
+        lowered = text.lower()
+        if not any(marker in lowered for marker in ("causal", "causality", "因果")):
+            return False
+        profile = brief.get("methodology_profile") or {}
+        declared_boundaries = [
+            *[str(item) for item in profile.get("quality_criteria") or []],
+            *[str(item) for item in brief.get("scope_out") or []],
+        ]
+        policy = " ".join(declared_boundaries).lower()
+        return any(marker in policy for marker in (
+            "non-causal", "noncausal", "causal effects", "causal effect",
+            "非因果", "因果效应", "因果效果",
+        ))
 
     def _is_scope_boundary(self, text: str) -> bool:
         lowered = text.lower()
