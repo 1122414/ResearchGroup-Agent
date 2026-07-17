@@ -123,6 +123,9 @@ class RunExecutionService:
 
             if self._all_research_failed(research_tasks):
                 return self._fail_no_research_survived(run_id)
+            failed_critical = self._failed_critical_research_roots(research_tasks)
+            if failed_critical:
+                return self._fail_critical_research_chain(run_id, failed_critical)
 
             while True:
                 loop_tasks = research_loop_service.expand_once(run_id)
@@ -428,6 +431,30 @@ class RunExecutionService:
         run_event_service.emit(
             run_id, "run.failed", "error", "运行失败",
             "所有研究任务均未通过审核或执行失败；未进入自主补救循环。",
+        )
+        return self.get_summary(run_id)
+
+    @staticmethod
+    def _failed_critical_research_roots(tasks: list[dict]) -> list[dict]:
+        return [
+            task for task in tasks
+            if task.get("status") == "failed"
+            and task.get("is_critical_path") is True
+            and not task.get("revision_of_task_id")
+            and not str(task.get("title") or "").startswith("[循环R")
+        ]
+
+    def _fail_critical_research_chain(self, run_id: str, failed: list[dict]) -> dict:
+        names = "、".join(str(task.get("title") or task["id"]) for task in failed)
+        reason = f"关键研究链已失败，无法由补证循环替代：{names}"
+        RunRepository.update_status(
+            run_id, RunStatus.failed.value, current_step=reason,
+            completed_at=datetime.now().isoformat(),
+        )
+        self._reset_agents(run_id, blocked=True)
+        run_event_service.emit(
+            run_id, "run.failed", "error", "关键研究链失败", reason,
+            payload={"failed_task_ids": [task["id"] for task in failed]},
         )
         return self.get_summary(run_id)
 

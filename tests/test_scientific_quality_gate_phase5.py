@@ -652,6 +652,55 @@ def test_literature_reviewer_must_not_invent_missing_source_statistics():
     assert "定性 passage 不机械要求效果量" in scope
 
 
+def test_research_design_reviewer_checks_plan_not_future_results():
+    scope = independent_reviewer_service._research_design_review_scope()
+    assert "尚未执行的前瞻性研究设计" in scope
+    assert "不得要求 experiment" in scope
+    assert "不得诱导模型编造" in scope
+    assert "质量控制" in scope
+    assert "材料登记/分析阶段" in scope
+
+
+@pytest.mark.asyncio
+async def test_research_design_review_payload_omits_experiment_and_passages(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"prospective design is complete"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {
+            "methodology_family": "quantitative",
+            "methodology_profile": {"family": "quantitative", "epistemic_mode": "observational"},
+        },
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "design", "run_id": "run", "task_type": "research_design", "description": "long"},
+        {
+            "method_package": {
+                "family": "quantitative", "study_design": "cross-sectional",
+                "quality_controls": ["complete-case disclosure", "non-causal language"],
+            },
+            "claims": [{"statement": "unverified external method claim"}],
+        },
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is True
+    assert '"deliverable"' in prompts[0]
+    assert '"experiment"' not in prompts[0]
+    assert '"passages"' not in prompts[0]
+    assert "不得要求 experiment" in prompts[0]
+
+
 def test_reviewer_payload_compaction_keeps_complete_json_and_claims():
     payload = {
         "task": {"id": "task", "description": "x" * 20000},

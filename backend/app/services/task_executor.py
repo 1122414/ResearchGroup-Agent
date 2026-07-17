@@ -226,6 +226,8 @@ class TaskExecutor:
                     )
                     result["analysis_artifact"] = analysis_artifact
                     result["claims"] = research_analysis_service.claims_for_artifact(analysis_artifact)
+        if task_type == "research_design":
+            result = self._ground_research_design_output(result)
         if task_type == "data_acquisition":
             material_manifest = research_material_service.ingest_for_task(task)
             result = self._ground_material_output(result, material_manifest)
@@ -343,6 +345,14 @@ class TaskExecutor:
                     task.get("id"), round_index + 1, best_count, candidate_count,
                 )
         return best
+
+    @staticmethod
+    def _ground_research_design_output(result: dict) -> dict:
+        """Keep prospective design separate from evidence and execution claims."""
+        # The method package is the prospective source of truth. Generic LLM
+        # "claims" often invent citations, observed sample sizes or execution
+        # facts that do not exist until later workflow stages.
+        return {**result, "claims": []}
 
     @staticmethod
     def _ground_material_output(result: dict, material_manifest: dict) -> dict:

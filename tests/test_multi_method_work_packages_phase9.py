@@ -220,6 +220,19 @@ def test_data_acquisition_narrative_only_lists_registered_real_files():
     assert grounded["material_manifest"] == manifest
 
 
+def test_research_design_drops_generic_evidence_claims():
+    grounded = task_executor._ground_research_design_output({
+        "method_package": {"family": "quantitative"},
+        "claims": [{
+            "statement": "Invented method citation",
+            "evidence_source_ids": ["source_fake"],
+        }],
+    })
+
+    assert grounded["method_package"]["family"] == "quantitative"
+    assert grounded["claims"] == []
+
+
 def test_noncomputational_decomposition_uses_method_neutral_work_packages():
     tasks = [
         {"task_type": "system_design", "title": "系统设计", "description": ""},

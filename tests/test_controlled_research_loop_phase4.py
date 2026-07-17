@@ -53,6 +53,25 @@ def test_all_research_failed_is_terminal_before_research_loop():
     ]) is False
 
 
+def test_failed_critical_research_root_blocks_recovery_loop():
+    failed = run_execution_service._failed_critical_research_roots([
+        {
+            "id": "design", "title": "Design", "status": "failed",
+            "is_critical_path": True, "revision_of_task_id": None,
+        },
+        {
+            "id": "optional", "title": "[循环R1] supplement", "status": "failed",
+            "is_critical_path": False, "revision_of_task_id": None,
+        },
+        {
+            "id": "literature", "title": "Literature", "status": "completed",
+            "is_critical_path": True, "revision_of_task_id": None,
+        },
+    ])
+
+    assert [task["id"] for task in failed] == ["design"]
+
+
 def test_snapshot_stops_instead_of_repeating_same_action(monkeypatch):
     gap = {
         "kind": "contested_claim", "target_id": "claim_1", "reason": "search counter evidence",

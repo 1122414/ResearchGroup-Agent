@@ -158,6 +158,20 @@ class IndependentReviewerService:
                 "passed": True, "reviewed_in_bounded_batches": True,
             }
             review_scope = self._thesis_chapter_review_scope()
+        elif task.get("task_type") == "research_design":
+            brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+            payload = {
+                "task": {
+                    key: task.get(key) for key in ("id", "title", "task_type")
+                },
+                "frozen_methodology": {
+                    "family": brief.get("methodology_family")
+                    or (brief.get("methodology_profile") or {}).get("family"),
+                    "profile": brief.get("methodology_profile") or {},
+                },
+                "deliverable": deliverable,
+            }
+            review_scope = self._research_design_review_scope()
         elif not claims and not experiment:
             payload["deliverable"] = deliverable
             review_scope = (
@@ -477,6 +491,20 @@ class IndependentReviewerService:
             "若交付物已经明确列出该局限，不得再以同一缺失拒绝。定性 passage 不机械要求效果量。"
             "只有无归因地把单篇结果推广为普遍事实、遗漏关键适用范围、与 passage 矛盾，"
             "或伪造来源中不存在的信息时才判重大问题。"
+        )
+
+    @staticmethod
+    def _research_design_review_scope() -> str:
+        return (
+            "这是尚未执行的前瞻性研究设计审查，不是结果分析或实验复现。交付物的权威对象是 "
+            "deliverable.method_package；不得要求 experiment、分析结果、实际样本量、显著性、"
+            "外部 passage、执行后数据哈希或复现日志，也不得诱导模型编造这些未来信息。"
+            "应检查方法族与冻结画像一致，研究单位/材料范围、纳排与缺失策略、主要估计量或解释程序、"
+            "不确定性方法、稳健性检查、质量控制、停止规则、偏离记录和非因果边界是否具体且彼此一致。"
+            "质量控制应是可执行规则，但不得机械要求任意缺失率或异常值阈值；完整案例研究可以要求"
+            "披露实际缺失数，而不应预先编造缺失率。预期样本量可作为计划值但不是必需执行结果。"
+            "若设计声称已经观察到结果、实际样本量或未经工件提供的 SHA-256，应要求删除或明确推迟到"
+            "材料登记/分析阶段，而不是要求补造。外部方法学引用不是本任务硬门，不能因 passage 为空拒绝。"
         )
 
     @staticmethod
