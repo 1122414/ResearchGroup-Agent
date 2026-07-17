@@ -67,6 +67,7 @@ class IndependentReviewerService:
             "claims": [
                 {
                     "index": index, "statement": claim.get("statement"),
+                    "provenance": claim.get("provenance") or {},
                     "passages": [
                         {
                             "passage_id": passage_id,
@@ -171,7 +172,14 @@ class IndependentReviewerService:
             # experiment artifact is immutable upstream evidence, so requiring
             # an analyst revision to rewrite it creates an impossible loop.
             payload["deliverable"] = deliverable
-            review_scope = self._result_analysis_review_scope()
+            brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+            family = (
+                (latest.get("analysis_artifact") or {}).get("family")
+                or brief.get("methodology_family")
+                or (brief.get("methodology_profile") or {}).get("family")
+                or ""
+            )
+            review_scope = self._result_analysis_review_scope(family)
         else:
             review_scope = (
                 "只能依据给出的原始 passage 和 experiment artifact 摘要审查。"
@@ -443,7 +451,21 @@ class IndependentReviewerService:
         )
 
     @staticmethod
-    def _result_analysis_review_scope() -> str:
+    def _result_analysis_review_scope(method_family: str = "") -> str:
+        if method_family and method_family not in {"computational", "experimental"}:
+            return (
+                f"这是 {method_family} 方法的确定性结果分析，不是实验复现。claims 的合法依据是 "
+                "analysis_artifact；只要 provenance 含 method_family、input_hashes、"
+                "analysis_artifact、analysis_artifact_sha256，passages 为空是正确的。"
+                "不得要求 protocol_id、raw_results、raw_results_sha256、逐 query 结果或实验 bootstrap，"
+                "也不得让 LLM 编造这些实验字段。应核验输入哈希、冻结方法包、procedure、findings、"
+                "method_checks 与 limitations 是否彼此一致，并按该方法族的质量标准审查。"
+                "对于分组观察数据，应检查原始记录数、两组样本量/均值/差值、不属于目标组的排除数、"
+                "缺失无效记录、声明的区间方法和稳健性结果；若已明确使用正态近似并报告限制，"
+                "不得机械要求改做 bootstrap 或把描述比较改写成因果实验。"
+                "确定性 analysis_artifact 是系统从已哈希材料计算的上游工件，分析任务不能凭语言模型"
+                "改写其数值或哈希；required_change 只能指向当前交付物中真实可修改的解释或缺失字段。"
+            )
         return (
             "这是已执行实验的结果分析，不是文献综合。claims 的合法依据是 experiment artifact；"
             "只要 provenance 含 protocol_id、raw_results、raw_results_sha256，passages 为空是正确的，"

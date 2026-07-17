@@ -137,8 +137,12 @@ class ResearchAnalysisService:
         baseline = str(package.get("baseline_group") or "")
         treatment = str(package.get("treatment_group") or "")
         baseline_values, treatment_values = groups.get(baseline, []), groups.get(treatment, [])
+        target_count = len(baseline_values) + len(treatment_values)
+        valid_numeric_count = sum(len(values) for values in groups.values())
         valid = bool(baseline_values and treatment_values)
-        delta = statistics.mean(treatment_values) - statistics.mean(baseline_values) if valid else None
+        baseline_mean = statistics.mean(baseline_values) if baseline_values else None
+        treatment_mean = statistics.mean(treatment_values) if treatment_values else None
+        delta = treatment_mean - baseline_mean if valid else None
         se = None
         ci = None
         if len(baseline_values) >= 2 and len(treatment_values) >= 2:
@@ -152,9 +156,14 @@ class ResearchAnalysisService:
         )
         findings = [{
             "baseline": baseline, "treatment": treatment,
+            "records_total": len(records), "valid_numeric_records": valid_numeric_count,
+            "excluded_non_target_group_records": max(valid_numeric_count - target_count, 0),
             "n_baseline": len(baseline_values), "n_treatment": len(treatment_values),
+            "mean_baseline": baseline_mean, "mean_treatment": treatment_mean,
             "mean_difference": delta, "standard_error": se, "confidence_interval_95_normal": ci,
             "median_difference_sensitivity": median_delta, "missing_or_invalid_records": missing,
+            "uncertainty_method": "normal approximation for an independent-group mean difference",
+            "sampling_unit": str(package.get("sampling_unit") or "one frozen record"),
         }]
         checks = {}
         if family == "quantitative":

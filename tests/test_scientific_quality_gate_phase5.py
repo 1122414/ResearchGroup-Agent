@@ -527,6 +527,43 @@ async def test_result_analysis_reviewer_sees_deliverable_and_cannot_rewrite_expe
     assert "不能要求改写上游实验工件" in prompts[0]
 
 
+@pytest.mark.asyncio
+async def test_quantitative_result_reviewer_sees_method_provenance_without_experiment_fields(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"method artifact is traceable"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    provenance = {
+        "method_family": "quantitative", "input_hashes": ["a" * 64],
+        "analysis_artifact": "analysis/result.json", "analysis_artifact_sha256": "b" * 64,
+    }
+    result = await independent_reviewer_service.review_task(
+        {"id": "task_analysis", "run_id": "run_without_brief", "task_type": "result_analysis"},
+        {
+            "claims": [{"statement": "bounded descriptive difference", "provenance": provenance}],
+            "analysis_artifact": {
+                "family": "quantitative", "input_hashes": ["a" * 64],
+                "findings": [{"records_total": 4, "mean_difference": 2.0}],
+                "limitations": ["descriptive only"],
+            },
+        },
+        {"excerpts": []},
+    )
+
+    assert result["approved"] is True
+    assert '"provenance"' in prompts[0]
+    assert '"analysis_artifact_sha256"' in prompts[0]
+    assert "不是实验复现" in prompts[0]
+
+
 def test_independent_reviewer_normalizes_harmless_field_drift():
     value = independent_reviewer_service._compact_review({
         "approved": False,

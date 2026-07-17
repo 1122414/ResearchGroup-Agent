@@ -138,6 +138,10 @@ def test_quantitative_adapter_computes_numbers_in_code_not_language_model():
     )
     finding = artifact["findings"][0]
     assert finding["mean_difference"] == 2.0
+    assert finding["mean_baseline"] == 1.5
+    assert finding["mean_treatment"] == 3.5
+    assert finding["records_total"] == 4
+    assert finding["excluded_non_target_group_records"] == 0
     assert finding["median_difference_sensitivity"] == 2.0
     assert finding["n_baseline"] == finding["n_treatment"] == 2
     assert finding["confidence_interval_95_normal"] is not None
@@ -280,3 +284,14 @@ def test_analysis_reads_only_hashed_method_package_and_registers_artifact(tmp_pa
     assert promoted["status"] == "supported"
     assert provenance["analysis_artifact"] in promoted["evidence_ids"]
     assert scientific_quality_gate_service._artifact_backed_research_claim(run_id, promoted) is True
+
+
+def test_nonexperimental_analysis_review_scope_uses_method_artifact_contract():
+    from backend.app.services.independent_reviewer_service import independent_reviewer_service
+
+    scope = independent_reviewer_service._result_analysis_review_scope("quantitative")
+
+    assert "不是实验复现" in scope
+    assert "method_family、input_hashes" in scope
+    assert "不得要求 protocol_id、raw_results、raw_results_sha256" in scope
+    assert "描述比较改写成因果实验" in scope
