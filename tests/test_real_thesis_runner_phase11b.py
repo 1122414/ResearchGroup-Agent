@@ -5,6 +5,7 @@ import pytest
 
 from benchmarks.run_real_thesis import (
     ENGINEERING_SEED_SOURCES,
+    SOCIAL_SEED_SOURCES,
     PUBLIC_TEXT_SOURCES,
     build_public_text_corpus,
     build_social_dataset,
@@ -75,6 +76,14 @@ def test_engineering_case_has_traceable_real_seed_sources():
     assert all(item.get("doi") for item in ENGINEERING_SEED_SOURCES[:5])
     acl_source = next(item for item in ENGINEERING_SEED_SOURCES if item.get("doi", "").endswith("findings-acl.422"))
     assert acl_source["title"] == "Document Segmentation Matters for Retrieval-Augmented Generation"
+
+
+def test_social_case_has_traceable_fulltext_seed_sources():
+    assert len(SOCIAL_SEED_SOURCES) >= 5
+    assert all(item.get("url", "").startswith("https://") for item in SOCIAL_SEED_SOURCES)
+    assert sum(item["url"].lower().endswith(".pdf") for item in SOCIAL_SEED_SOURCES) >= 4
+    assert any(item.get("doi") for item in SOCIAL_SEED_SOURCES)
+    assert all(item.get("title") and item.get("authors") for item in SOCIAL_SEED_SOURCES)
 
 
 def test_public_text_corpus_preserves_verified_provenance_and_bounded_extraction():

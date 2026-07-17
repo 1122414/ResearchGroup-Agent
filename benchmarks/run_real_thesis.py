@@ -55,6 +55,47 @@ ENGINEERING_SEED_SOURCES = [
     },
 ]
 
+SOCIAL_SEED_SOURCES = [
+    {
+        "title": "Education Finance Watch 2024",
+        "authors": "World Bank; UNESCO", "year": 2024, "venue": "World Bank",
+        "url": "https://documents1.worldbank.org/curated/en/099102824144527868/pdf/P50097819250a00ce1812018168df2deaa3.pdf",
+        "source_type": "report",
+    },
+    {
+        "title": "Education Finance Watch 2023",
+        "authors": "World Bank; UNESCO", "year": 2023, "venue": "World Bank",
+        "url": "https://documents1.worldbank.org/curated/en/099103123163755271/pdf/P17813506cd84f07a0b6be0c6ea576d59f8.pdf",
+        "source_type": "report",
+    },
+    {
+        "title": "Education Finance Watch 2021",
+        "authors": "World Bank; UNESCO", "year": 2021, "venue": "World Bank",
+        "url": "https://documents1.worldbank.org/curated/en/226481614027788096/pdf/Education-Finance-Watch-2021.pdf",
+        "source_type": "report",
+    },
+    {
+        "title": "The Impact of Government Expenditure on Education in the ESG Models at World Level",
+        "authors": "Angelo Leogrande; Alberto Costantiello", "year": 2023,
+        "venue": "Munich Personal RePEc Archive", "doi": "10.31235/osf.io/4wctx",
+        "url": "https://mpra.ub.uni-muenchen.de/117216/1/04-05-2023%20GEE%20and%20ESG.pdf",
+        "source_type": "paper",
+    },
+    {
+        "title": "Impact of Government Expenditure on Education and GDP",
+        "authors": "Shom Bhattarai", "year": 2024, "venue": "Journal of Gurubaba",
+        "doi": "10.3126/jg.v6i2.82443",
+        "url": "https://www.nepjol.info/index.php/jg/article/download/82443/63056",
+        "source_type": "paper",
+    },
+    {
+        "title": "Government spending on education as a share of GDP",
+        "authors": "Our World in Data; UNESCO Institute for Statistics", "year": 2026,
+        "venue": "Our World in Data", "url": "https://ourworldindata.org/grapher/education-spending",
+        "source_type": "dataset",
+    },
+]
+
 PUBLIC_TEXT_SOURCES = {
     "humanities": [
         {
@@ -442,7 +483,7 @@ def case_payload(case: str) -> tuple[list[dict], dict, list[dict]]:
             "name": "world_bank_education_2022.json", "mime_type": "application/json",
             "content": json.dumps(dataset, ensure_ascii=False), "source_url": WORLD_BANK_INDICATOR_URL,
             "license": dataset["license"], "provenance": WORLD_BANK_INDICATOR_URL,
-        }], social_contract(), []
+        }], social_contract(), SOCIAL_SEED_SOURCES
     if case == "systematic":
         protocol = {
             "schema_version": "systematic-review-protocol-v1",
