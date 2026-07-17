@@ -35,6 +35,20 @@ def _insert_task(run_id: str, task_id: str, task_type: str, status: str = "compl
     return task
 
 
+def test_chapter_parser_discards_nonauthoritative_top_level_claim_shape():
+    raw = json.dumps({
+        "summary": "chapter draft",
+        "claims": {"statement": "must not become a new graph claim"},
+        "chapter": {"sections": []},
+    })
+
+    parsed = TaskExecutor._parse_result(raw, reset_claims=True)
+
+    assert parsed["claims"] == []
+    with pytest.raises(ValueError, match="claims must be an array"):
+        TaskExecutor._parse_result(raw)
+
+
 def _run_with_thesis(tmp_path, chapters=None, citation_style="Chicago") -> tuple[str, dict]:
     now = datetime.now().isoformat()
     run_id = f"run_chapters_{uuid.uuid4().hex[:8]}"

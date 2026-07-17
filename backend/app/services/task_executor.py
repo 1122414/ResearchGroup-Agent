@@ -129,9 +129,14 @@ class TaskExecutor:
             "findings、risks、next_steps 各不超过 5 项，禁止复述全文。"
             if str(task_title).startswith("[循环R")
             else (
-                "10. 结果分析的 summary 不超过 300 字，findings、risks、next_steps 各不超过 5 项；"
-                "按方法工作包给出必需对象，不要复述上游 JSON。"
-                if task_type == "result_analysis" else ""
+                "10. 论文章节不得创建新的顶层 claim；顶层 claims 必须返回空数组 []，"
+                "事实依据只通过 chapter 段落的 support_ids 绑定既有冻结支持。"
+                if task_type == "thesis_chapter"
+                else (
+                    "10. 结果分析的 summary 不超过 300 字，findings、risks、next_steps 各不超过 5 项；"
+                    "按方法工作包给出必需对象，不要复述上游 JSON。"
+                    if task_type == "result_analysis" else ""
+                )
             )
         )
         user_prompt = f"""请以 {agent_type} 研究生 Agent 的身份完成下面任务，并返回合法 JSON。
@@ -644,7 +649,9 @@ class TaskExecutor:
                 ),
             )
             try:
-                return self._parse_result(raw)
+                return self._parse_result(
+                    raw, reset_claims=task.get("task_type") == "thesis_chapter",
+                )
             except ValueError as exc:
                 last_error = str(exc)
                 if attempt + 1 >= attempts:
@@ -677,7 +684,8 @@ class TaskExecutor:
             selected.append({**best, "excerpt": str(best.get("excerpt") or "")[:1800]})
         return selected
 
-    def _parse_result(self, raw: str) -> dict:
+    @staticmethod
+    def _parse_result(raw: str, reset_claims: bool = False) -> dict:
         text = raw.strip()
         if text.startswith("```json"):
             text = text[7:]
@@ -693,7 +701,9 @@ class TaskExecutor:
             raise ValueError("response root must be an object")
         if not str(parsed.get("summary") or "").strip():
             raise ValueError("summary is required")
-        if not isinstance(parsed.get("claims"), list):
+        if reset_claims:
+            parsed["claims"] = []
+        elif not isinstance(parsed.get("claims"), list):
             raise ValueError("claims must be an array")
         return parsed
 
