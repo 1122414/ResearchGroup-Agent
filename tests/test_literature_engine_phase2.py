@@ -109,6 +109,66 @@ def test_fulltext_fetch_rejects_office_archive_mislabeled_as_html(monkeypatch):
     )
 
 
+def test_fulltext_fetch_reads_complete_document_with_bounded_limit(monkeypatch):
+    observed = {}
+
+    class Response:
+        headers = {"Content-Type": "application/pdf", "Content-Length": str(6 * 1024 * 1024)}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read(limit):
+            observed["limit"] = limit
+            return b"%PDF-complete"
+
+    monkeypatch.setattr(settings, "fulltext_max_download_mb", 8)
+    monkeypatch.setattr(
+        "backend.app.services.fulltext_ingest_service.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+    monkeypatch.setattr(
+        fulltext_ingest_service,
+        "_extract_pdf",
+        lambda raw: ("complete verified article text " * 12) if raw == b"%PDF-complete" else "",
+    )
+
+    text, parser = fulltext_ingest_service._fetch_text("https://example.test/large.pdf")
+
+    assert parser == "pdf"
+    assert text.startswith("complete verified article")
+    assert observed["limit"] == 8 * 1024 * 1024 + 1
+
+
+def test_fulltext_fetch_rejects_declared_oversize_document_before_read(monkeypatch):
+    class Response:
+        headers = {"Content-Type": "application/pdf", "Content-Length": str(2 * 1024 * 1024)}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read(_limit):
+            raise AssertionError("oversize response body must not be read")
+
+    monkeypatch.setattr(settings, "fulltext_max_download_mb", 1)
+    monkeypatch.setattr(
+        "backend.app.services.fulltext_ingest_service.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    assert fulltext_ingest_service._fetch_text("https://example.test/oversize.pdf") == (
+        "", "download_too_large",
+    )
+
+
 def test_source_ids_and_fulltext_ingestion_are_stable_within_run(monkeypatch):
     run_id = f"run_fulltext_stable_{uuid.uuid4().hex[:8]}"
     raw = {"id": "arxiv:1234.56789", "title": "Stable Paper", "url": "https://arxiv.org/abs/1234.56789"}

@@ -85,7 +85,16 @@ class FulltextIngestService:
             request = urllib.request.Request(url, headers={"User-Agent": "ResearchGroup-Agent/1.0"})
             with urllib.request.urlopen(request, timeout=settings.fulltext_fetch_timeout) as response:
                 content_type = response.headers.get("Content-Type", "")
-                raw = response.read(4 * 1024 * 1024)
+                max_bytes = max(int(settings.fulltext_max_download_mb), 1) * 1024 * 1024
+                try:
+                    content_length = int(response.headers.get("Content-Length", 0) or 0)
+                except (TypeError, ValueError):
+                    content_length = 0
+                if content_length > max_bytes:
+                    return "", "download_too_large"
+                raw = response.read(max_bytes + 1)
+                if len(raw) > max_bytes:
+                    return "", "download_too_large"
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
             logger.debug("[FulltextIngest] fetch failed | url=%s | error=%s", url, exc)
             return "", "fetch_failed"

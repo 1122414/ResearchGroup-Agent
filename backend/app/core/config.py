@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     # Full-text ingestion: read real papers, not just bibliographic metadata.
     fulltext_ingest_enabled: bool = False
     fulltext_max_sources: int = 5
+    fulltext_max_download_mb: int = 25
     fulltext_max_chars: int = 12000
     fulltext_fetch_timeout: int = 30
 
