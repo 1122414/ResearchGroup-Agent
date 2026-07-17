@@ -73,6 +73,18 @@ class TaskGraphService:
 
     def ready_tasks(self, tasks: list[dict]) -> list[dict]:
         status_map = {task["id"]: task.get("status") for task in tasks}
+        latest_thesis_revisions: dict[str, dict] = {}
+        for task in tasks:
+            root_id = task.get("revision_of_task_id")
+            if not root_id or task.get("task_type") != "thesis_chapter":
+                continue
+            current = latest_thesis_revisions.get(root_id)
+            if not current or (
+                str(task.get("created_at") or ""), task["id"]
+            ) > (
+                str(current.get("created_at") or ""), current["id"]
+            ):
+                latest_thesis_revisions[root_id] = task
         pending_revisions = {
             task["revision_of_task_id"]
             for task in tasks
@@ -90,7 +102,17 @@ class TaskGraphService:
             if task.get("status") not in {"pending", "assigned", "blocked"}:
                 continue
             root_id = task.get("revision_of_task_id")
-            if root_id and status_map.get(root_id) in {"completed", "failed", "archived"}:
+            root_status = status_map.get(root_id)
+            recoverable_latest_thesis = (
+                root_status == "failed"
+                and task.get("task_type") == "thesis_chapter"
+                and latest_thesis_revisions.get(root_id, {}).get("id") == task["id"]
+            )
+            if (
+                root_id
+                and root_status in {"completed", "failed", "archived"}
+                and not recoverable_latest_thesis
+            ):
                 TaskRepository.update_status(
                     task["id"],
                     "archived",

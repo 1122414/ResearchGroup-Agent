@@ -1102,11 +1102,23 @@ class RunExecutionService:
                 for paragraph in section.get("paragraphs") or []
                 if isinstance(paragraph, dict)
             }
+            prior_migration = self._has_task_event(
+                task, "review.actionable_issue_migration",
+            )
+            latest_migration = self._has_task_event(
+                task, "review.actionable_issue_latest_migration",
+            )
+            branch_guard_migration = self._has_task_event(
+                task, "review.latest_branch_guard_migration",
+            )
             latest_recovery = (
                 task.get("status") == "archived"
                 and not review
-                and self._has_task_event(task, "review.actionable_issue_migration")
-                and not self._has_task_event(task, "review.actionable_issue_latest_migration")
+                and prior_migration
+                and (
+                    not latest_migration
+                    or (latest_migration and not branch_guard_migration)
+                )
             )
             ordinary_migration = (
                 task.get("task_type") == "thesis_chapter"
@@ -1134,13 +1146,21 @@ class RunExecutionService:
             run_event_service.emit(
                 task["run_id"],
                 (
-                    "review.actionable_issue_latest_migration"
-                    if latest_recovery else "review.actionable_issue_migration"
+                    "review.latest_branch_guard_migration"
+                    if latest_recovery and latest_migration
+                    else (
+                        "review.actionable_issue_latest_migration"
+                        if latest_recovery else "review.actionable_issue_migration"
+                    )
                 ),
                 "review",
                 (
-                    "恢复被旧迁移误归档的最新章节重审"
-                    if latest_recovery else "不可执行的删除意见按新协议重审"
+                    "按最新分支任务图规则恢复章节重审"
+                    if latest_recovery and latest_migration
+                    else (
+                        "恢复被旧迁移误归档的最新章节重审"
+                        if latest_recovery else "不可执行的删除意见按新协议重审"
+                    )
                 ),
                 "复用现有章节；只重跑审稿，不修改正文、不增加章节 attempt。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),

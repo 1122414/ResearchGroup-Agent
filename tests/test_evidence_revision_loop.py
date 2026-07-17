@@ -8,9 +8,11 @@ from backend.app.services.research_integrity_service import research_integrity_s
 from backend.app.services.review_service import review_service
 from backend.app.services.run_event_service import run_event_service
 from backend.app.services.run_execution_service import run_execution_service
+from backend.app.services.task_graph_service import task_graph_service
 from backend.app.services.task_recovery_service import task_recovery_service
 from backend.app.storage.repositories import (
-    EvidenceRepository, RunEventRepository, RunRepository, TaskRepository,
+    EvidenceRepository, RunEventRepository, RunRepository,
+    TaskDependencyRepository, TaskRepository,
 )
 
 
@@ -445,6 +447,45 @@ def test_unactionable_delete_migration_recovers_latest_archived_before_review(mo
     assert events == ["review.actionable_issue_latest_migration"]
 
 
+def test_unactionable_delete_migration_recovers_after_old_task_graph_archive(monkeypatch):
+    task = {
+        "id": "revision_latest", "run_id": "run_family", "title": "Literature Review",
+        "task_type": "thesis_chapter", "status": "archived", "attempt_count": 6,
+        "owner_agent": "writer", "revision_of_task_id": "chapter_root",
+        "created_at": "2026-07-17T11:00:00",
+        "outputs": [{"chapter": {"sections": [{"paragraphs": [{
+            "id": "p1", "text": "A bounded and supported paragraph.",
+        }]}]}}],
+        "review_result": None,
+    }
+    updates = []
+    events = []
+
+    def event_count(_run_id, _task_id, event_type):
+        return int(event_type in {
+            "review.actionable_issue_migration",
+            "review.actionable_issue_latest_migration",
+        })
+
+    monkeypatch.setattr(RunEventRepository, "count_task_events", event_count)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status)),
+    )
+    monkeypatch.setattr(
+        run_execution_service, "_revive_dependency_descendants",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        run_event_service, "emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_unactionable_audit_migration([task]) is True
+    assert updates == [("revision_latest", "running")]
+    assert events == ["review.latest_branch_guard_migration"]
+
+
 def test_writing_flow_keeps_only_latest_thesis_revision_executable(monkeypatch):
     tasks = [
         {
@@ -477,6 +518,38 @@ def test_writing_flow_keeps_only_latest_thesis_revision_executable(monkeypatch):
 
     assert {task["id"] for task in active} == {"revision_latest", "report"}
     assert changed is True
+    assert updates == [("revision_old", "archived")]
+
+
+def test_task_graph_allows_only_latest_thesis_revision_under_failed_root(monkeypatch):
+    tasks = [
+        {
+            "id": "chapter_root", "task_type": "thesis_chapter",
+            "status": "failed", "created_at": "2026-07-17T09:00:00",
+        },
+        {
+            "id": "revision_old", "revision_of_task_id": "chapter_root",
+            "task_type": "thesis_chapter", "status": "pending",
+            "created_at": "2026-07-17T10:00:00",
+        },
+        {
+            "id": "revision_latest", "revision_of_task_id": "chapter_root",
+            "task_type": "thesis_chapter", "status": "pending",
+            "created_at": "2026-07-17T11:00:00",
+        },
+    ]
+    updates = []
+    monkeypatch.setattr(
+        TaskDependencyRepository, "get_for_task", lambda _task_id: [],
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status)),
+    )
+
+    ready = task_graph_service.ready_tasks(tasks)
+
+    assert [task["id"] for task in ready] == ["revision_latest"]
     assert updates == [("revision_old", "archived")]
 
 
