@@ -15,7 +15,7 @@ from backend.app.storage import init_db
 from backend.app.storage.repositories import (
     EvidenceRepository, ExperimentProtocolRepository, ExperimentResultRepository,
     ResearchBriefRepository, ResearchClaimRepository,
-    RunRepository, TaskDependencyRepository, TaskRepository,
+    RunEventRepository, RunRepository, TaskDependencyRepository, TaskRepository,
 )
 
 
@@ -272,6 +272,36 @@ async def test_chapter_expansion_uses_distributed_length_target(monkeypatch):
 
     assert len(calls) == 1
     assert "硬性最低 1900 词" in calls[0]["prompt"]
+
+
+def test_length_target_survives_later_review_revision(monkeypatch):
+    root = {
+        "id": "root", "run_id": "run", "task_type": "thesis_chapter",
+        "revision_of_task_id": None,
+    }
+    adjusted = {
+        "id": "adjusted", "run_id": "run", "task_type": "thesis_chapter",
+        "revision_of_task_id": "root",
+    }
+    latest = {
+        "id": "latest", "run_id": "run", "task_type": "thesis_chapter",
+        "revision_of_task_id": "root", "description": "仅包含后续审稿意见",
+    }
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [root, adjusted, latest])
+    monkeypatch.setattr(
+        RunEventRepository,
+        "get_by_run",
+        lambda _run_id, limit=100, after_id=None, phase=None, task_id=None: (
+            [{
+                "event_type": "thesis.length_adjustment",
+                "created_at": "2026-07-17T16:00:00",
+                "payload": {"direction": "expand", "target": 2435},
+            }]
+            if task_id == "adjusted" else []
+        ),
+    )
+
+    assert thesis_chapter_service.requested_word_minimum(latest) == 2405
 
 
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):

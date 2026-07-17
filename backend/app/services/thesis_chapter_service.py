@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 
 from ..storage.repositories import (
     EvidenceRepository, ExperimentProtocolRepository, ExperimentResultRepository, ResearchBriefRepository, ResearchClaimRepository,
-    ResearchMilestoneRepository, TaskDependencyRepository, TaskRepository,
+    ResearchMilestoneRepository, RunEventRepository, TaskDependencyRepository, TaskRepository,
 )
 from .thesis_quality_service import thesis_quality_service
 from .citation_style_service import citation_style_service
@@ -732,7 +732,28 @@ class ThesisChapterService:
             r"正文控制在\s*(\d+)\s*[–—-]\s*(\d+)\s*词",
             str(task.get("description") or ""),
         )
-        return int(match.group(1)) if match else 0
+        if match:
+            return int(match.group(1))
+        run_id = task.get("run_id")
+        if not run_id:
+            return 0
+        root_id = task.get("revision_of_task_id") or task.get("id")
+        family_ids = {
+            item["id"]
+            for item in TaskRepository.get_all(run_id=run_id)
+            if item.get("id") == root_id or item.get("revision_of_task_id") == root_id
+        }
+        events = [
+            event
+            for family_id in family_ids
+            for event in RunEventRepository.get_by_run(run_id, limit=1000, task_id=family_id)
+            if event.get("event_type") == "thesis.length_adjustment"
+        ]
+        latest = max(events, key=lambda item: str(item.get("created_at") or ""), default=None)
+        payload = (latest or {}).get("payload") or {}
+        if payload.get("direction") != "expand":
+            return 0
+        return max(int(payload.get("target") or 0) - 30, 0)
 
     @staticmethod
     def word_count(task: dict, latest: dict) -> int:
