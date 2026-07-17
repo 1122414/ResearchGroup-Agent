@@ -638,24 +638,31 @@ class RunExecutionService:
             writing_tasks = [task for task in tasks if thesis_chapter_service.is_writing_task(task)]
             if not writing_tasks:
                 return
-            self._retry_first_paragraph_audit(writing_tasks)
-            self._retry_structural_floor_migration(writing_tasks)
-            self._retry_epistemic_audit_migration(writing_tasks)
-            self._retry_global_scope_migration(writing_tasks)
-            self._retry_advisor_artifact_conflict_migration(writing_tasks)
-            self._retry_unactionable_audit_migration(writing_tasks)
-            self._retry_advisor_paragraph_restoration(writing_tasks)
-            self._retry_advisor_exact_cleanup(writing_tasks)
-            self._retry_surgical_chapter_repair(writing_tasks)
-            self._retry_transient_writing_failures(writing_tasks)
+            self._archive_nonlatest_writing_branches(writing_tasks)
             writing_tasks = [
                 task for task in TaskRepository.get_all(run_id=run_id)
                 if thesis_chapter_service.is_writing_task(task)
             ]
+            active_writing_tasks = self._latest_writing_family_members(writing_tasks)
+            self._retry_first_paragraph_audit(active_writing_tasks)
+            self._retry_structural_floor_migration(active_writing_tasks)
+            self._retry_epistemic_audit_migration(active_writing_tasks)
+            self._retry_global_scope_migration(active_writing_tasks)
+            self._retry_advisor_artifact_conflict_migration(active_writing_tasks)
+            self._retry_unactionable_audit_migration(active_writing_tasks)
+            self._retry_advisor_paragraph_restoration(active_writing_tasks)
+            self._retry_advisor_exact_cleanup(active_writing_tasks)
+            self._retry_surgical_chapter_repair(active_writing_tasks)
+            self._retry_transient_writing_failures(active_writing_tasks)
+            writing_tasks = [
+                task for task in TaskRepository.get_all(run_id=run_id)
+                if thesis_chapter_service.is_writing_task(task)
+            ]
+            active_writing_tasks = self._latest_writing_family_members(writing_tasks)
             before = self._execution_progress(writing_tasks)
             RunRepository.update_status(run_id, RunStatus.executing.value, current_step="论文章节与总稿写作中")
-            await self._execute_ready_tasks(run_id, writing_tasks)
-            await self._review_task_batch(run_id, writing_tasks)
+            await self._execute_ready_tasks(run_id, active_writing_tasks)
+            await self._review_task_batch(run_id, active_writing_tasks)
             self._archive_superseded_revisions(run_id)
             if self._has_pending_approval(run_id):
                 return
@@ -677,6 +684,47 @@ class RunExecutionService:
             (task["id"], task.get("status"), int(task.get("attempt_count") or 0))
             for task in tasks
         ]
+
+    @staticmethod
+    def _latest_writing_family_members(tasks: list[dict]) -> list[dict]:
+        """Keep one executable thesis branch per root while retaining other writing tasks."""
+        latest_by_root: dict[str, dict] = {}
+        passthrough = []
+        for task in tasks:
+            if task.get("task_type") != "thesis_chapter":
+                passthrough.append(task)
+                continue
+            root_id = task.get("revision_of_task_id") or task["id"]
+            current = latest_by_root.get(root_id)
+            if not current or (
+                str(task.get("created_at") or ""), task["id"]
+            ) > (
+                str(current.get("created_at") or ""), current["id"]
+            ):
+                latest_by_root[root_id] = task
+        return [*passthrough, *latest_by_root.values()]
+
+    def _archive_nonlatest_writing_branches(self, tasks: list[dict]) -> bool:
+        latest_ids = {
+            task["id"] for task in self._latest_writing_family_members(tasks)
+            if task.get("task_type") == "thesis_chapter"
+        }
+        changed = False
+        for task in tasks:
+            if (
+                task.get("task_type") == "thesis_chapter"
+                and task["id"] not in latest_ids
+                and task.get("status") in {
+                    "pending", "assigned", "blocked", "running",
+                    "waiting_subagent", "waiting_review", "need_revision",
+                }
+            ):
+                TaskRepository.update_status(
+                    task["id"], "archived",
+                    blocked_reason="已被同一返工家族的更新版本取代。",
+                )
+                changed = True
+        return changed
 
     def _retry_transient_writing_failures(self, tasks: list[dict]) -> bool:
         changed = False

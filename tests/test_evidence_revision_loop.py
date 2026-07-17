@@ -445,6 +445,41 @@ def test_unactionable_delete_migration_recovers_latest_archived_before_review(mo
     assert events == ["review.actionable_issue_latest_migration"]
 
 
+def test_writing_flow_keeps_only_latest_thesis_revision_executable(monkeypatch):
+    tasks = [
+        {
+            "id": "chapter_root", "task_type": "thesis_chapter",
+            "status": "failed", "created_at": "2026-07-17T09:00:00",
+        },
+        {
+            "id": "revision_old", "revision_of_task_id": "chapter_root",
+            "task_type": "thesis_chapter", "status": "waiting_review",
+            "created_at": "2026-07-17T10:00:00",
+        },
+        {
+            "id": "revision_latest", "revision_of_task_id": "chapter_root",
+            "task_type": "thesis_chapter", "status": "running",
+            "created_at": "2026-07-17T11:00:00",
+        },
+        {
+            "id": "report", "task_type": "report_writing",
+            "status": "failed", "created_at": "2026-07-17T09:00:00",
+        },
+    ]
+    updates = []
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status)),
+    )
+
+    active = run_execution_service._latest_writing_family_members(tasks)
+    changed = run_execution_service._archive_nonlatest_writing_branches(tasks)
+
+    assert {task["id"] for task in active} == {"revision_latest", "report"}
+    assert changed is True
+    assert updates == [("revision_old", "archived")]
+
+
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):
     monkeypatch.setattr(settings, "literature_require_grounded_sources", True)
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)
