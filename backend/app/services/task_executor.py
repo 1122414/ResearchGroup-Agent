@@ -309,7 +309,10 @@ class TaskExecutor:
 
     async def _expand_short_chapter(self, llm, prompt: str, task: dict, owner_id: str, result: dict) -> dict:
         budget = int(thesis_chapter_service.spec_from_task(task).get("word_budget") or 0)
-        minimum = thesis_chapter_service.minimum_word_count(task)
+        minimum = max(
+            thesis_chapter_service.minimum_word_count(task),
+            thesis_chapter_service.requested_word_minimum(task),
+        )
         best = result
         best_issues = thesis_chapter_service.validate_output(task, best)
         best_count = thesis_chapter_service.word_count(task, best)

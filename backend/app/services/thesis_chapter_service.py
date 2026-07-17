@@ -726,6 +726,15 @@ class ThesisChapterService:
         return max(300, math.ceil(budget * 0.3)) if budget else 300
 
     @staticmethod
+    def requested_word_minimum(task: dict) -> int:
+        """Return a bounded length-adjustment floor without changing chapter validity."""
+        match = re.search(
+            r"正文控制在\s*(\d+)\s*[–—-]\s*(\d+)\s*词",
+            str(task.get("description") or ""),
+        )
+        return int(match.group(1)) if match else 0
+
+    @staticmethod
     def word_count(task: dict, latest: dict) -> int:
         chapter = latest.get("chapter") if isinstance(latest, dict) else None
         if not isinstance(chapter, dict):

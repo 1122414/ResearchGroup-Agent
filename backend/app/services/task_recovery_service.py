@@ -232,6 +232,7 @@ class TaskRecoveryService:
     @staticmethod
     def _revision_description(root_task: dict, latest_task: dict, feedback: str | dict | None) -> str:
         original = str(root_task.get("description") or "").strip()
+        revision_plan = []
         if isinstance(feedback, dict):
             revision_plan = feedback.get("revision_plan") or []
             feedback_text = str(feedback.get("feedback") or "").strip()
@@ -264,10 +265,21 @@ class TaskRecoveryService:
             "协作者意见仅用于检查风险，不能替代父任务交付物。"
         )
         if is_thesis_chapter:
+            length_adjustment = any(
+                str(item.get("layer") or "") == "institutional_total_length"
+                for item in revision_plan
+            )
             instruction += (
-                "论文章节必须做最小定点修改：仅改审稿 target 指向的段落，未被指出的段落保持原文；"
-                "required_change 要求删除时直接删除对应短语，不得换成新的事实性形容词或推测；"
-                "新增或保留事实只能在 support_ids 的 statement/工件字段直接蕴含时进行。"
+                (
+                    "本轮是院校总字数拟合，可在全部既有段落内扩展由原 support_ids 直接蕴含的"
+                    "分析、方法说明与边界讨论；保留段落 ID，不得新增事实、来源、数值或重复凑字。"
+                )
+                if length_adjustment else
+                (
+                    "论文章节必须做最小定点修改：仅改审稿 target 指向的段落，未被指出的段落保持原文；"
+                    "required_change 要求删除时直接删除对应短语，不得换成新的事实性形容词或推测；"
+                    "新增或保留事实只能在 support_ids 的 statement/工件字段直接蕴含时进行。"
+                )
             )
         if not feedback_text:
             return original or "根据导师反馈完成返工。"

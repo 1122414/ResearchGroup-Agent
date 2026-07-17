@@ -241,6 +241,39 @@ async def test_chapter_expansion_rejects_shorter_draft_then_stops_after_second_r
     assert result["chapter"]["marker"] == "longer"
 
 
+@pytest.mark.asyncio
+async def test_chapter_expansion_uses_distributed_length_target(monkeypatch):
+    calls = []
+
+    class FakeLLM:
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            return json.dumps({
+                "summary": "expanded", "claims": [],
+                "chapter": {"marker": "expanded", "sections": []},
+            })
+
+    task = {
+        "id": "chapter", "task_type": "thesis_chapter",
+        "description": (
+            '【thesis_chapter_spec】{"chapter_name":"Results","word_budget":2000}\n'
+            "将正文控制在 1900–1960 词。"
+        ),
+    }
+    counts = iter([800, 1920])
+    monkeypatch.setattr(thesis_chapter_service, "minimum_word_count", lambda _task: 600)
+    monkeypatch.setattr(thesis_chapter_service, "word_count", lambda *_args: next(counts))
+    monkeypatch.setattr(thesis_chapter_service, "validate_output", lambda *_args: [])
+
+    await TaskExecutor()._expand_short_chapter(
+        FakeLLM(), "unused", task, "writer",
+        {"summary": "short", "claims": [], "chapter": {"sections": []}},
+    )
+
+    assert len(calls) == 1
+    assert "硬性最低 1900 词" in calls[0]["prompt"]
+
+
 def test_chapter_gate_requires_supported_ids_and_substantive_budget(tmp_path):
     run_id, _ = _run_with_thesis(tmp_path, ["分析"])
     claim_id = f"claim_supported_{uuid.uuid4().hex[:8]}"

@@ -286,6 +286,31 @@ def test_thesis_revision_description_keeps_complete_previous_chapter():
     assert "需要定点修改的末尾段落" in description
 
 
+def test_length_adjustment_description_allows_grounded_whole_chapter_expansion():
+    root = {
+        "title": "论文结果章", "description": "扩展结果章",
+        "task_type": "thesis_chapter",
+    }
+    latest = {"outputs": [{
+        "summary": "上一版",
+        "chapter": {"name": "Results", "sections": []},
+    }]}
+    review = {
+        "feedback": "将正文控制在 1900–1960 词。",
+        "revision_plan": [{
+            "layer": "institutional_total_length",
+            "issue": "整篇论文低于院校最低字数",
+            "required_change": "有界扩展本章",
+        }],
+    }
+
+    description = task_recovery_service._revision_description(root, latest, review)
+
+    assert "可在全部既有段落内扩展" in description
+    assert "保留段落 ID" in description
+    assert "仅改审稿 target 指向的段落" not in description
+
+
 @pytest.mark.asyncio
 async def test_review_transport_retry_does_not_consume_chapter_attempt(monkeypatch):
     task = {
