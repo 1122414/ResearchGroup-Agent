@@ -368,6 +368,83 @@ def test_unactionable_delete_migration_reopens_only_review(monkeypatch):
     assert ("review.actionable_issue_migration", "run_unlocated") in events
 
 
+def test_unactionable_delete_migration_selects_latest_revision(monkeypatch):
+    def revision(task_id, created_at):
+        return {
+            "id": task_id, "run_id": "run_family", "title": "Literature Review",
+            "task_type": "thesis_chapter", "status": "failed", "attempt_count": 6,
+            "owner_agent": "writer", "revision_of_task_id": "chapter_root",
+            "created_at": created_at,
+            "outputs": [{"chapter": {"sections": [{"paragraphs": [{
+                "id": "p1", "text": "A bounded and supported paragraph.",
+            }]}]}}],
+            "review_result": {"quality_gates": {"layers": {"independent_review": {
+                "reviewer": "independent_reviewer_model_paragraph_audit_v2",
+                "issues": [{
+                    "target": "p1", "reason": "",
+                    "required_change": "Delete the unsupported phrase.",
+                }],
+            }}}},
+        }
+
+    older = revision("revision_old", "2026-07-17T10:00:00")
+    latest = revision("revision_latest", "2026-07-17T11:00:00")
+    updates = []
+
+    monkeypatch.setattr(
+        RunEventRepository, "count_task_events",
+        lambda _run_id, _task_id, _event_type: 0,
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status)),
+    )
+    monkeypatch.setattr(
+        run_execution_service, "_revive_dependency_descendants",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(run_event_service, "emit", lambda *_args, **_kwargs: None)
+
+    assert run_execution_service._retry_unactionable_audit_migration([older, latest]) is True
+    assert updates == [("revision_latest", "running")]
+
+
+def test_unactionable_delete_migration_recovers_latest_archived_before_review(monkeypatch):
+    task = {
+        "id": "revision_latest", "run_id": "run_family", "title": "Literature Review",
+        "task_type": "thesis_chapter", "status": "archived", "attempt_count": 6,
+        "owner_agent": "writer", "revision_of_task_id": "chapter_root",
+        "created_at": "2026-07-17T11:00:00",
+        "outputs": [{"chapter": {"sections": [{"paragraphs": [{
+            "id": "p1", "text": "A bounded and supported paragraph.",
+        }]}]}}],
+        "review_result": None,
+    }
+    updates = []
+    events = []
+
+    def event_count(_run_id, _task_id, event_type):
+        return int(event_type == "review.actionable_issue_migration")
+
+    monkeypatch.setattr(RunEventRepository, "count_task_events", event_count)
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status)),
+    )
+    monkeypatch.setattr(
+        run_execution_service, "_revive_dependency_descendants",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        run_event_service, "emit",
+        lambda _run_id, event_type, *_args, **_kwargs: events.append(event_type),
+    )
+
+    assert run_execution_service._retry_unactionable_audit_migration([task]) is True
+    assert updates == [("revision_latest", "running")]
+    assert events == ["review.actionable_issue_latest_migration"]
+
+
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):
     monkeypatch.setattr(settings, "literature_require_grounded_sources", True)
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)

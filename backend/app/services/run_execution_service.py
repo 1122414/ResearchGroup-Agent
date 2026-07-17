@@ -1025,7 +1025,22 @@ class RunExecutionService:
     def _retry_unactionable_audit_migration(self, tasks: list[dict]) -> bool:
         """Re-review one persisted delete verdict that did not identify any text."""
         changed = False
+        latest_by_root: dict[str, dict] = {}
+        for candidate in tasks:
+            if candidate.get("task_type") != "thesis_chapter":
+                continue
+            root_id = candidate.get("revision_of_task_id") or candidate["id"]
+            current = latest_by_root.get(root_id)
+            if not current or (
+                str(candidate.get("created_at") or ""), candidate["id"]
+            ) > (
+                str(current.get("created_at") or ""), current["id"]
+            ):
+                latest_by_root[root_id] = candidate
         for task in tasks:
+            root_id = task.get("revision_of_task_id") or task["id"]
+            if latest_by_root.get(root_id, {}).get("id") != task["id"]:
+                continue
             review = task.get("review_result") or {}
             layer = (
                 ((review.get("quality_gates") or {}).get("layers") or {})
@@ -1039,7 +1054,13 @@ class RunExecutionService:
                 for paragraph in section.get("paragraphs") or []
                 if isinstance(paragraph, dict)
             }
-            if not (
+            latest_recovery = (
+                task.get("status") == "archived"
+                and not review
+                and self._has_task_event(task, "review.actionable_issue_migration")
+                and not self._has_task_event(task, "review.actionable_issue_latest_migration")
+            )
+            ordinary_migration = (
                 task.get("task_type") == "thesis_chapter"
                 and task.get("status") == "failed"
                 and self._is_paragraph_audit_reviewer(layer.get("reviewer"))
@@ -1052,7 +1073,8 @@ class RunExecutionService:
                 )
                 and not self._has_task_event(task, "review.actionable_issue_migration")
                 and task.get("outputs")
-            ):
+            )
+            if not (ordinary_migration or latest_recovery):
                 continue
             TaskRepository.update_status(
                 task["id"], "running", blocked_reason=None,
@@ -1062,8 +1084,16 @@ class RunExecutionService:
                 task["run_id"], task.get("revision_of_task_id") or task["id"],
             )
             run_event_service.emit(
-                task["run_id"], "review.actionable_issue_migration", "review",
-                "不可执行的删除意见按新协议重审",
+                task["run_id"],
+                (
+                    "review.actionable_issue_latest_migration"
+                    if latest_recovery else "review.actionable_issue_migration"
+                ),
+                "review",
+                (
+                    "恢复被旧迁移误归档的最新章节重审"
+                    if latest_recovery else "不可执行的删除意见按新协议重审"
+                ),
                 "复用现有章节；只重跑审稿，不修改正文、不增加章节 attempt。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
             )
