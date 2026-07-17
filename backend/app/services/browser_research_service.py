@@ -180,13 +180,17 @@ class BrowserResearchService:
         metadata = source.get("metadata") or {}
         provider = metadata.get("provider")
         has_traceable_id = bool(source.get("doi") or source.get("url"))
+        verified_seed_fulltext = bool(
+            metadata.get("origin") == "user_seed"
+            and (metadata.get("fulltext_identity_verification") or {}).get("verified")
+        )
         direct_arxiv = bool(re.match(
             r"https?://(?:www\.)?arxiv\.org/(?:abs|html|pdf)/\d{4}\.\d{4,5}(?:v\d+)?(?:\.pdf)?(?:[?#].*)?$",
             str(source.get("url") or "").strip(),
             re.IGNORECASE,
         ))
         return bool(
-            direct_arxiv or (
+            verified_seed_fulltext or direct_arxiv or (
                 source.get("source_type") == "paper"
                 and provider in {"crossref", "openalex", "arxiv", "semantic_scholar"}
                 and has_traceable_id

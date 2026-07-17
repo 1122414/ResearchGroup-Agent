@@ -232,6 +232,29 @@ async def test_hashed_attachment_snapshot_skips_redundant_browser_identity_check
 
 
 @pytest.mark.asyncio
+async def test_fulltext_verified_seed_skips_redundant_browser_identity_check(monkeypatch):
+    async def unexpected_agent_call(*_args, **_kwargs):
+        raise AssertionError("a hashed and title-matched seed must not launch browser verification")
+
+    monkeypatch.setattr(settings, "browser_research_enabled", True)
+    monkeypatch.setattr(settings, "browser_research_provider_mode", "browser_use")
+    monkeypatch.setattr(settings, "browser_verification_enabled", True)
+    monkeypatch.setattr(BrowserResearchService, "_run_agent", unexpected_agent_call)
+    sources = [{
+        "id": "seed", "title": "Education Finance Watch 2024",
+        "url": "https://example.test/report.pdf", "source_type": "report",
+        "metadata": {
+            "origin": "user_seed",
+            "fulltext_identity_verification": {"verified": True, "content_hash": "a" * 64},
+        },
+    }]
+
+    verified = await BrowserResearchService().verify_candidates("education spending", sources)
+
+    assert [source["id"] for source in verified] == ["seed"]
+
+
+@pytest.mark.asyncio
 async def test_direct_arxiv_result_skips_browser_even_when_discovered_by_web_search(monkeypatch):
     async def unexpected_agent_call(*_args, **_kwargs):
         raise AssertionError("a direct arXiv identity must not launch browser verification")

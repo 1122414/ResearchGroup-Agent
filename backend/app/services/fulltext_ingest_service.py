@@ -11,6 +11,7 @@ from io import BytesIO
 from ..core.config import settings
 from ..core.logger import logger
 from ..storage.repositories import EvidenceRepository, FullTextDocumentRepository
+from .source_verification_service import source_verification_service
 
 
 class FulltextIngestService:
@@ -45,6 +46,12 @@ class FulltextIngestService:
                 continue
             text = text[: settings.fulltext_max_chars]
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            metadata = dict(source.get("metadata") or {})
+            if metadata.get("origin") == "user_seed":
+                metadata["fulltext_identity_verification"] = (
+                    source_verification_service.fulltext_identity_verdict(source, text, content_hash)
+                )
+                source["metadata"] = metadata
             document_id = f"document_{uuid.uuid4().hex[:10]}"
             now = datetime.now().isoformat()
             FullTextDocumentRepository.insert(

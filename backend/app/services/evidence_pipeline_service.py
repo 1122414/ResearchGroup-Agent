@@ -62,7 +62,7 @@ class EvidencePipelineService:
                 "result_count": len(seed_sources), "error": None, "query": query,
             })
         normalized = self._deduplicate_sources([self._normalize_source(source, task) for source in raw_sources])
-        normalized = self._rank_by_relevance(normalized, query)
+        normalized = self._rank_by_relevance(normalized, query, preserve_user_sources=True)
         normalized = self._prioritize_seed_sources(normalized)
         mode = "remote_provider" if normalized else "curated_fallback"
         if not normalized and settings.literature_curated_fallback_enabled:
@@ -72,12 +72,25 @@ class EvidencePipelineService:
         if not normalized:
             mode = "no_grounded_source"
         normalized = normalized[: max(settings.evidence_search_max_results, settings.literature_source_limit)]
+        seed_fulltext_ingested = await asyncio.to_thread(
+            fulltext_ingest_service.ingest_sources,
+            task.get("run_id"),
+            [
+                source for source in normalized
+                if (source.get("metadata") or {}).get("origin") == "user_seed"
+            ],
+        )
         normalized = await self._verify_sources(task, query, normalized)
         if not normalized:
             mode = "no_citation_eligible_source"
         persisted = self.persist_sources(task, normalized)
-        fulltext_ingested = await asyncio.to_thread(
-            fulltext_ingest_service.ingest_sources, task.get("run_id"), normalized,
+        fulltext_ingested = seed_fulltext_ingested + await asyncio.to_thread(
+            fulltext_ingest_service.ingest_sources,
+            task.get("run_id"),
+            [
+                source for source in normalized
+                if (source.get("metadata") or {}).get("origin") != "user_seed"
+            ],
         )
         grounded_sources, grounded_excerpts = self._cumulative_grounded_evidence(
             task.get("run_id"), normalized,
@@ -191,6 +204,23 @@ class EvidencePipelineService:
         self, sources: list[dict], excerpts: list[dict], query: str,
     ) -> tuple[list[dict], list[dict]]:
         ranked = self._rank_by_relevance(sources, query)
+        query_tokens = self._relevance_tokens(query)
+        required = self._required_heading_overlap(query_tokens)
+        passages_by_source: dict[str, str] = {}
+        for excerpt in excerpts:
+            source_id = excerpt.get("source_id")
+            passages_by_source[source_id] = (
+                passages_by_source.get(source_id, "") + " " + str(excerpt.get("excerpt") or "")
+            )[:12000]
+        ordered = [*ranked, *(source for source in sources if source not in ranked)]
+        grounded_matches = []
+        for source in ordered:
+            title_overlap = self._source_relevance(source, query_tokens)[0]
+            passage_tokens = self._relevance_tokens(passages_by_source.get(source.get("id"), ""))
+            if title_overlap >= required or len(query_tokens & passage_tokens) >= required:
+                grounded_matches.append(source)
+        if grounded_matches:
+            ranked = grounded_matches
         selected = {source["id"] for source in ranked}
         return ranked, [item for item in excerpts if item.get("source_id") in selected]
 
@@ -431,7 +461,19 @@ class EvidencePipelineService:
                 return str(parent.get("review_feedback") or "").strip()
         return ""
 
-    def _rank_by_relevance(self, sources: list[dict], query: str) -> list[dict]:
+    def _rank_by_relevance(
+        self,
+        sources: list[dict],
+        query: str,
+        *,
+        preserve_user_sources: bool = False,
+    ) -> list[dict]:
+        frozen = [
+            source for source in sources
+            if preserve_user_sources
+            and (source.get("metadata") or {}).get("origin") in {"user_seed", "user_attachment"}
+        ]
+        candidates = [source for source in sources if source not in frozen]
         query_tokens = self._relevance_tokens(query)
         if not query_tokens:
             return sources
@@ -444,7 +486,7 @@ class EvidencePipelineService:
                 index,
                 source,
             )
-            for index, source in enumerate(sources)
+            for index, source in enumerate(candidates)
             if len(str(source.get("title") or "")) <= 500
         ]
         required_overlap = self._required_heading_overlap(query_tokens)
@@ -454,7 +496,7 @@ class EvidencePipelineService:
         core_matches = [item for item in scored if item[2] >= core_required]
         if core_required and len(core_matches) >= min(2, len(scored)):
             scored = core_matches
-        return [
+        ranked = [
             source
             for _, score, _, _, source in sorted(
                 scored,
@@ -467,6 +509,7 @@ class EvidencePipelineService:
                 ),
             )
         ]
+        return [*frozen, *ranked]
 
     def _needs_browser_supplement(self, sources: list[dict], query: str) -> bool:
         if not browser_research_service.enabled():

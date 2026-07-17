@@ -77,15 +77,8 @@ SOCIAL_SEED_SOURCES = [
     {
         "title": "The Impact of Government Expenditure on Education in the ESG Models at World Level",
         "authors": "Angelo Leogrande; Alberto Costantiello", "year": 2023,
-        "venue": "Munich Personal RePEc Archive", "doi": "10.31235/osf.io/4wctx",
+        "venue": "Munich Personal RePEc Archive",
         "url": "https://mpra.ub.uni-muenchen.de/117216/1/04-05-2023%20GEE%20and%20ESG.pdf",
-        "source_type": "paper",
-    },
-    {
-        "title": "Impact of Government Expenditure on Education and GDP",
-        "authors": "Shom Bhattarai", "year": 2024, "venue": "Journal of Gurubaba",
-        "doi": "10.3126/jg.v6i2.82443",
-        "url": "https://www.nepjol.info/index.php/jg/article/download/82443/63056",
         "source_type": "paper",
     },
     {
@@ -93,6 +86,13 @@ SOCIAL_SEED_SOURCES = [
         "authors": "Our World in Data; UNESCO Institute for Statistics", "year": 2026,
         "venue": "Our World in Data", "url": "https://ourworldindata.org/grapher/education-spending",
         "source_type": "dataset",
+    },
+    {
+        "title": "Impact of Government Expenditure on Education and GDP",
+        "authors": "Shom Bhattarai", "year": 2024, "venue": "Journal of Gurubaba",
+        "doi": "10.3126/jg.v6i2.82443",
+        "url": "https://www.nepjol.info/index.php/jg/article/download/82443/63056",
+        "source_type": "paper",
     },
 ]
 

@@ -6,6 +6,7 @@ from backend.app.core.config import settings
 from backend.app.services.claim_entailment_service import claim_entailment_service
 from backend.app.services.evidence_pipeline_service import evidence_pipeline_service
 from backend.app.services.fulltext_ingest_service import fulltext_ingest_service
+from backend.app.services.source_verification_service import source_verification_service
 from backend.app.storage import init_db
 from backend.app.storage.repositories import (
     EvidenceRepository,
@@ -178,3 +179,91 @@ def test_seed_sources_are_kept_ahead_of_result_truncation():
     result = evidence_pipeline_service._prioritize_seed_sources(ranked)
 
     assert [item["id"] for item in result] == ["seed_1", "seed_2", "search_1", "search_2"]
+
+
+def test_user_seed_is_fetched_before_title_relevance_can_exclude_it():
+    sources = [
+        {
+            "id": "seed_report", "title": "Education Finance Watch 2024",
+            "metadata": {"origin": "user_seed"},
+        },
+        {
+            "id": "search_noise", "title": "National health expenditure and GDP",
+            "metadata": {"provider": "crossref"},
+        },
+        {
+            "id": "search_match", "title": "Government education expenditure by income group",
+            "metadata": {"provider": "crossref"},
+        },
+    ]
+
+    ranked = evidence_pipeline_service._rank_by_relevance(
+        sources,
+        "government education expenditure GDP high income lower middle income",
+        preserve_user_sources=True,
+    )
+
+    assert [source["id"] for source in ranked] == ["seed_report", "search_match"]
+
+
+def test_fetched_seed_fulltext_verifies_identity_and_becomes_citation_eligible(monkeypatch):
+    run_id = f"run_seed_fulltext_{uuid.uuid4().hex[:8]}"
+    source = {
+        "id": "seed_report", "title": "Education Finance Watch 2024",
+        "url": "https://example.test/report.pdf", "source_type": "report",
+        "metadata": {"origin": "user_seed"},
+    }
+    text = (
+        "Education Finance Watch 2024. World Bank and UNESCO. "
+        "Government education expenditure as a percentage of GDP by income group. "
+    ) * 8
+    monkeypatch.setattr(settings, "fulltext_ingest_enabled", True)
+    monkeypatch.setattr(settings, "doi_verification_enabled", False)
+    monkeypatch.setattr(fulltext_ingest_service, "_fetch_text", lambda _url: (text, "pdf"))
+
+    assert fulltext_ingest_service.ingest_sources(run_id, [source]) == 1
+    verified = source_verification_service.verify_sources([source])[0]
+
+    proof = verified["metadata"]["fulltext_identity_verification"]
+    assert proof["verified"] is True
+    assert len(proof["content_hash"]) == 64
+    assert verified["metadata"]["verification_status"] == "user_seed_fulltext_identity_verified"
+    assert verified["metadata"]["citation_eligible"] is True
+
+
+def test_grounded_generic_seed_requires_topic_overlap_in_downloaded_passage():
+    sources = [
+        {
+            "id": "relevant_seed", "title": "Education Finance Watch 2024",
+            "metadata": {
+                "origin": "user_seed",
+                "fulltext_identity_verification": {"verified": True, "content_hash": "a" * 64},
+            },
+        },
+        {
+            "id": "irrelevant_seed", "title": "Annual Review 2024",
+            "metadata": {
+                "origin": "user_seed",
+                "fulltext_identity_verification": {"verified": True, "content_hash": "b" * 64},
+            },
+        },
+    ]
+    excerpts = [
+        {
+            "id": "p1", "source_id": "relevant_seed",
+            "excerpt": "Government education expenditure as a percentage of GDP by income group.",
+        },
+        {
+            "id": "p2", "source_id": "irrelevant_seed",
+            "excerpt": "Particle collision detector calibration and luminosity.",
+        },
+    ]
+
+    ranked, selected = evidence_pipeline_service._rank_grounded_bundle(
+        sources,
+        excerpts,
+        "government education expenditure GDP high income lower middle income",
+    )
+
+    assert [source["id"] for source in ranked] == ["relevant_seed"]
+    assert [excerpt["id"] for excerpt in selected] == ["p1"]

@@ -43,10 +43,19 @@ class SourceVerificationService:
             and source.get("url")
         ):
             return "user_attachment_integrity_verified", True
-        if doi_verdict and doi_verdict.get("status") in {"mismatch", "unresolved"}:
+        if doi_verdict and doi_verdict.get("status") == "mismatch":
             return f"doi_{doi_verdict['status']}", False
         if doi_verdict and doi_verdict.get("verified"):
             return "doi_verified", True
+        fulltext = metadata.get("fulltext_identity_verification") or {}
+        if (
+            metadata.get("origin") == "user_seed"
+            and fulltext.get("verified")
+            and fulltext.get("content_hash")
+        ):
+            return "user_seed_fulltext_identity_verified", True
+        if doi_verdict and doi_verdict.get("status") == "unresolved":
+            return "doi_unresolved", False
 
         browser = metadata.get("browser_verification") or {}
         if browser.get("accepted") and browser.get("fallback") != "search_result_metadata":
@@ -57,6 +66,20 @@ class SourceVerificationService:
         if provider in {"crossref", "openalex", "arxiv", "semantic_scholar"} and traceable:
             return "scholarly_metadata_verified", True
         return "unverified", False
+
+    def fulltext_identity_verdict(self, source: dict, text: str, content_hash: str) -> dict:
+        """Verify user-supplied bibliography against the fetched document itself."""
+        title_match = self._title_matches(source.get("title", ""), str(text or "")[:8000])
+        doi = self._normalize_doi(source.get("doi"))
+        compact_text = re.sub(r"\s+", "", str(text or "").casefold())
+        doi_match = not doi or doi.casefold() in compact_text
+        return {
+            "status": "verified" if title_match and doi_match else "mismatch",
+            "verified": bool(title_match and doi_match),
+            "title_match": title_match,
+            "doi_match": doi_match,
+            "content_hash": content_hash,
+        }
 
     @staticmethod
     def citation_eligible(source: dict) -> bool:
