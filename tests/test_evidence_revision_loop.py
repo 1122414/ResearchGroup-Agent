@@ -10,6 +10,7 @@ from backend.app.services.run_event_service import run_event_service
 from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_graph_service import task_graph_service
 from backend.app.services.task_recovery_service import task_recovery_service
+from backend.app.services.thesis_chapter_service import thesis_chapter_service
 from backend.app.storage.repositories import (
     EvidenceRepository, RunEventRepository, RunRepository,
     TaskDependencyRepository, TaskRepository,
@@ -562,6 +563,7 @@ def test_writing_recoveries_run_before_terminal_decision(monkeypatch):
         "_retry_global_scope_migration",
         "_retry_advisor_artifact_conflict_migration",
         "_retry_unactionable_audit_migration",
+        "_retry_advisor_chapter_contract_cleanup",
         "_retry_advisor_paragraph_restoration",
         "_retry_advisor_exact_cleanup",
         "_retry_surgical_chapter_repair",
@@ -578,6 +580,36 @@ def test_writing_recoveries_run_before_terminal_decision(monkeypatch):
 
     assert changed is True
     assert calls == list(method_names)
+
+
+def test_advisor_chapter_claims_conflict_is_overridden_after_prose_cleanup(monkeypatch):
+    task = {"id": "chapter", "task_type": "thesis_chapter"}
+    latest = {"claims": [], "chapter": {"sections": []}}
+    review = {
+        "approved": False,
+        "feedback": "The claims field is empty; claims must be included to show evidence binding.",
+    }
+    monkeypatch.setattr(
+        thesis_chapter_service,
+        "advisor_feedback_misreads_chapter_claims",
+        lambda *_args: True,
+    )
+
+    result = review_service._arbitrate_advisor(
+        task, latest, review, {"passed": True},
+    )
+
+    assert result["approved"] is True
+    assert result["advisor_chapter_claims_conflict_overridden"] is True
+
+
+def test_malformed_prose_cleanup_detects_deletion_fragments():
+    assert thesis_chapter_service._is_malformed_sentence(
+        "The present study by delivering a clear descriptive estimate."
+    )
+    assert thesis_chapter_service._is_malformed_sentence(
+        "This finding reflects the broader context that."
+    )
 
 
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):

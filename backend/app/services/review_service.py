@@ -156,6 +156,25 @@ class ReviewService:
                 ),
                 "advisor_artifact_conflict_overridden": True,
             }
+        feedback = str(review.get("feedback") or "")
+        if (
+            task.get("task_type") == "thesis_chapter"
+            and quality_gates.get("passed") is True
+            and review.get("approved") is False
+            and thesis_chapter_service.advisor_feedback_misreads_chapter_claims(
+                task, latest, feedback,
+            )
+            and not thesis_chapter_service.advisor_feedback_reports_malformed_prose(feedback)
+        ):
+            return {
+                "approved": True,
+                "feedback": (
+                    "导师要求填充章节顶层 claims，与冻结章节契约冲突；逐段 support_ids 已通过"
+                    " schema、证据和独立审稿，故按更强硬门仲裁为通过。"
+                    f" 原意见：{feedback[:500]}"
+                ),
+                "advisor_chapter_claims_conflict_overridden": True,
+            }
         return review
 
     @staticmethod

@@ -497,6 +497,36 @@ class ThesisChapterService:
             )
         )
 
+    def advisor_feedback_misreads_chapter_claims(
+        self, task: dict, latest: dict, feedback: str,
+    ) -> bool:
+        """Detect requests to populate the intentionally empty chapter-level claims field."""
+        lowered = feedback.casefold()
+        claims_complaint = (
+            "claim" in lowered
+            and any(marker in lowered for marker in (
+                "field is empty", "claims are empty", "include proper claim",
+                "claims must be included", "字段为空", "补充 claim", "加入 claim",
+            ))
+            and any(marker in lowered for marker in (
+                "support", "evidence", "bind", "绑定", "证据",
+            ))
+        )
+        if not claims_complaint or latest.get("claims") not in (None, []):
+            return False
+        return not any(
+            "support_missing" in issue or "unknown_support" in issue
+            for issue in self.validate_output(task, latest)
+        )
+
+    @staticmethod
+    def advisor_feedback_reports_malformed_prose(feedback: str) -> bool:
+        lowered = feedback.casefold()
+        return any(marker in lowered for marker in (
+            "grammar", "grammatical", "incomplete sentence", "fragment",
+            "语法", "残句", "句子不完整",
+        ))
+
     def _canonical_artifact_text(self, run_id: str) -> str:
         compact = []
         for item in self.artifact_support(run_id):
@@ -641,6 +671,10 @@ class ThesisChapterService:
         if any(marker in lowered for marker in ("'s due", "but its.", " is,", " are,")):
             return True
         if " addresses by " in lowered or re.match(r"^work by\b", lowered):
+            return True
+        if re.match(r"^the present study by\b", lowered):
+            return True
+        if re.search(r"\b(?:that|which)\.$", lowered):
             return True
         if re.search(r"\b(?:aims|seeks|intends)?\s*to\.$", lowered):
             return True

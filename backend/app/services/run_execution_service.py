@@ -731,6 +731,7 @@ class RunExecutionService:
             self._retry_global_scope_migration,
             self._retry_advisor_artifact_conflict_migration,
             self._retry_unactionable_audit_migration,
+            self._retry_advisor_chapter_contract_cleanup,
             self._retry_advisor_paragraph_restoration,
             self._retry_advisor_exact_cleanup,
             self._retry_surgical_chapter_repair,
@@ -1341,6 +1342,56 @@ class RunExecutionService:
                     "late_support_binding": late_support_binding,
                     "editorial": editorial,
                 },
+            )
+            changed = True
+        return changed
+
+    def _retry_advisor_chapter_contract_cleanup(self, tasks: list[dict]) -> bool:
+        """Remove deletion-created sentence fragments before arbitrating a false claims-field request."""
+        changed = False
+        for task in tasks:
+            review = task.get("review_result") or {}
+            latest = (task.get("outputs") or [{}])[-1]
+            feedback = str(review.get("feedback") or "")
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and (review.get("quality_gates") or {}).get("passed") is True
+                and thesis_chapter_service.advisor_feedback_misreads_chapter_claims(
+                    task, latest, feedback,
+                )
+                and thesis_chapter_service.advisor_feedback_reports_malformed_prose(feedback)
+                and not self._has_task_event(task, "revision.advisor_chapter_contract_cleanup")
+                and task.get("outputs")
+            ):
+                continue
+            cleanup = thesis_chapter_service.surgical_repair(
+                task, latest,
+                {"quality_gates": {"layers": {"independent_review": {"issues": []}}}},
+            )
+            if not cleanup["changes"]:
+                continue
+            result = cleanup["result"]
+            TaskRepository.update_status(
+                task["id"], "running", outputs=[result], blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            OutputRepository.insert({
+                "id": f"out_{task['id']}", "output_type": "task_result",
+                "title": f"任务产出：{task.get('title', task['id'])}",
+                "content": json.dumps(result, ensure_ascii=False, indent=2),
+                "run_id": task.get("run_id"), "task_id": task["id"],
+                "agent_id": task.get("owner_agent"), "created_at": datetime.now().isoformat(),
+            })
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "revision.advisor_chapter_contract_cleanup", "review",
+                "清理删除产生的残句并按章节证据契约重审",
+                f"确定性删除 {len(cleanup['changes'])} 个残句；不填充非权威顶层 claims。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+                payload={"changes": cleanup["changes"]},
             )
             changed = True
         return changed
