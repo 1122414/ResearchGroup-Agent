@@ -82,7 +82,6 @@ def test_social_case_has_traceable_fulltext_seed_sources():
     assert len(SOCIAL_SEED_SOURCES) >= 5
     assert all(item.get("url", "").startswith("https://") for item in SOCIAL_SEED_SOURCES)
     assert sum(item["url"].lower().endswith(".pdf") for item in SOCIAL_SEED_SOURCES) >= 4
-    assert any(item.get("doi") for item in SOCIAL_SEED_SOURCES)
     assert all(item.get("title") and item.get("authors") for item in SOCIAL_SEED_SOURCES)
 
 

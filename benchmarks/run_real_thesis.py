@@ -87,13 +87,6 @@ SOCIAL_SEED_SOURCES = [
         "venue": "Our World in Data", "url": "https://ourworldindata.org/grapher/education-spending",
         "source_type": "dataset",
     },
-    {
-        "title": "Impact of Government Expenditure on Education and GDP",
-        "authors": "Shom Bhattarai", "year": 2024, "venue": "Journal of Gurubaba",
-        "doi": "10.3126/jg.v6i2.82443",
-        "url": "https://www.nepjol.info/index.php/jg/article/download/82443/63056",
-        "source_type": "paper",
-    },
 ]
 
 PUBLIC_TEXT_SOURCES = {
