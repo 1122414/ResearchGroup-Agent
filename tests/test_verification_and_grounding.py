@@ -6,6 +6,9 @@ from backend.app.services.research_integrity_service import research_integrity_s
 from backend.app.services.review_service import review_service
 from backend.app.services.source_verification_service import source_verification_service
 from backend.app.services.task_executor import task_executor
+from backend.app.storage.repositories import (
+    EvidenceRepository, ResearchBriefRepository, ResearchClaimRepository,
+)
 
 
 def test_title_and_year_matching():
@@ -324,6 +327,48 @@ def test_advisor_payload_omits_raw_passages_but_keeps_traceability():
     assert payload["papers_read"] == [{
         "id": "source_1", "title": "Paper", "url": "https://example.test/paper",
     }]
+
+
+def test_incremental_literature_review_counts_cumulative_evidence(monkeypatch):
+    monkeypatch.setattr(
+        EvidenceRepository, "get_by_run",
+        lambda _run_id: {"sources": [
+            {"id": f"source_{index}", "metadata": {"citation_eligible": True}}
+            for index in range(1, 6)
+        ]},
+    )
+    monkeypatch.setattr(
+        ResearchClaimRepository, "get_by_run",
+        lambda _run_id: [
+            {
+                "statement": f"prior claim {index}", "status": "supported",
+                "evidence_ids": [f"source_{index}"],
+            }
+            for index in range(1, 5)
+        ],
+    )
+    monkeypatch.setattr(
+        ResearchBriefRepository, "get_by_run",
+        lambda _run_id: {"thesis_requirements": {
+            "minimum_supported_claims": 5, "minimum_references": 5,
+        }},
+    )
+
+    context = review_service._incremental_literature_context(
+        {
+            "run_id": "run", "task_type": "literature_survey",
+            "title": "[循环R2] 补足论文证据契约",
+        },
+        {"claims": [{
+            "statement": "novel claim", "entailment_verdict": "entailed",
+            "evidence_source_ids": ["source_5"],
+        }]},
+    )
+
+    assert context["novel_source_ids"] == ["source_5"]
+    assert context["cumulative_distinct_claim_count"] == 5
+    assert context["cumulative_distinct_source_count"] == 5
+    assert context["cumulative_meets_contract"] is True
 
 
 def test_result_analysis_rubric_accepts_verified_experiment_metrics(monkeypatch):

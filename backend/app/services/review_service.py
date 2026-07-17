@@ -8,7 +8,8 @@ from ..core.llm_provider import create_llm_provider
 from ..core.logger import logger
 from ..core.prompt_loader import prompt_loader
 from ..storage.repositories import (
-    OutputRepository, ResearchClaimRepository, ResearchHypothesisRepository,
+    EvidenceRepository, OutputRepository, ResearchBriefRepository,
+    ResearchClaimRepository, ResearchHypothesisRepository,
     ResearchMilestoneRepository, ResearchUncertaintyRepository,
     ReviewDecisionRepository, RunRepository, TaskRepository,
 )
@@ -31,11 +32,22 @@ class ReviewService:
             return self._review_quality_gate_failure(task, quality_gates)
         system_prompt = prompt_loader.load("advisor_agent")
         advisor_payload = self._advisor_payload(latest)
+        cumulative_context = self._incremental_literature_context(task, latest)
+        cumulative_instruction = (
+            "\n闭环增量证据口径：" + json.dumps(
+                cumulative_context, ensure_ascii=False, separators=(",", ":")
+            )
+            + "\n这是全论文证据池的增量任务，不得要求本次输出单独达到全论文最低数量；"
+            "应按 prior_supported 与 current_hard_gate_passed 的去重并集判断。"
+            "若 cumulative_meets_contract=true，不得仅因本次输出自身少于最低数量而拒绝。"
+            if cumulative_context else ""
+        )
         user_prompt = f"""请作为导师 Agent 审核以下任务产出。
 任务标题：{task.get('title', '')}
 任务类型：{task.get('task_type', '')}
 任务描述：{str(task.get('description', ''))[:12000]}
 任务输出：{json.dumps(advisor_payload, ensure_ascii=False, separators=(',', ':'))}
+{cumulative_instruction}
 
 结构、来源、claim-passage 蕴含、实验工件与独立反方审稿均已通过硬门；
 本次只按任务完成度、范围、方法映射与表达清晰度审核，不要重复索取已省略的原始全文 passage。
@@ -390,6 +402,63 @@ class ReviewService:
                 if isinstance(paper, dict)
             ]
         return payload
+
+    @staticmethod
+    def _incremental_literature_context(task: dict, latest: dict) -> dict:
+        if (
+            task.get("task_type") != "literature_survey"
+            or not str(task.get("title") or "").startswith("[循环R")
+        ):
+            return {}
+        run_id = task.get("run_id")
+        eligible_source_ids = {
+            item["id"] for item in ((EvidenceRepository.get_by_run(run_id) or {}).get("sources") or [])
+            if (item.get("metadata") or {}).get("citation_eligible")
+        }
+        prior_claims = [
+            item for item in ResearchClaimRepository.get_by_run(run_id)
+            if item.get("status") == "supported"
+        ]
+        prior_source_ids = {
+            evidence_id for item in prior_claims
+            for evidence_id in item.get("evidence_ids") or []
+            if evidence_id in eligible_source_ids
+        }
+        current_claims = [
+            item for item in latest.get("claims") or []
+            if item.get("entailment_verdict") == "entailed"
+        ]
+        current_source_ids = {
+            source_id for item in current_claims
+            for source_id in item.get("evidence_source_ids") or []
+            if source_id in eligible_source_ids
+        }
+        statements = {
+            " ".join(str(item.get("statement") or "").lower().split())
+            for item in [*prior_claims, *current_claims]
+            if str(item.get("statement") or "").strip()
+        }
+        requirements = (
+            (ResearchBriefRepository.get_by_run(run_id) or {}).get("thesis_requirements") or {}
+        )
+        required_claims = int(requirements.get("minimum_supported_claims") or 1)
+        required_sources = int(requirements.get("minimum_references") or 1)
+        cumulative_sources = prior_source_ids | current_source_ids
+        return {
+            "prior_supported_claim_count": len(prior_claims),
+            "prior_supported_source_ids": sorted(prior_source_ids),
+            "current_hard_gate_passed_claim_count": len(current_claims),
+            "current_hard_gate_passed_source_ids": sorted(current_source_ids),
+            "novel_source_ids": sorted(current_source_ids - prior_source_ids),
+            "cumulative_distinct_claim_count": len(statements),
+            "cumulative_distinct_source_count": len(cumulative_sources),
+            "required_supported_claim_count": required_claims,
+            "required_reference_count": required_sources,
+            "cumulative_meets_contract": (
+                len(statements) >= required_claims
+                and len(cumulative_sources) >= required_sources
+            ),
+        }
 
     def _rubric_for_task(self, task_type: str) -> dict:
         dimensions = {
