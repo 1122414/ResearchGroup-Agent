@@ -557,6 +557,7 @@ def test_task_graph_allows_only_latest_thesis_revision_under_failed_root(monkeyp
 def test_writing_recoveries_run_before_terminal_decision(monkeypatch):
     calls = []
     method_names = (
+        "_retry_distributed_length_migration",
         "_retry_first_paragraph_audit",
         "_retry_structural_floor_migration",
         "_retry_epistemic_audit_migration",

@@ -228,8 +228,8 @@ class RunExecutionService:
                         payload={"failed_chapter_ids": [task["id"] for task in failed_chapters]},
                     )
                     return self.get_summary(run_id)
-                adjustment = thesis_chapter_service.total_word_adjustment(run_id)
-                if not adjustment:
+                adjustments = thesis_chapter_service.total_word_adjustments(run_id)
+                if not adjustments:
                     break
                 if length_round >= 2:
                     reason = "论文总字数经过两轮有界拟合后仍未进入冻结院校范围"
@@ -239,12 +239,16 @@ class RunExecutionService:
                     )
                     self._reset_agents(run_id, blocked=True)
                     return self.get_summary(run_id)
-                reopened = task_recovery_service.reopen_for_thesis_length(adjustment["task"], adjustment)
-                run_event_service.emit(
-                    run_id, "thesis.length_adjustment", "writing", "论文总字数有界拟合",
-                    f"{adjustment['direction']} {reopened['id']} 到约 {adjustment['target']} 词",
-                    task_id=reopened["id"], payload={key: value for key, value in adjustment.items() if key != "task"},
-                )
+                for adjustment in adjustments:
+                    reopened = task_recovery_service.reopen_for_thesis_length(
+                        adjustment["task"], adjustment,
+                    )
+                    run_event_service.emit(
+                        run_id, "thesis.length_adjustment", "writing", "论文总字数分布式有界拟合",
+                        f"{adjustment['direction']} {reopened['id']} 到约 {adjustment['target']} 词",
+                        task_id=reopened["id"],
+                        payload={key: value for key, value in adjustment.items() if key != "task"},
+                    )
 
             if not self._ensure_approval(
                 run_id,
@@ -708,6 +712,7 @@ class RunExecutionService:
         for task in tasks:
             if (
                 task.get("task_type") == "thesis_chapter"
+                and task.get("revision_of_task_id")
                 and task["id"] not in latest_ids
                 and task.get("status") in {
                     "pending", "assigned", "blocked", "running",
@@ -725,6 +730,7 @@ class RunExecutionService:
         """Run every bounded recovery before deciding that a writing family is terminal."""
         changed = False
         for recover in (
+            self._retry_distributed_length_migration,
             self._retry_first_paragraph_audit,
             self._retry_structural_floor_migration,
             self._retry_epistemic_audit_migration,
@@ -739,6 +745,49 @@ class RunExecutionService:
         ):
             recovered = recover(tasks)
             changed = recovered or changed
+        return changed
+
+    def _retry_distributed_length_migration(self, tasks: list[dict]) -> bool:
+        """Restore an approved chapter archived by the legacy one-chapter length fitter."""
+        changed = False
+        for task in tasks:
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "archived"
+                and not task.get("outputs")
+                and int(task.get("attempt_count") or 0) == 0
+                and self._has_task_event(task, "thesis.length_adjustment")
+                and not self._has_task_event(task, "thesis.distributed_length_migration")
+            ):
+                continue
+            output_row = OutputRepository.get_by_id(f"out_{task['id']}")
+            review_row = OutputRepository.get_by_id(f"review_{task['id']}")
+            try:
+                result = json.loads((output_row or {}).get("content") or "")
+                review = json.loads((review_row or {}).get("content") or "")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(result.get("chapter"), dict) or review.get("approved") is not True:
+                continue
+            TaskRepository.update_status(
+                task["id"], "completed", outputs=[result], blocked_reason=None,
+                review_result=review, review_feedback=review.get("feedback"),
+            )
+            root_id = task.get("revision_of_task_id")
+            if root_id:
+                TaskRepository.update_status(
+                    root_id, "completed", blocked_reason=None,
+                    review_result=review,
+                    review_feedback=f"恢复已通过章节 {task['id']}，改用分布式字数拟合。",
+                )
+                self._revive_dependency_descendants(task["run_id"], root_id)
+            run_event_service.emit(
+                task["run_id"], "thesis.distributed_length_migration", "writing",
+                "恢复旧单章拟合误归档的通过版本",
+                "复用已持久化且审核通过的章节，后续按全部章节预算分布式拟合。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
         return changed
 
     def _retry_transient_writing_failures(self, tasks: list[dict]) -> bool:

@@ -781,30 +781,73 @@ class ThesisChapterService:
         )
 
     def total_word_adjustment(self, run_id: str) -> dict | None:
+        adjustments = self.total_word_adjustments(run_id)
+        return adjustments[0] if adjustments else None
+
+    def total_word_adjustments(self, run_id: str) -> list[dict]:
         brief = ResearchBriefRepository.get_by_run(run_id) or {}
         requirements = brief.get("thesis_requirements") or {}
         minimum = int(requirements.get("minimum_word_count") or 0)
+        target_total = int(requirements.get("target_word_count") or 0)
         maximum = int(requirements.get("maximum_word_count") or 0)
         chapters = self.resolved_chapters(run_id)
         if not chapters or not all(item.get("status") == "completed" for item in chapters):
-            return None
+            return []
         counts = {item["id"]: self.word_count(item, (item.get("outputs") or [{}])[-1]) for item in chapters}
         total = sum(counts.values())
         if minimum and total < minimum:
-            task = max(
+            desired = max(minimum + 60, target_total or 0)
+            if maximum:
+                desired = min(desired, maximum)
+            gap = desired - total
+            capacities = {
+                item["id"]: max(
+                    int(self.spec_from_task(item).get("word_budget") or 0) - counts[item["id"]],
+                    0,
+                )
+                for item in chapters
+            }
+            capacity_total = sum(capacities.values())
+            if capacity_total <= 0:
+                return []
+            allocations = {
+                item["id"]: min(
+                    capacities[item["id"]],
+                    math.floor(gap * capacities[item["id"]] / capacity_total),
+                )
+                for item in chapters
+            }
+            remaining = gap - sum(allocations.values())
+            for item in sorted(
                 chapters,
-                key=lambda item: int(self.spec_from_task(item).get("word_budget") or 0) - counts[item["id"]],
-            )
-            target = counts[task["id"]] + (minimum - total) + 60
-            return {"task": task, "direction": "expand", "target": target, "total": total, "minimum": minimum, "maximum": maximum}
+                key=lambda chapter: capacities[chapter["id"]] - allocations[chapter["id"]],
+                reverse=True,
+            ):
+                if remaining <= 0:
+                    break
+                available = capacities[item["id"]] - allocations[item["id"]]
+                added = min(available, remaining)
+                allocations[item["id"]] += added
+                remaining -= added
+            return [
+                {
+                    "task": item,
+                    "direction": "expand",
+                    "target": counts[item["id"]] + allocations[item["id"]],
+                    "total": total,
+                    "minimum": minimum,
+                    "maximum": maximum,
+                }
+                for item in chapters if allocations[item["id"]] > 0
+            ]
         if maximum and total > maximum:
             task = max(
                 chapters,
                 key=lambda item: counts[item["id"]] - int(self.spec_from_task(item).get("word_budget") or 0),
             )
             target = max(self.minimum_word_count(task), counts[task["id"]] - (total - maximum) - 60)
-            return {"task": task, "direction": "condense", "target": target, "total": total, "minimum": minimum, "maximum": maximum}
-        return None
+            return [{"task": task, "direction": "condense", "target": target, "total": total, "minimum": minimum, "maximum": maximum}]
+        return []
 
     @staticmethod
     def resolved_chapters(run_id: str) -> list[dict]:
