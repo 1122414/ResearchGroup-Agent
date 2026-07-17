@@ -45,12 +45,14 @@ class ClaimEntailmentService:
             used_passages = set(verdict.get("passage_ids") or [])
             label = verdict.get("verdict") if used_passages.issubset(allowed_passages) else "not_found"
             audited = {**claim, "entailment_verdict": label, "entailment_rationale": str(verdict.get("rationale") or "")[:500]}
-            if label in {"entailed", "partially_entailed"}:
-                if label == "partially_entailed":
-                    audited["confidence"] = min(float(audited.get("confidence") or 0), 0.5)
+            if label == "entailed":
                 kept.append(audited)
             else:
-                rejected.append({"statement": claim.get("statement", ""), "verdict": label})
+                rejected.append({
+                    "statement": claim.get("statement", ""),
+                    "verdict": label,
+                    "rationale": audited["entailment_rationale"],
+                })
         return {
             **result,
             "claims": kept,
@@ -72,6 +74,8 @@ class ClaimEntailmentService:
             base_prompt = (
                 "你是独立证据核验员。只判断这一条 claim 是否被给定 passage 蕴含，只返回 JSON。"
                 "不得使用模型记忆或外部常识；证据不完整时用 partially_entailed，找不到时用 not_found。"
+                "逐项核对指标、分组、时间、方向和逻辑强度：‘除 X 外均下降/未下降’不能推出 X 上升，"
+                "总量、人均值和占比不得互换，相关关系不得改写为因果。"
                 "返回单个 verdict、passage_ids 和 rationale，不返回数组；程序会绑定 claim_index。\n"
                 + json.dumps(payload, ensure_ascii=False, indent=2)
             )

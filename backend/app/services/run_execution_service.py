@@ -121,6 +121,9 @@ class RunExecutionService:
                 RunRepository.update_status(run_id, RunStatus.reviewing.value, current_step="等待研究任务完成或返工")
                 return self.get_summary(run_id)
 
+            if self._all_research_failed(research_tasks):
+                return self._fail_no_research_survived(run_id)
+
             while True:
                 loop_tasks = research_loop_service.expand_once(run_id)
                 if not loop_tasks:
@@ -182,16 +185,8 @@ class RunExecutionService:
                 task for task in TaskRepository.get_all(run_id=run_id)
                 if not thesis_chapter_service.is_writing_task(task)
             ]
-            if settled_research and all(task.get("status") == "failed" for task in settled_research):
-                RunRepository.update_status(
-                    run_id,
-                    RunStatus.failed.value,
-                    current_step="所有研究任务均失败，无法生成报告",
-                    completed_at=datetime.now().isoformat(),
-                )
-                self._reset_agents(run_id, blocked=True)
-                run_event_service.emit(run_id, "run.failed", "error", "运行失败", "所有研究任务均未通过审核或执行失败")
-                return self.get_summary(run_id)
+            if self._all_research_failed(settled_research):
+                return self._fail_no_research_survived(run_id)
 
             chapter_tasks = thesis_chapter_service.ensure_tasks(run_id)
             if chapter_tasks:
@@ -417,6 +412,24 @@ class RunExecutionService:
             if any(status_map.get(dep) not in terminal for dep in deps):
                 return False
         return True
+
+    @staticmethod
+    def _all_research_failed(tasks: list[dict]) -> bool:
+        return bool(tasks) and all(task.get("status") == "failed" for task in tasks)
+
+    def _fail_no_research_survived(self, run_id: str) -> dict:
+        RunRepository.update_status(
+            run_id,
+            RunStatus.failed.value,
+            current_step="所有研究任务均失败，无法生成报告",
+            completed_at=datetime.now().isoformat(),
+        )
+        self._reset_agents(run_id, blocked=True)
+        run_event_service.emit(
+            run_id, "run.failed", "error", "运行失败",
+            "所有研究任务均未通过审核或执行失败；未进入自主补救循环。",
+        )
+        return self.get_summary(run_id)
 
     @staticmethod
     def _failed_required_chapters(tasks: list[dict]) -> list[dict]:

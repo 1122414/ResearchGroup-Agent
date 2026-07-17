@@ -143,6 +143,24 @@ def test_frozen_evidence_pool_is_ranked_for_current_question(monkeypatch):
     assert [item["id"] for item in bundle["excerpts"]] == ["p2"]
 
 
+def test_loop_claim_synthesis_reuses_verified_frozen_evidence(monkeypatch):
+    service = EvidencePipelineService()
+    sources = [{"id": "source_1", "title": "Education finance"}]
+    excerpts = [{"id": "p1", "source_id": "source_1", "excerpt": "education expenditure"}]
+    monkeypatch.setattr(settings, "literature_min_grounded_sources", 1)
+    monkeypatch.setattr(service, "_cumulative_grounded_evidence", lambda *_args: (sources, excerpts))
+    monkeypatch.setattr(EvidenceRepository, "get_by_run", lambda _run_id: {"assessments": []})
+
+    bundle = service._frozen_revision_bundle({
+        "id": "loop", "run_id": "run_1", "title": "[循环R1] 补足论文证据",
+        "task_type": "literature_survey",
+        "description": '{"target":{"type":"thesis_evidence_coverage"}}',
+    }, "education expenditure")
+
+    assert bundle["mode"] == "frozen_revision_evidence"
+    assert bundle["search_metrics"]["reused_frozen_pool"] is True
+
+
 def test_revision_task_does_not_reuse_itself_as_next_revision(monkeypatch):
     monkeypatch.setattr(settings, "task_max_revision_rounds", 1)
 
@@ -193,6 +211,32 @@ def test_revision_description_preserves_structured_plan_and_previous_delivery():
     assert "上一版交付物" in description
     assert "seed=42" in description
     assert "不得只复述缺口" in description
+
+
+def test_revision_description_accumulates_prior_review_requirements(monkeypatch):
+    root = {
+        "id": "root", "run_id": "run", "title": "文献综述", "description": "提交综述",
+        "created_at": "2026-01-01",
+        "review_result": {"revision_plan": [{
+            "layer": "independent_review", "issue": "例外不等于上升", "required_change": "改为未下降",
+        }]},
+    }
+    latest = {
+        "id": "revision", "run_id": "run", "revision_of_task_id": "root",
+        "created_at": "2026-01-02", "outputs": [{"summary": "已修订"}],
+        "review_result": {"revision_plan": [{
+            "layer": "independent_review", "issue": "元数据无依据", "required_change": "删除该 claim",
+        }]},
+    }
+    monkeypatch.setattr(TaskRepository, "get_all", lambda run_id=None: [root, latest])
+
+    description = task_recovery_service._revision_description(
+        root, latest, {"feedback": "继续修订", "revision_plan": []},
+    )
+
+    assert "累计返工约束" in description
+    assert "改为未下降" in description
+    assert "删除该 claim" in description
 
 
 def test_revision_description_drops_bulky_evidence_objects():

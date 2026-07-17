@@ -72,7 +72,7 @@ class IndependentReviewerService:
                         {
                             "passage_id": passage_id,
                             "locator": excerpts.get(passage_id, {}).get("locator"),
-                            "text": excerpts.get(passage_id, {}).get("excerpt"),
+                            "text": str(excerpts.get(passage_id, {}).get("excerpt") or "")[:5000],
                         }
                         for passage_id in claim.get("evidence_passage_ids") or []
                     ],
@@ -166,6 +166,7 @@ class IndependentReviewerService:
                 "不得仅因没有 passage 或 experiment artifact 判为不通过。"
             )
         elif task.get("task_type") == "literature_survey":
+            payload["task"].pop("description", None)
             review_scope = self._literature_review_scope()
         elif task.get("task_type") == "result_analysis":
             # The reviewer must see the analyst's actual interpretation.  The
@@ -191,18 +192,46 @@ class IndependentReviewerService:
                 "不得仅因样本小而要求擅自扩大用户冻结的数据边界。"
                 "预注册文件路径、冻结哈希、方法参数、固定种子和预期产物均属于可核验预注册证据。"
             )
-        payload_limit = 48000 if task.get("task_type") == "thesis_chapter" else 24000
+        payload_limit = 48000 if task.get("task_type") in {"thesis_chapter", "literature_survey"} else 24000
+        serialized_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if len(serialized_payload) > payload_limit:
+            serialized_payload = self._compact_payload_json(payload, payload_limit)
         base_prompt = (
             "你是独立反方审稿人，未参与生成。" + review_scope
             + "只返回紧凑 JSON：approved、issues、summary。"
             "issues 最多 6 条，每条 target 不超过 60 字、reason 和 required_change 各不超过 180 字，"
             "summary 不超过 240 字；不要复述 passage、任务或实验数据。\n"
-            + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))[:payload_limit]
+            + serialized_payload
         )
         review = await self._ask_reviewer(base_prompt, task, verified_support_ids)
         if task.get("task_type") == "thesis_chapter":
             review["reviewer"] = "independent_reviewer_model_paragraph_audit_v3_global"
         return review
+
+    @staticmethod
+    def _compact_payload_json(payload: dict, limit: int) -> str:
+        """Shrink review context without ever cutting a JSON object in half."""
+        compact = json.loads(json.dumps(payload, ensure_ascii=False))
+        task = compact.get("task")
+        if isinstance(task, dict) and task.get("description"):
+            task["description"] = str(task["description"])[:2000]
+        passages = [
+            passage
+            for claim in compact.get("claims") or []
+            if isinstance(claim, dict)
+            for passage in claim.get("passages") or []
+            if isinstance(passage, dict)
+        ]
+        if passages:
+            allowance = max(600, (limit - 12000) // len(passages))
+            for passage in passages:
+                passage["text"] = str(passage.get("text") or "")[:allowance]
+        serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+        if len(serialized) <= limit:
+            return serialized
+        for passage in passages:
+            passage["text"] = str(passage.get("text") or "")[:600]
+        return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
 
     async def _review_thesis_support_batches(
         self,

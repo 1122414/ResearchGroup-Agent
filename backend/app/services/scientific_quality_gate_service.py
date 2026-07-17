@@ -202,7 +202,7 @@ class ScientificQualityGateService:
             if not audit.get("checked"):
                 issues.append("entailment_audit_missing")
             for index, claim in enumerate(claims):
-                if claim.get("entailment_verdict") not in {"entailed", "partially_entailed"}:
+                if claim.get("entailment_verdict") != "entailed":
                     issues.append(f"claim_{index}:entailment_not_verified")
                 statement = str(claim.get("statement") or "").lower()
                 # A paper may report a statistically significant result from its

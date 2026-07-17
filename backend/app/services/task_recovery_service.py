@@ -241,6 +241,11 @@ class TaskRecoveryService:
                 )
         else:
             feedback_text = str(feedback or "").strip()
+        history = TaskRecoveryService._revision_history(root_task, latest_task)
+        if history:
+            feedback_text += "\n累计返工约束（后续版本必须全部继续满足）：\n" + json.dumps(
+                history, ensure_ascii=False, indent=2
+            )
         outputs = latest_task.get("outputs") or []
         previous = outputs[-1] if outputs else None
         is_thesis_chapter = root_task.get("task_type") == "thesis_chapter"
@@ -269,6 +274,34 @@ class TaskRecoveryService:
         if not original:
             return f"原始任务：{root_task.get('title', '')}\n返工要求：{feedback_text}{previous_text}{instruction}"
         return f"原始任务：{original}\n返工要求：{feedback_text}{previous_text}{instruction}"
+
+    @staticmethod
+    def _revision_history(root_task: dict, latest_task: dict) -> list[dict]:
+        run_id = root_task.get("run_id") or latest_task.get("run_id")
+        root_id = root_task.get("id")
+        if not run_id or not root_id:
+            return []
+        family = [
+            item for item in TaskRepository.get_all(run_id=run_id)
+            if item.get("id") == root_id or item.get("revision_of_task_id") == root_id
+        ]
+        family.sort(key=lambda item: str(item.get("created_at") or ""))
+        history: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for item in family:
+            for change in (item.get("review_result") or {}).get("revision_plan") or []:
+                issue = str(change.get("issue") or "")[:300]
+                required = str(change.get("required_change") or "")[:300]
+                key = (issue, required)
+                if not any(key) or key in seen:
+                    continue
+                seen.add(key)
+                history.append({
+                    "layer": str(change.get("layer") or "")[:80],
+                    "issue": issue,
+                    "required_change": required,
+                })
+        return history[-12:]
 
     @staticmethod
     def _compact_previous(previous, include_chapter: bool = False) -> dict | list | None:

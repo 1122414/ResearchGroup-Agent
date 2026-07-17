@@ -4,6 +4,7 @@ import pytest
 
 from backend.app.core.config import settings
 from backend.app.services.scientific_quality_gate_service import scientific_quality_gate_service
+from backend.app.services.claim_entailment_service import claim_entailment_service
 from backend.app.services.independent_reviewer_service import independent_reviewer_service
 from backend.app.services.review_service import review_service
 from backend.app.storage.repositories import (
@@ -649,6 +650,51 @@ def test_literature_reviewer_must_not_invent_missing_source_statistics():
     assert "不得要求作者替被引论文补做" in scope
     assert "正确处理是把缺失项列为来源局限" in scope
     assert "定性 passage 不机械要求效果量" in scope
+
+
+def test_reviewer_payload_compaction_keeps_complete_json_and_claims():
+    payload = {
+        "task": {"id": "task", "description": "x" * 20000},
+        "claims": [
+            {
+                "index": index,
+                "statement": f"claim {index}",
+                "passages": [{"passage_id": f"p{index}", "text": "evidence " * 2000}],
+            }
+            for index in range(6)
+        ],
+    }
+
+    compact = independent_reviewer_service._compact_payload_json(payload, 24000)
+    parsed = json.loads(compact)
+
+    assert len(parsed["claims"]) == 6
+    assert all(claim["passages"][0]["passage_id"] for claim in parsed["claims"])
+    assert not compact.rstrip().endswith((":", ","))
+
+
+@pytest.mark.asyncio
+async def test_partial_entailment_is_audited_but_not_kept_as_claim(monkeypatch):
+    async def partial(*_args):
+        return [{
+            "claim_index": 0, "verdict": "partially_entailed",
+            "passage_ids": ["p1"], "rationale": "except X does not imply X increased",
+        }]
+
+    monkeypatch.setattr(claim_entailment_service, "_ask_model", partial)
+    monkeypatch.setattr(settings, "mock_mode", False)
+    result = await claim_entailment_service.verify(
+        {"claims": [{
+            "statement": "All groups declined except X, where it increased.",
+            "evidence_passage_ids": ["p1"],
+        }]},
+        [{"id": "p1", "excerpt": "All groups declined except X."}],
+        "run", "task",
+    )
+
+    assert result["claims"] == []
+    assert result["entailment_audit"]["rejected"] == 1
+    assert result["entailment_audit"]["rejected_claims"][0]["verdict"] == "partially_entailed"
 
 
 def test_review_transport_failure_stops_without_full_task_revision(monkeypatch):

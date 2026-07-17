@@ -42,6 +42,17 @@ def test_independent_critic_rejects_duplicate_and_unready_experiment():
     assert result["reviewer"] == "deterministic_independent_critic_v1"
 
 
+def test_all_research_failed_is_terminal_before_research_loop():
+    assert run_execution_service._all_research_failed([
+        {"id": "literature", "status": "failed"},
+        {"id": "analysis", "status": "failed"},
+    ]) is True
+    assert run_execution_service._all_research_failed([
+        {"id": "literature", "status": "completed"},
+        {"id": "analysis", "status": "failed"},
+    ]) is False
+
+
 def test_snapshot_stops_instead_of_repeating_same_action(monkeypatch):
     gap = {
         "kind": "contested_claim", "target_id": "claim_1", "reason": "search counter evidence",

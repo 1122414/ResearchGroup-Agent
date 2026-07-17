@@ -164,9 +164,15 @@ class EvidencePipelineService:
         }
 
     def _frozen_revision_bundle(self, task: dict, query: str) -> dict | None:
-        if not task.get("revision_of_task_id") or not task.get("run_id"):
+        description = str(task.get("description") or "")
+        frozen_loop_synthesis = (
+            str(task.get("title") or "").startswith("[循环R")
+            and task.get("task_type") == "literature_survey"
+            and any(marker in description for marker in ("thesis_evidence_coverage", "claim_synthesis"))
+        )
+        if not (task.get("revision_of_task_id") or frozen_loop_synthesis) or not task.get("run_id"):
             return None
-        if self._requires_evidence_expansion(self._revision_feedback(task)):
+        if task.get("revision_of_task_id") and self._requires_evidence_expansion(self._revision_feedback(task)):
             return None
         sources, excerpts = self._cumulative_grounded_evidence(task.get("run_id"), [])
         sources, excerpts = self._rank_grounded_bundle(sources, excerpts, query)
