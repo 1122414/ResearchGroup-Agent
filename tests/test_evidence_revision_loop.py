@@ -9,7 +9,9 @@ from backend.app.services.review_service import review_service
 from backend.app.services.run_event_service import run_event_service
 from backend.app.services.run_execution_service import run_execution_service
 from backend.app.services.task_recovery_service import task_recovery_service
-from backend.app.storage.repositories import EvidenceRepository, RunRepository, TaskRepository
+from backend.app.storage.repositories import (
+    EvidenceRepository, RunEventRepository, RunRepository, TaskRepository,
+)
 
 
 @pytest.mark.asyncio
@@ -316,6 +318,54 @@ async def test_review_transport_retry_does_not_consume_chapter_attempt(monkeypat
     assert task["attempt_count"] == 4
     assert "review.transport_retry" in events
     assert "review.transport_exhausted" in events
+
+
+def test_unactionable_delete_migration_reopens_only_review(monkeypatch):
+    task = {
+        "id": "chapter_unlocated", "run_id": "run_unlocated", "title": "Literature Review",
+        "task_type": "thesis_chapter", "status": "failed", "attempt_count": 6,
+        "owner_agent": "writer", "revision_of_task_id": "chapter_root",
+        "outputs": [{
+            "chapter": {"sections": [{"paragraphs": [{
+                "id": "p1", "text": "A bounded and supported paragraph.",
+            }]}]},
+        }],
+        "review_result": {"quality_gates": {"layers": {"independent_review": {
+            "reviewer": "independent_reviewer_model_paragraph_audit_v2",
+            "issues": [{
+                "target": "p1", "reason": "",
+                "required_change": "Delete the unsupported phrase.",
+            }],
+        }}}},
+    }
+    updates = []
+    events = []
+
+    monkeypatch.setattr(
+        RunEventRepository, "count_task_events",
+        lambda _run_id, _task_id, _event_type: 0,
+    )
+    monkeypatch.setattr(
+        TaskRepository, "update_status",
+        lambda task_id, status, **fields: updates.append((task_id, status, fields)),
+    )
+    monkeypatch.setattr(
+        run_execution_service, "_revive_dependency_descendants",
+        lambda run_id, root_id: events.append(("revive", run_id, root_id)),
+    )
+    monkeypatch.setattr(
+        run_event_service, "emit",
+        lambda run_id, event_type, *_args, **_kwargs: events.append((event_type, run_id)),
+    )
+
+    changed = run_execution_service._retry_unactionable_audit_migration([task])
+
+    assert changed is True
+    assert updates == [("chapter_unlocated", "running", {
+        "blocked_reason": None, "review_result": None, "review_feedback": None,
+    })]
+    assert ("revive", "run_unlocated", "chapter_root") in events
+    assert ("review.actionable_issue_migration", "run_unlocated") in events
 
 
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):

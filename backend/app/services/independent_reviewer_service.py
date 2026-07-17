@@ -409,19 +409,11 @@ class IndependentReviewerService:
         for issue in review.get("issues") or []:
             target = str(issue.get("target") or "")
             if target == "review_transport" or target in paragraph_ids:
-                instruction = str(issue.get("required_change") or "")
-                delete_requested = any(marker in instruction.casefold() for marker in (
-                    "delete", "remove", "删除", "移除",
-                ))
-                quoted = re.findall(r"['\"‘“]([^'\"’”]{4,})['\"’”]", instruction)
-                has_exact_locator = any(
-                    fragment in paragraph_text.get(target, "") for fragment in quoted
-                )
                 if (
                     target != "review_transport"
-                    and delete_requested
-                    and not str(issue.get("reason") or "").strip()
-                    and not has_exact_locator
+                    and IndependentReviewerService.unactionable_deletion_issue(
+                        issue, paragraph_text.get(target, ""),
+                    )
                 ):
                     return {
                         **review,
@@ -453,6 +445,19 @@ class IndependentReviewerService:
             fallback = ",".join(paragraph_ids)[:60]
             anchored.append({**issue, "target": best_id if best_score > 0 else fallback})
         return {**review, "issues": anchored}
+
+    @staticmethod
+    def unactionable_deletion_issue(issue: dict, paragraph_text: str = "") -> bool:
+        """Identify a delete verdict that contains no reason or exact text locator."""
+        instruction = str(issue.get("required_change") or "")
+        if not any(marker in instruction.casefold() for marker in (
+            "delete", "remove", "删除", "移除",
+        )):
+            return False
+        if str(issue.get("reason") or "").strip():
+            return False
+        quoted = re.findall(r"['\"‘“]([^'\"’”]{4,})['\"’”]", instruction)
+        return not any(fragment in paragraph_text for fragment in quoted)
 
     async def _ask_reviewer(
         self,

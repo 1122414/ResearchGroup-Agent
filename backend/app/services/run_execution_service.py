@@ -20,6 +20,7 @@ from ..storage.repositories import (
     TaskRepository,
 )
 from .approval_service import approval_service
+from .independent_reviewer_service import independent_reviewer_service
 from .report_service import ReportGroundingError, ReportQualityError, report_service
 from .research_contract_service import research_contract_service
 from .research_loop_service import research_loop_service
@@ -642,6 +643,7 @@ class RunExecutionService:
             self._retry_epistemic_audit_migration(writing_tasks)
             self._retry_global_scope_migration(writing_tasks)
             self._retry_advisor_artifact_conflict_migration(writing_tasks)
+            self._retry_unactionable_audit_migration(writing_tasks)
             self._retry_advisor_paragraph_restoration(writing_tasks)
             self._retry_advisor_exact_cleanup(writing_tasks)
             self._retry_surgical_chapter_repair(writing_tasks)
@@ -1015,6 +1017,54 @@ class RunExecutionService:
                 task["run_id"], "review.advisor_artifact_conflict_migration", "review",
                 "导师工件冲突按新仲裁协议重审",
                 "复用现有章节与已通过的科学硬门；不修改正文或增加章节 attempt。",
+                task_id=task["id"], agent_id=task.get("owner_agent"),
+            )
+            changed = True
+        return changed
+
+    def _retry_unactionable_audit_migration(self, tasks: list[dict]) -> bool:
+        """Re-review one persisted delete verdict that did not identify any text."""
+        changed = False
+        for task in tasks:
+            review = task.get("review_result") or {}
+            layer = (
+                ((review.get("quality_gates") or {}).get("layers") or {})
+                .get("independent_review", {})
+            )
+            issues = layer.get("issues") or []
+            latest = (task.get("outputs") or [{}])[-1]
+            paragraph_text = {
+                str(paragraph.get("id") or ""): str(paragraph.get("text") or "")
+                for section in (latest.get("chapter") or {}).get("sections") or []
+                for paragraph in section.get("paragraphs") or []
+                if isinstance(paragraph, dict)
+            }
+            if not (
+                task.get("task_type") == "thesis_chapter"
+                and task.get("status") == "failed"
+                and self._is_paragraph_audit_reviewer(layer.get("reviewer"))
+                and bool(issues)
+                and all(
+                    independent_reviewer_service.unactionable_deletion_issue(
+                        issue, paragraph_text.get(str(issue.get("target") or ""), ""),
+                    )
+                    for issue in issues
+                )
+                and not self._has_task_event(task, "review.actionable_issue_migration")
+                and task.get("outputs")
+            ):
+                continue
+            TaskRepository.update_status(
+                task["id"], "running", blocked_reason=None,
+                review_result=None, review_feedback=None,
+            )
+            self._revive_dependency_descendants(
+                task["run_id"], task.get("revision_of_task_id") or task["id"],
+            )
+            run_event_service.emit(
+                task["run_id"], "review.actionable_issue_migration", "review",
+                "不可执行的删除意见按新协议重审",
+                "复用现有章节；只重跑审稿，不修改正文、不增加章节 attempt。",
                 task_id=task["id"], agent_id=task.get("owner_agent"),
             )
             changed = True
