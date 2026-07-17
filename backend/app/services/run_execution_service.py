@@ -644,16 +644,7 @@ class RunExecutionService:
                 if thesis_chapter_service.is_writing_task(task)
             ]
             active_writing_tasks = self._latest_writing_family_members(writing_tasks)
-            self._retry_first_paragraph_audit(active_writing_tasks)
-            self._retry_structural_floor_migration(active_writing_tasks)
-            self._retry_epistemic_audit_migration(active_writing_tasks)
-            self._retry_global_scope_migration(active_writing_tasks)
-            self._retry_advisor_artifact_conflict_migration(active_writing_tasks)
-            self._retry_unactionable_audit_migration(active_writing_tasks)
-            self._retry_advisor_paragraph_restoration(active_writing_tasks)
-            self._retry_advisor_exact_cleanup(active_writing_tasks)
-            self._retry_surgical_chapter_repair(active_writing_tasks)
-            self._retry_transient_writing_failures(active_writing_tasks)
+            self._apply_writing_recoveries(active_writing_tasks)
             writing_tasks = [
                 task for task in TaskRepository.get_all(run_id=run_id)
                 if thesis_chapter_service.is_writing_task(task)
@@ -670,6 +661,10 @@ class RunExecutionService:
                 task for task in TaskRepository.get_all(run_id=run_id)
                 if thesis_chapter_service.is_writing_task(task)
             ]
+            if self._apply_writing_recoveries(
+                self._latest_writing_family_members(refreshed),
+            ):
+                continue
             if all(task.get("status") in {"completed", "failed", "archived"} for task in refreshed):
                 return
             after = self._execution_progress(refreshed)
@@ -724,6 +719,25 @@ class RunExecutionService:
                     blocked_reason="已被同一返工家族的更新版本取代。",
                 )
                 changed = True
+        return changed
+
+    def _apply_writing_recoveries(self, tasks: list[dict]) -> bool:
+        """Run every bounded recovery before deciding that a writing family is terminal."""
+        changed = False
+        for recover in (
+            self._retry_first_paragraph_audit,
+            self._retry_structural_floor_migration,
+            self._retry_epistemic_audit_migration,
+            self._retry_global_scope_migration,
+            self._retry_advisor_artifact_conflict_migration,
+            self._retry_unactionable_audit_migration,
+            self._retry_advisor_paragraph_restoration,
+            self._retry_advisor_exact_cleanup,
+            self._retry_surgical_chapter_repair,
+            self._retry_transient_writing_failures,
+        ):
+            recovered = recover(tasks)
+            changed = recovered or changed
         return changed
 
     def _retry_transient_writing_failures(self, tasks: list[dict]) -> bool:

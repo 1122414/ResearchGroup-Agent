@@ -553,6 +553,33 @@ def test_task_graph_allows_only_latest_thesis_revision_under_failed_root(monkeyp
     assert updates == [("revision_old", "archived")]
 
 
+def test_writing_recoveries_run_before_terminal_decision(monkeypatch):
+    calls = []
+    method_names = (
+        "_retry_first_paragraph_audit",
+        "_retry_structural_floor_migration",
+        "_retry_epistemic_audit_migration",
+        "_retry_global_scope_migration",
+        "_retry_advisor_artifact_conflict_migration",
+        "_retry_unactionable_audit_migration",
+        "_retry_advisor_paragraph_restoration",
+        "_retry_advisor_exact_cleanup",
+        "_retry_surgical_chapter_repair",
+        "_retry_transient_writing_failures",
+    )
+    for name in method_names:
+        monkeypatch.setattr(
+            run_execution_service,
+            name,
+            lambda _tasks, method=name: calls.append(method) or method == "_retry_surgical_chapter_repair",
+        )
+
+    changed = run_execution_service._apply_writing_recoveries([{"id": "latest"}])
+
+    assert changed is True
+    assert calls == list(method_names)
+
+
 def test_practical_high_complexity_report_requires_one_source(monkeypatch):
     monkeypatch.setattr(settings, "literature_require_grounded_sources", True)
     monkeypatch.setattr(settings, "literature_min_grounded_sources", 2)
