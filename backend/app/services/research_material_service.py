@@ -32,7 +32,8 @@ class ResearchMaterialService:
                 continue
             records.append({
                 "id": f"material_{index:04d}", "name": item.get("name") or path.name,
-                "path": str(path), "sha256": hashlib.sha256(content).hexdigest(),
+                "path": str(path), "relative_path": str(path.relative_to(run_dir)),
+                "sha256": hashlib.sha256(content).hexdigest(),
                 "size_bytes": len(content), "mime_type": item.get("mime_type") or "application/octet-stream",
                 "provenance": "user_supplied_run_attachment",
                 "declared_provenance": item.get("provenance") or item.get("source_url") or item.get("name") or path.name,
@@ -48,7 +49,12 @@ class ResearchMaterialService:
             "collection_log": "从运行输入目录读取用户上传原文件；未把 LLM 生成文本当作原始研究材料。",
             "source_records": records,
             "completeness": "complete" if not missing else "incomplete",
+            "completeness_scope": (
+                "所需原始材料文件、来源、授权/许可与伦理前置条件是否齐备；"
+                "不表示材料内部统计字段没有缺失值，字段缺失由后续分析披露。"
+            ),
             "ethics_approval_reference": (brief.get("ethics_plan") or {}).get("approval_reference") or "not_required",
+            "ethics_exemption_reason": self._ethics_exemption_reason(brief),
             "missing_conditions": missing,
         }
         output_dir = run_dir / "materials"
@@ -92,6 +98,7 @@ class ResearchMaterialService:
         raw = path.read_bytes()
         return {
             "id": "systematic_review_pool", "name": path.name, "path": str(path),
+            "relative_path": str(path.relative_to(run_dir)),
             "sha256": hashlib.sha256(raw).hexdigest(), "size_bytes": len(raw),
             "mime_type": "application/json", "provenance": "verified_fulltext_evidence_pipeline",
             "declared_provenance": "frozen_verified_literature_evidence_pool_already_deduplicated",
@@ -116,6 +123,15 @@ class ResearchMaterialService:
             if isinstance(item, dict) and item.get("required") and item.get("status") == "available"
         ]
         return "；".join(item for item in evidence if item)
+
+    @staticmethod
+    def _ethics_exemption_reason(brief: dict) -> str:
+        ethics = brief.get("ethics_plan") or {}
+        if ethics.get("required"):
+            return ""
+        return str(ethics.get("data_sensitivity") or "").strip() or (
+            "冻结研究合同声明无需伦理审批；未登记参与者招募或待审批的人类材料。"
+        )
 
     @staticmethod
     def _missing_conditions(records: list[dict], authorization: str, brief: dict) -> list[str]:

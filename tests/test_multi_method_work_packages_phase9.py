@@ -126,8 +126,11 @@ def test_user_materials_are_hashed_and_registered_without_llm_generated_raw_data
     assert len(manifest["source_records"]) == 1
     record = manifest["source_records"][0]
     assert record["provenance"] == "user_supplied_run_attachment"
+    assert record["relative_path"] == "inputs/01_primary.txt"
     assert record["sha256"] == hashlib.sha256(material_path.read_bytes()).hexdigest()
     assert "用户声明拥有研究使用权" in record["authorization_evidence"]
+    assert "不表示材料内部统计字段没有缺失值" in manifest["completeness_scope"]
+    assert manifest["ethics_exemption_reason"]
     assert manifest["artifact"] in {
         item["path"] for item in artifact_manifest_service.read(run_dir)["artifacts"]
     }
@@ -177,6 +180,7 @@ def test_systematic_review_freezes_only_verified_fulltext_evidence(tmp_path):
 
     assert manifest["completeness"] == "complete"
     assert [item["id"] for item in pool["studies"]] == ["verified"]
+    assert pool_record["relative_path"].startswith("materials/")
     assert pool_record["sha256"] == hashlib.sha256(Path(pool_record["path"]).read_bytes()).hexdigest()
 
 

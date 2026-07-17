@@ -87,7 +87,8 @@ class ResearchMethodRegistryService:
                 "required_object": "material_manifest",
                 "required_fields": ["frozen_at", "collection_log", "source_records", "completeness"],
                 "record_fields": [
-                    "id", "path", "sha256", "provenance", "authorization_evidence", "size_bytes",
+                    "id", "path", "relative_path", "sha256", "provenance",
+                    "authorization_evidence", "size_bytes",
                 ],
             },
             "result_analysis": {

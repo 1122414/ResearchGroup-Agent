@@ -172,6 +172,18 @@ class IndependentReviewerService:
                 "deliverable": deliverable,
             }
             review_scope = self._research_design_review_scope()
+        elif task.get("task_type") == "data_acquisition":
+            brief = ResearchBriefRepository.get_by_run(task.get("run_id")) or {}
+            payload = {
+                "task": {
+                    key: task.get(key) for key in ("id", "title", "task_type")
+                },
+                "frozen_ethics_plan": brief.get("ethics_plan") or {},
+                "deliverable": {
+                    "material_manifest": latest.get("material_manifest") or {},
+                },
+            }
+            review_scope = self._data_acquisition_review_scope()
         elif not claims and not experiment:
             payload["deliverable"] = deliverable
             review_scope = (
@@ -505,6 +517,20 @@ class IndependentReviewerService:
             "披露实际缺失数，而不应预先编造缺失率。预期样本量可作为计划值但不是必需执行结果。"
             "若设计声称已经观察到结果、实际样本量或未经工件提供的 SHA-256，应要求删除或明确推迟到"
             "材料登记/分析阶段，而不是要求补造。外部方法学引用不是本任务硬门，不能因 passage 为空拒绝。"
+        )
+
+    @staticmethod
+    def _data_acquisition_review_scope() -> str:
+        return (
+            "这是确定性材料登记审查，不是结果分析。权威对象是 deliverable.material_manifest，"
+            "它由系统从运行目录中的真实文件计算，LLM 不得改写文件哈希、大小或路径。"
+            "completeness 仅表示冻结研究所需输入材料、来源、授权/许可和伦理前置条件齐备，"
+            "不表示数据文件内部每个统计字段都无缺失；字段缺失应由后续分析披露，不得据此否定材料齐备。"
+            "每条记录同时提供绝对审计路径 path 与相对归档路径 relative_path：前者供本机核验，"
+            "后者保证工件可移植，不得仅因存在绝对路径拒绝。许可名称与权威许可 URL 已构成登记证据，"
+            "不得机械要求网页截图。若冻结伦理计划 required=false，且 manifest 给出豁免理由，"
+            "不得要求审批编号；只有 required=true 时才检查批准状态。审查真实文件、哈希、来源、"
+            "授权和伦理条件是否相互一致，不得索要未来分析结果、experiment 或外部 passage。"
         )
 
     @staticmethod

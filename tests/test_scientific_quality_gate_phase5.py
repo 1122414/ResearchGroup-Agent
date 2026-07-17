@@ -701,6 +701,53 @@ async def test_research_design_review_payload_omits_experiment_and_passages(monk
     assert "不得要求 experiment" in prompts[0]
 
 
+def test_data_acquisition_reviewer_understands_manifest_semantics():
+    scope = independent_reviewer_service._data_acquisition_review_scope()
+    assert "不表示数据文件内部每个统计字段都无缺失" in scope
+    assert "相对归档路径 relative_path" in scope
+    assert "不得机械要求网页截图" in scope
+    assert "required=false" in scope
+    assert "LLM 不得改写文件哈希" in scope
+
+
+@pytest.mark.asyncio
+async def test_data_acquisition_review_payload_omits_experiment_and_passages(monkeypatch):
+    prompts = []
+
+    class Reviewer:
+        async def generate(self, prompt, **_kwargs):
+            prompts.append(prompt)
+            return '{"approved":true,"issues":[],"summary":"manifest is auditable"}'
+
+    monkeypatch.setattr(settings, "mock_mode", False)
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.create_llm_provider",
+        lambda: Reviewer(),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.independent_reviewer_service.ResearchBriefRepository.get_by_run",
+        lambda _run_id: {"ethics_plan": {"required": False, "status": "not_required"}},
+    )
+    result = await independent_reviewer_service.review_task(
+        {"id": "materials", "run_id": "run", "task_type": "data_acquisition"},
+        {
+            "material_manifest": {
+                "completeness": "complete",
+                "ethics_exemption_reason": "No participant recruitment.",
+                "source_records": [{"id": "m1", "sha256": "a" * 64}],
+            },
+            "claims": [{"statement": "must not enter the manifest review"}],
+        },
+        {"excerpts": [{"id": "p1", "excerpt": "must not enter the manifest review"}]},
+    )
+
+    assert result["approved"] is True
+    assert '"material_manifest"' in prompts[0]
+    assert '"experiment"' not in prompts[0]
+    assert '"passages"' not in prompts[0]
+    assert "不得机械要求网页截图" in prompts[0]
+
+
 def test_reviewer_payload_compaction_keeps_complete_json_and_claims():
     payload = {
         "task": {"id": "task", "description": "x" * 20000},
